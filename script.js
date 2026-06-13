@@ -2,12 +2,21 @@ const yearElement = document.querySelector("#year");
 const menuButton = document.querySelector(".menu-button");
 const nav = document.querySelector("#site-nav");
 const revealItems = document.querySelectorAll(".reveal");
+const currentPage = window.location.pathname.split("/").pop() || "index.html";
 
 if (yearElement) {
   yearElement.textContent = `© ${new Date().getFullYear()} Ernest Huang`;
 }
 
 if (menuButton && nav) {
+  nav.querySelectorAll("a[href]").forEach((link) => {
+    const target = link.getAttribute("href")?.replace("./", "");
+
+    if (target === currentPage) {
+      link.classList.add("active");
+    }
+  });
+
   menuButton.addEventListener("click", () => {
     const isOpen = nav.classList.toggle("open");
     document.body.classList.toggle("menu-open", isOpen);

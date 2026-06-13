@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Digital Toolkit | Ernest Huang</title>
+    <meta name="description" content="The digital toolkit behind Ernest Huang's innovation work." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&family=Sora:wght@600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="site-shell">
+      <header class="site-header">
+        <a class="brand" href="./index.html"><span class="brand-mark"></span><span>Ernest Huang</span></a>
+        <button class="menu-button" type="button" aria-expanded="false" aria-controls="site-nav"><span></span><span></span><span></span></button>
+        <nav id="site-nav" class="nav" aria-label="Primary navigation">
+          <a href="./about.html">About</a><a href="./expertise.html">Expertise</a><a href="./works.html">Works</a><a href="./services.html">Services</a><a href="./toolkit.html">Stack</a><a href="./journal.html">Journal</a><a href="./video.html">Video</a><a class="nav-cta" href="mailto:hello@example.com">Let's Talk</a>
+        </nav>
+      </header>
+      <main>
+        <section class="page-hero section">
+          <p class="system-label"><span></span> System / Digital Toolkit</p>
+          <h1>The tools behind digital innovation.</h1>
+          <p class="hero-lede">A curated collection of technologies, platforms, and systems used to transform ideas into meaningful digital experiences.</p>
+        </section>
+        <section class="section toolkit-section">
+          <figure class="reference-frame wide reveal"><img src="./assets/stitch/toolkit-reference.png" alt="Toolkit design reference" /></figure>
+          <div class="tool-grid">
+            <article class="tool-card glass-card reveal"><h3>AI & Automation</h3><p>OpenAI, Claude, Gemini, LangChain, Python, Jupyter, Hugging Face.</p></article>
+            <article class="tool-card glass-card reveal"><h3>GIS & Spatial</h3><p>ArcGIS Pro, QGIS, Mapbox, Cesium, PostGIS.</p></article>
+            <article class="tool-card glass-card reveal"><h3>XR & Interactive</h3><p>Unity 3D, WebGL, Three.js, Unreal Engine, A-Frame.</p></article>
+            <article class="tool-card glass-card reveal"><h3>Web Development</h3><p>React, Next.js, Tailwind CSS, Node.js, TypeScript.</p></article>
+          </div>
+        </section>
+      </main>
+      <footer class="site-footer"><strong>Ernest Huang</strong><nav><a href="./index.html">Home</a><a href="./works.html">Works</a><a href="./services.html">Services</a><a href="./journal.html">Journal</a><a href="./video.html">Video</a></nav><span id="year"></span></footer>
+    </div>
+    <script src="./script.js"></script>
+  </body>
+</html>

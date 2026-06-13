@@ -94,10 +94,10 @@ img {
 .nav {
   display: flex;
   align-items: center;
-  gap: clamp(18px, 3vw, 44px);
+  gap: clamp(14px, 2.1vw, 30px);
   color: var(--muted);
   font-family: "JetBrains Mono", monospace;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -110,6 +110,12 @@ img {
   color: var(--primary-2);
 }
 
+.nav a.active {
+  color: var(--primary-2);
+  text-decoration: underline;
+  text-underline-offset: 8px;
+}
+
 .nav-cta {
   min-height: 44px;
   display: inline-flex;
@@ -117,7 +123,7 @@ img {
   border: 1px solid var(--primary);
   border-radius: 999px;
   color: var(--primary-2);
-  padding: 0 24px;
+  padding: 0 20px;
 }
 
 .menu-button {
@@ -148,6 +154,75 @@ img {
   width: min(100%, var(--container));
   margin-inline: auto;
   padding: clamp(72px, 8vw, 120px) clamp(20px, 6vw, 80px);
+}
+
+.page-hero {
+  min-height: 56vh;
+  display: grid;
+  align-content: center;
+  border-bottom: 1px solid var(--line);
+}
+
+.page-hero h1 {
+  max-width: 1060px;
+}
+
+.page-content {
+  padding-top: clamp(56px, 8vw, 100px);
+}
+
+.timeline-grid,
+.expertise-list,
+.journal-list {
+  display: grid;
+  gap: 22px;
+}
+
+.timeline-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.timeline-card,
+.expertise-card,
+.journal-card {
+  padding: 32px;
+}
+
+.timeline-card span,
+.journal-card span {
+  color: #ffc58a;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.expertise-layout,
+.journal-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 420px);
+  align-items: start;
+  gap: clamp(28px, 6vw, 84px);
+}
+
+.reference-frame.wide {
+  max-height: 560px;
+  margin-bottom: 46px;
+}
+
+.reference-frame.tall {
+  max-height: 720px;
+}
+
+.reference-frame.tall img {
+  width: 100%;
+  object-fit: cover;
+  object-position: top center;
+}
+
+.page-projects,
+.page-services {
+  margin-top: 0;
 }
 
 .hero {
@@ -628,14 +703,17 @@ h3 {
 @media (max-width: 980px) {
   .hero,
   .split-section,
-  .work-hero {
+  .work-hero,
+  .expertise-layout,
+  .journal-layout {
     grid-template-columns: 1fr;
   }
 
   .hero-panel,
   .service-grid,
   .project-grid,
-  .tool-grid {
+  .tool-grid,
+  .timeline-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -687,7 +765,8 @@ h3 {
   .hero-panel,
   .service-grid,
   .project-grid,
-  .tool-grid {
+  .tool-grid,
+  .timeline-grid {
     grid-template-columns: 1fr;
   }
 
