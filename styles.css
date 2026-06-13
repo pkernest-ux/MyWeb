@@ -641,6 +641,27 @@ h3 {
   text-transform: uppercase;
 }
 
+.video-teaser {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(300px, 0.75fr);
+  gap: clamp(28px, 5vw, 64px);
+  align-items: center;
+  padding: clamp(28px, 5vw, 56px);
+}
+
+.video-teaser p:not(.system-label) {
+  max-width: 620px;
+  color: #d7c9bd;
+}
+
+.video-teaser .button {
+  margin-top: 18px;
+}
+
+.video-teaser .reference-frame {
+  max-height: 360px;
+}
+
 .contact-section {
   margin-bottom: 90px;
   padding: clamp(42px, 8vw, 84px);
@@ -704,6 +725,7 @@ h3 {
   .hero,
   .split-section,
   .work-hero,
+  .video-teaser,
   .expertise-layout,
   .journal-layout {
     grid-template-columns: 1fr;
