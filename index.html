@@ -3,86 +3,266 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>我的網站</title>
+    <title>Ernest Huang | Digital Innovation Architect</title>
     <meta
       name="description"
-      content="這是一個準備部署到 Azure Static Web Apps 的基本網站。"
+      content="Ernest Huang builds future-ready digital experiences with AI, GIS, XR, cloud architecture, and product strategy."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&family=Sora:wght@600;700;800&display=swap"
+      rel="stylesheet"
     />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <header class="site-header">
-      <a class="brand" href="#">我的網站</a>
-      <nav class="nav" aria-label="主要導覽">
-        <a href="#about">關於</a>
-        <a href="#services">服務</a>
-        <a href="#contact">聯絡</a>
-      </nav>
-    </header>
+    <div class="site-shell">
+      <header class="site-header">
+        <a class="brand" href="#top" aria-label="Ernest Huang home">
+          <span class="brand-mark"></span>
+          <span>Ernest Huang</span>
+        </a>
+        <button class="menu-button" type="button" aria-expanded="false" aria-controls="site-nav">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
+        <nav id="site-nav" class="nav" aria-label="Primary navigation">
+          <a href="#about">About</a>
+          <a href="#expertise">Expertise</a>
+          <a href="#work">Works</a>
+          <a href="#toolkit">Stack</a>
+          <a class="nav-cta" href="mailto:hello@example.com">Let's Talk</a>
+        </nav>
+      </header>
 
-    <main>
-      <section class="hero">
-        <div class="hero-content">
-          <p class="eyebrow">Azure Static Web Apps</p>
-          <h1>你的網站已經準備好上線</h1>
-          <p>
-            這是一個簡潔、響應式的起始網站。你可以把文字、圖片和連結改成自己的內容，
-            然後部署到 Azure Free 方案。
-          </p>
-          <div class="actions">
-            <a class="button primary" href="#contact">開始編輯內容</a>
-            <a class="button secondary" href="#services">查看區塊</a>
+      <main id="top">
+        <section class="hero section-grid">
+          <div class="hero-copy reveal">
+            <p class="system-label"><span></span> Digital Innovation Architect</p>
+            <h1>Build Digital Experiences With <em>AI, GIS and XR</em></h1>
+            <p class="hero-lede">
+              I architect high-performance, future-ready digital ecosystems. I connect strategy,
+              spatial intelligence, artificial intelligence, and immersive realities to solve
+              complex enterprise challenges.
+            </p>
+            <div class="actions">
+              <a class="button primary" href="#work">View My Work</a>
+              <a class="button ghost" href="mailto:hello@example.com">Contact Me</a>
+            </div>
+            <dl class="metrics" aria-label="Portfolio metrics">
+              <div>
+                <dt>10+</dt>
+                <dd>Years Exp</dd>
+              </div>
+              <div>
+                <dt>50+</dt>
+                <dd>Projects</dd>
+              </div>
+              <div>
+                <dt>3</dt>
+                <dd>Core Pillars</dd>
+              </div>
+            </dl>
           </div>
-        </div>
-      </section>
 
-      <section id="about" class="section">
-        <div class="section-heading">
-          <p class="eyebrow">About</p>
-          <h2>關於這個網站</h2>
-        </div>
-        <p class="lead">
-          這份模板適合個人品牌、作品集、小型公司頁面或產品介紹。所有檔案都是純靜態，
-          很適合放在 Azure Static Web Apps Free 方案。
-        </p>
-      </section>
+          <div class="hero-panel reveal" aria-label="Core disciplines">
+            <article class="capability-card">
+              <span class="card-icon">AI</span>
+              <h2>AI-Powered</h2>
+              <p>Machine Learning & LLMs</p>
+            </article>
+            <article class="capability-card">
+              <span class="card-icon">GIS</span>
+              <h2>GIS Intelligence</h2>
+              <p>Spatial Data Architecture</p>
+            </article>
+            <article class="capability-card">
+              <span class="card-icon">XR</span>
+              <h2>XR Experience</h2>
+              <p>Immersive Realities</p>
+            </article>
+            <article class="capability-card">
+              <span class="card-icon">CLD</span>
+              <h2>Cloud Ready</h2>
+              <p>Scalable Infrastructure</p>
+            </article>
+          </div>
+        </section>
 
-      <section id="services" class="section muted">
-        <div class="section-heading">
-          <p class="eyebrow">Sections</p>
-          <h2>已建立的基礎內容</h2>
-        </div>
-        <div class="grid">
-          <article class="card">
-            <h3>首頁介紹</h3>
-            <p>放網站主標題、簡短描述和主要行動按鈕。</p>
-          </article>
-          <article class="card">
-            <h3>關於區塊</h3>
-            <p>介紹你、你的公司、品牌故事或網站目的。</p>
-          </article>
-          <article class="card">
-            <h3>聯絡區塊</h3>
-            <p>放 Email、社群連結、地址或表單入口。</p>
-          </article>
-        </div>
-      </section>
+        <section id="about" class="section split-section">
+          <div class="section-kicker reveal">01 // Profile</div>
+          <div class="section-copy reveal">
+            <h2>Turning ideas into practical digital systems.</h2>
+            <p>
+              I help teams move from abstract ambition to usable digital products: strategy,
+              architecture, prototypes, dashboards, and interactive experiences that are elegant
+              enough for users and robust enough for operations.
+            </p>
+          </div>
+          <div class="profile-card glass-card reveal">
+            <p class="system-label"><span></span> Operating mode</p>
+            <h3>Strategy to Experience</h3>
+            <p>
+              A consultancy-style workflow for leaders who need clarity, fast prototypes, and a
+              technical path that can scale.
+            </p>
+          </div>
+        </section>
 
-      <section id="contact" class="section contact">
-        <div>
-          <p class="eyebrow">Contact</p>
-          <h2>下一步可以換成你的資料</h2>
+        <section id="expertise" class="section">
+          <div class="section-heading reveal">
+            <p class="system-label"><span></span> 02 // Core Services</p>
+            <h2>Digital capabilities for enterprise-grade ideas.</h2>
+          </div>
+          <div class="service-grid">
+            <article class="service-card glass-card reveal">
+              <span class="index">S-01</span>
+              <h3>Digital Strategy Consulting</h3>
+              <p>Roadmaps that align product goals, operational constraints, and technology bets.</p>
+              <ul>
+                <li>Transformation roadmaps</li>
+                <li>Technology stack assessment</li>
+                <li>Innovation workshops</li>
+              </ul>
+            </article>
+            <article class="service-card glass-card reveal">
+              <span class="index">S-02</span>
+              <h3>AI Workflow Design</h3>
+              <p>Automation plans that introduce LLMs and predictive intelligence with discipline.</p>
+              <ul>
+                <li>LLM integration planning</li>
+                <li>Process automation mapping</li>
+                <li>AI capability assessment</li>
+              </ul>
+            </article>
+            <article class="service-card glass-card reveal">
+              <span class="index">S-03</span>
+              <h3>Website & Platform Planning</h3>
+              <p>Information architecture and system flows for polished, scalable web products.</p>
+              <ul>
+                <li>Information architecture</li>
+                <li>System flow diagrams</li>
+                <li>Requirements scoping</li>
+              </ul>
+            </article>
+            <article class="service-card glass-card reveal">
+              <span class="index">S-04</span>
+              <h3>Interactive Experience Design</h3>
+              <p>High-fidelity interfaces that balance premium aesthetics with functional clarity.</p>
+              <ul>
+                <li>UI/UX prototyping</li>
+                <li>Design system architecture</li>
+                <li>Interaction motion design</li>
+              </ul>
+            </article>
+          </div>
+        </section>
+
+        <section id="work" class="section work-section">
+          <div class="work-hero reveal">
+            <div>
+              <p class="system-label"><span></span> Portfolio / V1.0</p>
+              <h2>Digital projects built from strategy to experience.</h2>
+            </div>
+            <figure class="reference-frame">
+              <img
+                src="./assets/stitch/featured-works.png"
+                alt="Stitch reference design showing Ernest Huang featured work cards"
+              />
+            </figure>
+          </div>
+          <div class="filter-row" aria-label="Project categories">
+            <button type="button" class="active">All</button>
+            <button type="button">AI</button>
+            <button type="button">GIS</button>
+            <button type="button">XR / AR</button>
+            <button type="button">Cloud</button>
+          </div>
+          <div class="project-grid">
+            <article class="project-card glass-card reveal">
+              <span class="tag">AI</span>
+              <span class="tag">Platform</span>
+              <h3>AI Workflow Lab</h3>
+              <p>Predictive automation system for complex enterprise workflows.</p>
+              <a href="#contact">View Project</a>
+            </article>
+            <article class="project-card glass-card reveal">
+              <span class="tag">GIS</span>
+              <span class="tag">Dashboard</span>
+              <h3>GIS Intelligence Dashboard</h3>
+              <p>Spatial data visualization for monitoring logistics and field operations.</p>
+              <a href="#contact">View Project</a>
+            </article>
+            <article class="project-card glass-card reveal">
+              <span class="tag">XR</span>
+              <span class="tag">Immersive</span>
+              <h3>XR Interactive Experience</h3>
+              <p>Immersive prototype for high-end product storytelling and interaction.</p>
+              <a href="#contact">View Project</a>
+            </article>
+          </div>
+        </section>
+
+        <section id="toolkit" class="section toolkit-section">
+          <div class="section-heading reveal">
+            <p class="system-label"><span></span> 03 // Digital Toolkit</p>
+            <h2>The tools behind digital innovation.</h2>
+            <p>
+              A practical stack for prototyping, building, measuring, and scaling modern digital
+              experiences.
+            </p>
+          </div>
+          <div class="tool-grid">
+            <article class="tool-card glass-card reveal">
+              <h3>AI & Automation</h3>
+              <p>OpenAI, Claude, Gemini, LangChain, Python, Jupyter</p>
+            </article>
+            <article class="tool-card glass-card reveal">
+              <h3>GIS & Spatial</h3>
+              <p>ArcGIS Pro, QGIS, Mapbox, Cesium, PostGIS</p>
+            </article>
+            <article class="tool-card glass-card reveal">
+              <h3>XR & Interactive</h3>
+              <p>Unity 3D, WebGL, Three.js, Unreal Engine, A-Frame</p>
+            </article>
+            <article class="tool-card glass-card reveal">
+              <h3>Cloud & Infra</h3>
+              <p>Microsoft Azure, AWS, Docker, Kubernetes, Terraform</p>
+            </article>
+          </div>
+          <blockquote class="quote-card reveal">
+            <p>
+              "Technology is valuable only when it helps people
+              <strong>understand, decide and act</strong> more effectively."
+            </p>
+            <cite>- Ernest Huang</cite>
+          </blockquote>
+        </section>
+
+        <section id="contact" class="section contact-section glass-card reveal">
+          <p class="system-label"><span></span> Active Brief</p>
+          <h2>Ready to architect your next digital future?</h2>
           <p>
-            把下面的 Email、網站名稱、介紹文字換成你的內容，就能作為第一版網站。
+            Bring the idea, the business challenge, or the unfinished prototype. I will help shape
+            it into a clear, buildable digital system.
           </p>
-        </div>
-        <a class="button primary" href="mailto:hello@example.com">hello@example.com</a>
-      </section>
-    </main>
+          <a class="button primary" href="mailto:hello@example.com">Let's Talk</a>
+        </section>
+      </main>
 
-    <footer class="site-footer">
-      <span id="year"></span> 我的網站。Powered by Azure Static Web Apps.
-    </footer>
+      <footer class="site-footer">
+        <strong>Ernest Huang</strong>
+        <nav aria-label="Footer navigation">
+          <a href="#about">About</a>
+          <a href="#expertise">Expertise</a>
+          <a href="#work">Works</a>
+          <a href="#contact">Contact</a>
+        </nav>
+        <span id="year"></span>
+      </footer>
+    </div>
 
     <script src="./script.js"></script>
   </body>
