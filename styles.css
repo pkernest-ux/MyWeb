@@ -537,6 +537,121 @@ h3 {
   opacity: 0.78;
 }
 
+.system-preview,
+.motion-panel,
+.expertise-orbit {
+  min-height: 320px;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255, 152, 0, 0.2), transparent 16%),
+    linear-gradient(rgba(255, 152, 0, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 152, 0, 0.06) 1px, transparent 1px),
+    rgba(18, 18, 18, 0.86);
+  background-size: auto, 32px 32px, 32px 32px, auto;
+}
+
+.system-preview span,
+.motion-panel span {
+  position: absolute;
+  border: 1px solid rgba(255, 184, 112, 0.36);
+  border-radius: 18px;
+  background: rgba(255, 152, 0, 0.08);
+}
+
+.system-preview span:nth-child(1) {
+  inset: 44px 42px auto;
+  height: 68px;
+}
+
+.system-preview span:nth-child(2) {
+  left: 42px;
+  right: 48%;
+  bottom: 42px;
+  height: 140px;
+}
+
+.system-preview span:nth-child(3) {
+  left: 56%;
+  right: 42px;
+  bottom: 42px;
+  height: 140px;
+}
+
+.motion-panel {
+  min-height: 300px;
+}
+
+.motion-panel span {
+  width: 46%;
+  height: 46%;
+  top: 50%;
+  left: 50%;
+  border-radius: 50%;
+  transform: translate(-50%, -50%) rotate(0deg);
+}
+
+.motion-panel span:nth-child(2) {
+  width: 62%;
+  height: 24%;
+  transform: translate(-50%, -50%) rotate(28deg);
+}
+
+.motion-panel span:nth-child(3) {
+  width: 28%;
+  height: 62%;
+  transform: translate(-50%, -50%) rotate(-28deg);
+}
+
+.expertise-orbit {
+  min-height: 520px;
+  display: grid;
+  place-items: center;
+}
+
+.expertise-orbit::before {
+  width: 168px;
+  height: 168px;
+  border: 1px solid rgba(255, 184, 112, 0.46);
+  border-radius: 50%;
+  content: "";
+  box-shadow: 0 0 70px rgba(255, 152, 0, 0.14);
+}
+
+.expertise-orbit span {
+  position: absolute;
+  min-width: 72px;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: #ffc58a;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.expertise-orbit span:nth-child(1) {
+  top: 88px;
+}
+
+.expertise-orbit span:nth-child(2) {
+  right: 44px;
+}
+
+.expertise-orbit span:nth-child(3) {
+  bottom: 88px;
+}
+
+.expertise-orbit span:nth-child(4) {
+  left: 44px;
+}
+
 .filter-row {
   display: flex;
   flex-wrap: wrap;
