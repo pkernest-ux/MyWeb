@@ -25,32 +25,42 @@
       </header>
 
       <main>
-        <section class="admin-hero section">
+        <section class="admin-hero admin-compact-hero section">
           <p class="system-label"><span></span> Content Control</p>
-          <h1>前台資訊維護項目</h1>
+          <h1>後台管理</h1>
           <p class="hero-lede">
-            直接編輯下方欄位並儲存。系統會把內容寫入 content.json，並觸發 Azure 自動部署。
+            從左側選擇要維護的頁面，右側只顯示該頁可編輯的文字欄位。儲存後會更新 content.json，並由 Azure 自動重新部署。
           </p>
         </section>
 
         <section class="section admin-section">
-          <form id="cms-form" class="cms-form glass-card">
-            <p id="cms-status" class="cms-status" role="status">Loading content...</p>
-            <div class="admin-form-actions">
-              <button class="button primary" type="submit">Save Content</button>
-              <a class="button ghost" href="./index.html">Preview Site</a>
-            </div>
-          </form>
+          <div class="admin-workspace glass-card">
+            <aside class="admin-sidebar" aria-label="Page list">
+              <div class="admin-sidebar-header">
+                <p class="system-label"><span></span> Pages</p>
+                <h2>網頁列表</h2>
+              </div>
+              <div id="cms-page-list" class="cms-page-list"></div>
+            </aside>
 
-          <div class="admin-guide glass-card">
-            <p class="system-label"><span></span> Workflow</p>
-            <h2>維護流程</h2>
-            <ol>
-              <li>修改欄位內容。</li>
-              <li>按 Save Content 儲存。</li>
-              <li>等待 GitHub Actions / Azure 部署完成，通常約 1 到 3 分鐘。</li>
-              <li>回前台重新整理頁面確認內容。</li>
-            </ol>
+            <form id="cms-form" class="cms-form">
+              <div class="cms-editor-header">
+                <div>
+                  <p class="system-label"><span></span> Page Settings</p>
+                  <h2 id="cms-page-title">載入中</h2>
+                  <p id="cms-page-description">請稍候，正在讀取內容。</p>
+                </div>
+                <a id="cms-preview-link" class="button ghost" href="./index.html" target="_blank" rel="noreferrer">預覽頁面</a>
+              </div>
+
+              <p id="cms-status" class="cms-status" role="status">Loading content...</p>
+              <div id="cms-fields" class="cms-fields"></div>
+
+              <div class="admin-form-actions">
+                <button class="button primary" type="submit">儲存此頁內容</button>
+                <button id="cms-reset-button" class="button ghost" type="button">還原目前頁面</button>
+              </div>
+            </form>
           </div>
         </section>
       </main>
