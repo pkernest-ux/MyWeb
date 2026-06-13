@@ -1035,6 +1035,21 @@ h3 {
   border-bottom: 1px solid var(--line);
 }
 
+.admin-login {
+  min-height: calc(100vh - 84px);
+  display: grid;
+  place-items: center;
+}
+
+.admin-login-card {
+  width: min(100%, 820px);
+  padding: clamp(36px, 7vw, 72px);
+}
+
+.admin-login-card h1 {
+  font-size: clamp(42px, 6vw, 72px);
+}
+
 .admin-section {
   padding-top: clamp(44px, 7vw, 84px);
 }

@@ -1,4 +1,16 @@
 {
+  "routes": [
+    {
+      "route": "/admin-dashboard.html",
+      "allowedRoles": ["authenticated"]
+    }
+  ],
+  "responseOverrides": {
+    "401": {
+      "redirect": "/admin.html",
+      "statusCode": 302
+    }
+  },
   "navigationFallback": {
     "rewrite": "/index.html",
     "exclude": ["/images/*.{png,jpg,gif,webp}", "/css/*", "/js/*"]

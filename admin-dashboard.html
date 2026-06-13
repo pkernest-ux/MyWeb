@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Admin Dashboard | Ernest Huang</title>
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&family=Sora:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="site-shell">
+      <header class="site-header">
+        <a class="brand" href="./index.html"><span class="brand-mark"></span><span>Ernest Huang</span></a>
+        <nav class="nav admin-nav" aria-label="Admin navigation">
+          <a href="./index.html">View Site</a>
+          <a href="https://github.com/pkernest-ux/MyWeb/actions">Deployments</a>
+          <a class="nav-cta" href="/.auth/logout?post_logout_redirect_uri=/admin.html">Logout</a>
+        </nav>
+      </header>
+
+      <main>
+        <section class="admin-hero section">
+          <p class="system-label"><span></span> Content Control</p>
+          <h1>前台資訊維護項目</h1>
+          <p class="hero-lede">
+            選擇要維護的頁面，登入 GitHub 後編輯內容並 Commit changes。Azure Static Web Apps
+            會在 GitHub Actions 完成後自動更新前台。
+          </p>
+        </section>
+
+        <section class="section admin-section">
+          <div class="admin-grid">
+            <article class="admin-card glass-card">
+              <span>01</span>
+              <h2>Home</h2>
+              <p>維護主標題、核心能力、作品摘要、服務與聯絡 CTA。</p>
+              <a class="button primary" href="https://github.com/pkernest-ux/MyWeb/edit/main/index.html">Edit Home</a>
+            </article>
+            <article class="admin-card glass-card">
+              <span>02</span>
+              <h2>About</h2>
+              <p>維護個人介紹、方法論、流程與定位說明。</p>
+              <a class="button primary" href="https://github.com/pkernest-ux/MyWeb/edit/main/about.html">Edit About</a>
+            </article>
+            <article class="admin-card glass-card">
+              <span>03</span>
+              <h2>Expertise</h2>
+              <p>維護 AI、GIS、XR、Cloud 等專業能力描述。</p>
+              <a class="button primary" href="https://github.com/pkernest-ux/MyWeb/edit/main/expertise.html">Edit Expertise</a>
+            </article>
+            <article class="admin-card glass-card">
+              <span>04</span>
+              <h2>Works</h2>
+              <p>維護作品項目、分類標籤、說明文字與行動連結。</p>
+              <a class="button primary" href="https://github.com/pkernest-ux/MyWeb/edit/main/works.html">Edit Works</a>
+            </article>
+            <article class="admin-card glass-card">
+              <span>05</span>
+              <h2>Services</h2>
+              <p>維護服務項目、服務名稱與內容描述。</p>
+              <a class="button primary" href="https://github.com/pkernest-ux/MyWeb/edit/main/services.html">Edit Services</a>
+            </article>
+            <article class="admin-card glass-card">
+              <span>06</span>
+              <h2>Stack</h2>
+              <p>維護工具棧、技術項目與 Video 區塊入口。</p>
+              <a class="button primary" href="https://github.com/pkernest-ux/MyWeb/edit/main/toolkit.html">Edit Stack</a>
+            </article>
+            <article class="admin-card glass-card">
+              <span>07</span>
+              <h2>Journal</h2>
+              <p>維護文章標題、摘要與洞察內容。</p>
+              <a class="button primary" href="https://github.com/pkernest-ux/MyWeb/edit/main/journal.html">Edit Journal</a>
+            </article>
+            <article class="admin-card glass-card">
+              <span>08</span>
+              <h2>Video</h2>
+              <p>維護影片標題、分類、摘要與 CTA 區塊。</p>
+              <a class="button primary" href="https://github.com/pkernest-ux/MyWeb/edit/main/video.html">Edit Video</a>
+            </article>
+          </div>
+
+          <div class="admin-guide glass-card">
+            <p class="system-label"><span></span> Workflow</p>
+            <h2>維護流程</h2>
+            <ol>
+              <li>點選上方任一 Edit 按鈕。</li>
+              <li>在 GitHub 頁面修改文字或內容。</li>
+              <li>按 Commit changes 儲存。</li>
+              <li>等待 GitHub Actions / Azure 部署完成，通常約 1 到 3 分鐘。</li>
+            </ol>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
