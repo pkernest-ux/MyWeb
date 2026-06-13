@@ -20,14 +20,94 @@
         </nav>
       </header>
       <main>
-        <section class="page-hero section">
-          <p class="system-label"><span></span> Media / Highlights</p>
-          <h1>Motion, prototypes, and immersive product stories.</h1>
-          <p class="hero-lede">A place for future demo reels, product explainers, spatial walkthroughs, and interactive narrative highlights.</p>
+        <section class="video-hero section">
+          <div class="video-hero-copy reveal">
+            <p class="system-label"><span></span> Video Highlights</p>
+            <h1>Digital Ideas <em>In Motion</em></h1>
+            <p class="hero-lede">
+              A curated archive of process demonstrations, workflow experiments, and kinetic
+              architectural models. Translating complex technical concepts into accessible visual
+              narratives.
+            </p>
+            <a class="button primary video-action" href="#recent-videos">Watch Latest</a>
+          </div>
+          <article class="featured-video-card reveal">
+            <div class="video-thumb">
+              <img src="./assets/stitch/video-featured-thumb.png" alt="Generative form finding video preview" />
+              <span class="play-button" aria-hidden="true"></span>
+              <div class="video-meta">
+                <span>Featured</span>
+                <h2>Generative Form Finding V2</h2>
+              </div>
+              <time>03:45</time>
+            </div>
+          </article>
         </section>
+
+        <section class="video-filter-section section">
+          <div class="filter-row video-filters" aria-label="Video categories">
+            <button type="button" class="active">All</button>
+            <button type="button">AI Workflow</button>
+            <button type="button">GIS</button>
+            <button type="button">XR/AR</button>
+            <button type="button">Cloud</button>
+            <button type="button">Strategy</button>
+            <button type="button">Personal Lab</button>
+          </div>
+        </section>
+
+        <section id="recent-videos" class="section recent-video-section">
+          <div class="section-title-row reveal">
+            <h2>Recent Explorations</h2>
+            <a href="./works.html">View Archive</a>
+          </div>
+          <div class="video-card-grid">
+            <article class="video-exploration-card glass-card reveal">
+              <div class="video-card-media">
+                <img src="./assets/stitch/video-neural-thumb.png" alt="Neural network topology preview" />
+                <span class="mini-play" aria-hidden="true"></span>
+                <time>02:15</time>
+              </div>
+              <span class="video-category">AI Workflow</span>
+              <h3>Neural Network Topologies</h3>
+              <p>Visualizing real-time data processing through abstract spatial structures using custom Python workflows.</p>
+            </article>
+            <article class="video-exploration-card glass-card reveal">
+              <div class="video-card-media">
+                <img src="./assets/stitch/video-density-thumb.png" alt="Urban density mapping preview" />
+                <span class="mini-play" aria-hidden="true"></span>
+                <time>05:38</time>
+              </div>
+              <span class="video-category">GIS</span>
+              <h3>Urban Density Mapping</h3>
+              <p>A breakdown of how spatial data influences architectural massing algorithms in dense urban environments.</p>
+            </article>
+            <article class="video-exploration-card glass-card reveal">
+              <div class="video-card-media">
+                <img src="./assets/stitch/video-spatial-thumb.png" alt="Spatial interface prototype preview" />
+                <span class="mini-play" aria-hidden="true"></span>
+                <time>01:45</time>
+              </div>
+              <span class="video-category">XR/AR</span>
+              <h3>Spatial Interface Prototyping</h3>
+              <p>Testing gestural interactions for manipulating 3D building components in mixed reality spaces.</p>
+            </article>
+          </div>
+        </section>
+
         <section class="section">
-          <figure class="reference-frame wide reveal"><img src="./assets/stitch/video-highlights.png" alt="Video highlights design reference" /></figure>
-          <div class="contact-section glass-card reveal"><p class="system-label"><span></span> Coming Next</p><h2>Video content can be embedded here.</h2><p>Use this page for YouTube, Vimeo, product walkthroughs, or short demo clips.</p></div>
+          <div class="video-cta glass-card reveal">
+            <div class="cta-icon" aria-hidden="true">▰</div>
+            <h2>Want to See an Idea Become a Demo?</h2>
+            <p>
+              Whether it's a complex system architecture or a new digital product concept, visual
+              narrative clarifies intent.
+            </p>
+            <div class="actions centered">
+              <a class="button primary" href="mailto:hello@example.com">Start a Conversation</a>
+              <a class="button ghost" href="./works.html">View My Works</a>
+            </div>
+          </div>
         </section>
       </main>
       <footer class="site-footer"><strong>Ernest Huang</strong><nav><a href="./index.html">Home</a><a href="./works.html">Works</a><a href="./services.html">Services</a><a href="./journal.html">Journal</a><a href="./video.html">Video</a></nav><span id="year"></span></footer>
