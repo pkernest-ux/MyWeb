@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>我的網站</title>
+    <meta
+      name="description"
+      content="這是一個準備部署到 Azure Static Web Apps 的基本網站。"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#">我的網站</a>
+      <nav class="nav" aria-label="主要導覽">
+        <a href="#about">關於</a>
+        <a href="#services">服務</a>
+        <a href="#contact">聯絡</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-content">
+          <p class="eyebrow">Azure Static Web Apps</p>
+          <h1>你的網站已經準備好上線</h1>
+          <p>
+            這是一個簡潔、響應式的起始網站。你可以把文字、圖片和連結改成自己的內容，
+            然後部署到 Azure Free 方案。
+          </p>
+          <div class="actions">
+            <a class="button primary" href="#contact">開始編輯內容</a>
+            <a class="button secondary" href="#services">查看區塊</a>
+          </div>
+        </div>
+      </section>
+
+      <section id="about" class="section">
+        <div class="section-heading">
+          <p class="eyebrow">About</p>
+          <h2>關於這個網站</h2>
+        </div>
+        <p class="lead">
+          這份模板適合個人品牌、作品集、小型公司頁面或產品介紹。所有檔案都是純靜態，
+          很適合放在 Azure Static Web Apps Free 方案。
+        </p>
+      </section>
+
+      <section id="services" class="section muted">
+        <div class="section-heading">
+          <p class="eyebrow">Sections</p>
+          <h2>已建立的基礎內容</h2>
+        </div>
+        <div class="grid">
+          <article class="card">
+            <h3>首頁介紹</h3>
+            <p>放網站主標題、簡短描述和主要行動按鈕。</p>
+          </article>
+          <article class="card">
+            <h3>關於區塊</h3>
+            <p>介紹你、你的公司、品牌故事或網站目的。</p>
+          </article>
+          <article class="card">
+            <h3>聯絡區塊</h3>
+            <p>放 Email、社群連結、地址或表單入口。</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="contact" class="section contact">
+        <div>
+          <p class="eyebrow">Contact</p>
+          <h2>下一步可以換成你的資料</h2>
+          <p>
+            把下面的 Email、網站名稱、介紹文字換成你的內容，就能作為第一版網站。
+          </p>
+        </div>
+        <a class="button primary" href="mailto:hello@example.com">hello@example.com</a>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span id="year"></span> 我的網站。Powered by Azure Static Web Apps.
+    </footer>
+
+    <script src="./script.js"></script>
+  </body>
+</html>
