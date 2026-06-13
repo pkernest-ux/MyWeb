@@ -6,9 +6,9 @@ const pages = [
     href: "./index.html",
     description: "維護首頁主視覺、行動按鈕、區塊標題與聯絡文案。",
     fields: [
-      ["home.heroLabel", "主視覺標籤"],
-      ["home.heroTitle", "主標題", "textarea"],
-      ["home.heroLead", "主視覺說明", "textarea"],
+      ["home.heroTitle", "大標題（白色最大字）", "textarea", "這個欄位會改首頁第一屏最大的白色標題。"],
+      ["home.heroLead", "主視覺說明", "textarea", "大標題下方的介紹文字。"],
+      ["home.heroLabel", "黃色小標籤", "text", "這是大標題上方的黃色小字，不是主標題。建議保持短一點。"],
       ["home.primaryCta", "主要按鈕文字"],
       ["home.secondaryCta", "次要按鈕文字"],
       ["home.aboutTitle", "關於區塊標題", "textarea"],
@@ -27,7 +27,7 @@ const pages = [
     href: "./about.html",
     description: "維護關於頁的主視覺與個人定位文字。",
     fields: [
-      ["about.heroTitle", "主標題", "textarea"],
+      ["about.heroTitle", "大標題（白色最大字）", "textarea"],
       ["about.heroLead", "主視覺說明", "textarea"],
       ["about.sectionTitle", "內容區塊標題", "textarea"],
       ["about.sectionText", "內容區塊文字", "textarea"]
@@ -40,7 +40,7 @@ const pages = [
     href: "./expertise.html",
     description: "維護專長頁的主標題與說明文字。",
     fields: [
-      ["expertise.heroTitle", "主標題", "textarea"],
+      ["expertise.heroTitle", "大標題（白色最大字）", "textarea"],
       ["expertise.heroLead", "主視覺說明", "textarea"]
     ]
   },
@@ -51,7 +51,7 @@ const pages = [
     href: "./works.html",
     description: "維護作品頁的主標題與說明文字。",
     fields: [
-      ["works.heroTitle", "主標題", "textarea"],
+      ["works.heroTitle", "大標題（白色最大字）", "textarea"],
       ["works.heroLead", "主視覺說明", "textarea"]
     ]
   },
@@ -62,7 +62,7 @@ const pages = [
     href: "./services.html",
     description: "維護服務頁的主標題與說明文字。",
     fields: [
-      ["services.heroTitle", "主標題", "textarea"],
+      ["services.heroTitle", "大標題（白色最大字）", "textarea"],
       ["services.heroLead", "主視覺說明", "textarea"]
     ]
   },
@@ -73,7 +73,7 @@ const pages = [
     href: "./toolkit.html",
     description: "維護工具頁主視覺，以及連到影片區塊的介紹文字。",
     fields: [
-      ["toolkit.heroTitle", "主標題", "textarea"],
+      ["toolkit.heroTitle", "大標題（白色最大字）", "textarea"],
       ["toolkit.heroLead", "主視覺說明", "textarea"],
       ["toolkit.videoTitle", "影片區塊標題", "textarea"],
       ["toolkit.videoText", "影片區塊文字", "textarea"]
@@ -86,7 +86,7 @@ const pages = [
     href: "./journal.html",
     description: "維護文章頁的主標題與說明文字。",
     fields: [
-      ["journal.heroTitle", "主標題", "textarea"],
+      ["journal.heroTitle", "大標題（白色最大字）", "textarea"],
       ["journal.heroLead", "主視覺說明", "textarea"]
     ]
   },
@@ -97,7 +97,7 @@ const pages = [
     href: "./video.html",
     description: "維護影片頁主視覺、精選影片標題、列表標題與 CTA 文案。",
     fields: [
-      ["video.heroTitle", "主標題", "textarea"],
+      ["video.heroTitle", "大標題（白色最大字）", "textarea"],
       ["video.heroLead", "主視覺說明", "textarea"],
       ["video.featuredTitle", "精選影片標題"],
       ["video.recentTitle", "近期探索標題"],
@@ -186,7 +186,7 @@ const syncActivePageToWorking = () => {
   }
 };
 
-const createField = ([path, label, type], content) => {
+const createField = ([path, label, type = "text", hint], content) => {
   const wrapper = document.createElement("label");
   wrapper.className = "cms-field";
   wrapper.dataset.path = path;
@@ -206,6 +206,14 @@ const createField = ([path, label, type], content) => {
   }
 
   wrapper.append(text, input);
+
+  if (hint) {
+    const help = document.createElement("small");
+    help.className = "cms-field-hint";
+    help.textContent = hint;
+    wrapper.append(help);
+  }
+
   return wrapper;
 };
 

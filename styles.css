@@ -246,12 +246,20 @@ img {
   text-transform: uppercase;
 }
 
-.system-label span {
+.system-label > span:first-child {
   width: 8px;
   height: 8px;
+  flex: 0 0 8px;
   border-radius: 50%;
   background: linear-gradient(135deg, var(--primary), var(--primary-2));
   box-shadow: 0 0 18px rgba(255, 152, 0, 0.76);
+}
+
+.system-label > span:not(:first-child) {
+  width: auto;
+  height: auto;
+  background: none;
+  box-shadow: none;
 }
 
 h1,
@@ -1224,6 +1232,12 @@ h3 {
   font-size: 12px;
   font-weight: 800;
   text-transform: uppercase;
+}
+
+.cms-field-hint {
+  color: #ffc58a;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .cms-field input,
