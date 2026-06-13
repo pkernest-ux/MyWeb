@@ -351,6 +351,20 @@ h3 {
   background: var(--primary-soft);
 }
 
+.cms-preview-banner {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  border-bottom: 1px solid rgba(255, 170, 32, 0.44);
+  background: rgba(45, 29, 7, 0.96);
+  color: #ffe5b8;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 12px 18px;
+  text-align: center;
+}
+
 .metrics {
   display: flex;
   gap: clamp(24px, 5vw, 54px);

@@ -107,16 +107,24 @@ const pages = [
   }
 ];
 
+const draftStorageKey = "ernest-cms-draft";
+const previewStorageKey = "ernest-cms-preview-content";
+
 const form = document.querySelector("#cms-form");
 const pageList = document.querySelector("#cms-page-list");
 const fieldsElement = document.querySelector("#cms-fields");
 const statusElement = document.querySelector("#cms-status");
 const pageTitle = document.querySelector("#cms-page-title");
 const pageDescription = document.querySelector("#cms-page-description");
-const previewLink = document.querySelector("#cms-preview-link");
+const previewButton = document.querySelector("#cms-preview-button");
+const draftButton = document.querySelector("#cms-draft-button");
 const resetButton = document.querySelector("#cms-reset-button");
-let currentContent = {};
+let publishedContent = {};
+let workingContent = {};
 let activePageId = pages[0].id;
+let hasDraft = false;
+
+const cloneContent = (content) => JSON.parse(JSON.stringify(content || {}));
 
 const getValue = (source, path) =>
   path.split(".").reduce((value, key) => (value == null ? value : value[key]), source);
@@ -139,6 +147,44 @@ const setStatus = (message, type = "") => {
 };
 
 const getActivePage = () => pages.find((page) => page.id === activePageId) || pages[0];
+
+const getSavedDraft = () => {
+  try {
+    const rawDraft = localStorage.getItem(draftStorageKey);
+    if (!rawDraft) return null;
+    const draft = JSON.parse(rawDraft);
+    return draft && draft.content ? draft : null;
+  } catch (error) {
+    console.warn("Draft unavailable", error);
+    return null;
+  }
+};
+
+const writeDraft = () => {
+  localStorage.setItem(
+    draftStorageKey,
+    JSON.stringify({
+      updatedAt: new Date().toISOString(),
+      content: workingContent
+    })
+  );
+  hasDraft = true;
+};
+
+const clearDraft = () => {
+  localStorage.removeItem(draftStorageKey);
+  localStorage.removeItem(previewStorageKey);
+  hasDraft = false;
+};
+
+const syncActivePageToWorking = () => {
+  if (!form) return;
+  const data = new FormData(form);
+
+  for (const [path, value] of data.entries()) {
+    setValue(workingContent, path, String(value));
+  }
+};
 
 const createField = ([path, label, type], content) => {
   const wrapper = document.createElement("label");
@@ -178,17 +224,16 @@ const renderPageList = () => {
   });
 };
 
-const renderForm = (content) => {
+const renderForm = () => {
   const activePage = getActivePage();
-  if (!fieldsElement || !pageTitle || !pageDescription || !previewLink) return;
+  if (!fieldsElement || !pageTitle || !pageDescription) return;
 
   fieldsElement.innerHTML = "";
   pageTitle.textContent = activePage.label;
   pageDescription.textContent = activePage.description;
-  previewLink.href = activePage.href;
 
   activePage.fields.forEach((field) => {
-    fieldsElement.append(createField(field, content));
+    fieldsElement.append(createField(field, workingContent));
   });
 
   renderPageList();
@@ -202,41 +247,58 @@ const loadContent = async () => {
     throw new Error(`Unable to load content: ${response.status}`);
   }
 
-  currentContent = await response.json();
-  renderForm(currentContent);
-  setStatus("已載入，可開始編輯。");
+  publishedContent = await response.json();
+  const savedDraft = getSavedDraft();
+  workingContent = cloneContent(savedDraft?.content || publishedContent);
+  hasDraft = Boolean(savedDraft);
+  renderForm();
+  setStatus(hasDraft ? "已載入尚未上架的草稿。" : "已載入正式內容，可開始編輯。");
 };
 
 pageList?.addEventListener("click", (event) => {
   const button = event.target.closest(".cms-page-button");
   if (!button || button.dataset.page === activePageId) return;
 
+  syncActivePageToWorking();
   activePageId = button.dataset.page;
-  renderForm(currentContent);
-  setStatus(`正在編輯：${getActivePage().label}`);
+  renderForm();
+  setStatus(hasDraft ? `正在編輯草稿：${getActivePage().label}` : `正在編輯：${getActivePage().label}`);
+});
+
+draftButton?.addEventListener("click", () => {
+  syncActivePageToWorking();
+  writeDraft();
+  setStatus("草稿已儲存。這不會影響前台正式內容。", "success");
+});
+
+previewButton?.addEventListener("click", () => {
+  syncActivePageToWorking();
+  writeDraft();
+  localStorage.setItem(previewStorageKey, JSON.stringify(workingContent));
+
+  const activePage = getActivePage();
+  const separator = activePage.href.includes("?") ? "&" : "?";
+  window.open(`${activePage.href}${separator}cms-preview=1&ts=${Date.now()}`, "_blank", "noreferrer");
+  setStatus("已開啟草稿預覽。預覽不會上架，也不會影響一般訪客。", "success");
 });
 
 resetButton?.addEventListener("click", () => {
-  renderForm(currentContent);
-  setStatus(`已還原目前頁面：${getActivePage().label}`);
+  clearDraft();
+  workingContent = cloneContent(publishedContent);
+  renderForm();
+  setStatus("草稿已放棄，畫面已還原為目前正式內容。");
 });
 
 form?.addEventListener("submit", async (event) => {
   event.preventDefault();
-  const nextContent = structuredClone(currentContent);
-  const data = new FormData(form);
-
-  for (const [path, value] of data.entries()) {
-    setValue(nextContent, path, String(value));
-  }
-
-  setStatus("儲存中...");
+  syncActivePageToWorking();
+  setStatus("正在上架變更...");
 
   try {
     const response = await fetch("/api/save-content", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(nextContent)
+      body: JSON.stringify(workingContent)
     });
     const result = await response.json().catch(() => ({}));
 
@@ -244,8 +306,9 @@ form?.addEventListener("submit", async (event) => {
       throw new Error(result.error || `Save failed: ${response.status}`);
     }
 
-    currentContent = nextContent;
-    setStatus("已儲存。Azure 正在重新部署，通常 1 到 3 分鐘後會更新前台。", "success");
+    publishedContent = cloneContent(workingContent);
+    clearDraft();
+    setStatus("已上架。Azure 正在重新部署，通常 1 到 3 分鐘後會更新前台。", "success");
   } catch (error) {
     setStatus(error.message, "error");
   }

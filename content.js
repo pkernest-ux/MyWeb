@@ -5,17 +5,48 @@
     return;
   }
 
+  const previewStorageKey = "ernest-cms-preview-content";
+  const isPreview = new URLSearchParams(window.location.search).get("cms-preview") === "1";
+
   const getValue = (source, path) =>
     path.split(".").reduce((value, key) => (value == null ? value : value[key]), source);
 
-  try {
-    const response = await fetch(`/content.json?ts=${Date.now()}`, { cache: "no-store" });
+  const getPreviewContent = () => {
+    if (!isPreview) return null;
 
-    if (!response.ok) {
-      throw new Error(`Content request failed: ${response.status}`);
+    try {
+      const rawPreview = localStorage.getItem(previewStorageKey);
+      return rawPreview ? JSON.parse(rawPreview) : null;
+    } catch (error) {
+      console.warn("Preview content unavailable", error);
+      return null;
+    }
+  };
+
+  const showPreviewBanner = () => {
+    if (!isPreview) return;
+
+    const banner = document.createElement("div");
+    banner.className = "cms-preview-banner";
+    banner.textContent = "草稿預覽模式：這只是你尚未上架的內容，一般訪客不會看到。";
+    document.body.prepend(banner);
+  };
+
+  try {
+    const previewContent = getPreviewContent();
+    let content = previewContent;
+
+    if (!content) {
+      const response = await fetch(`/content.json?ts=${Date.now()}`, { cache: "no-store" });
+
+      if (!response.ok) {
+        throw new Error(`Content request failed: ${response.status}`);
+      }
+
+      content = await response.json();
     }
 
-    const content = await response.json();
+    showPreviewBanner();
 
     contentTargets.forEach((target) => {
       const value = getValue(content, target.dataset.content);
