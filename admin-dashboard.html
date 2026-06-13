@@ -11,7 +11,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&family=Sora:wght@600;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=label-fix" />
+    <link rel="stylesheet" href="./styles.css?v=status-flow" />
   </head>
   <body>
     <div class="site-shell">
@@ -29,7 +29,7 @@
           <p class="system-label"><span></span> Content Control</p>
           <h1>後台管理</h1>
           <p class="hero-lede">
-            從左側選擇要維護的頁面，右側只顯示該頁可編輯的文字欄位。儲存後會更新 content.json，並由 Azure 自動重新部署。
+            從左側選擇要維護的頁面，右側只顯示該頁可編輯的文字欄位。你可以先儲存草稿和預覽，確認後再正式上架。
           </p>
         </section>
 
@@ -53,7 +53,10 @@
                 <button id="cms-preview-button" class="button ghost" type="button">預覽草稿</button>
               </div>
 
-              <p id="cms-status" class="cms-status" role="status">Loading content...</p>
+              <div id="cms-status" class="cms-status" role="status" aria-live="polite">
+                <strong>讀取中</strong>
+                <span>正在載入目前網站內容。</span>
+              </div>
               <div id="cms-fields" class="cms-fields"></div>
 
               <div class="admin-form-actions">
@@ -66,6 +69,6 @@
         </section>
       </main>
     </div>
-    <script src="./admin-cms.js?v=field-clarity"></script>
+    <script src="./admin-cms.js?v=status-flow"></script>
   </body>
 </html>

@@ -119,10 +119,12 @@ const pageDescription = document.querySelector("#cms-page-description");
 const previewButton = document.querySelector("#cms-preview-button");
 const draftButton = document.querySelector("#cms-draft-button");
 const resetButton = document.querySelector("#cms-reset-button");
+const publishButton = form?.querySelector('button[type="submit"]');
 let publishedContent = {};
 let workingContent = {};
 let activePageId = pages[0].id;
 let hasDraft = false;
+let hasUnsavedChanges = false;
 
 const cloneContent = (content) => JSON.parse(JSON.stringify(content || {}));
 
@@ -140,10 +142,26 @@ const setValue = (source, path, value) => {
   target[last] = value;
 };
 
-const setStatus = (message, type = "") => {
+const setStatus = (title, detail = "", type = "") => {
   if (!statusElement) return;
-  statusElement.textContent = message;
   statusElement.dataset.type = type;
+  statusElement.replaceChildren();
+
+  const titleElement = document.createElement("strong");
+  titleElement.textContent = title;
+  statusElement.append(titleElement);
+
+  if (detail) {
+    const detailElement = document.createElement("span");
+    detailElement.textContent = detail;
+    statusElement.append(detailElement);
+  }
+};
+
+const setBusy = (isBusy) => {
+  [previewButton, draftButton, resetButton, publishButton].forEach((button) => {
+    if (button) button.disabled = isBusy;
+  });
 };
 
 const getActivePage = () => pages.find((page) => page.id === activePageId) || pages[0];
@@ -169,12 +187,14 @@ const writeDraft = () => {
     })
   );
   hasDraft = true;
+  hasUnsavedChanges = false;
 };
 
 const clearDraft = () => {
   localStorage.removeItem(draftStorageKey);
   localStorage.removeItem(previewStorageKey);
   hasDraft = false;
+  hasUnsavedChanges = false;
 };
 
 const syncActivePageToWorking = () => {
@@ -248,7 +268,7 @@ const renderForm = () => {
 };
 
 const loadContent = async () => {
-  setStatus("Loading content...");
+  setStatus("讀取中", "正在載入目前網站內容。", "loading");
   const response = await fetch(`/content.json?ts=${Date.now()}`, { cache: "no-store" });
 
   if (!response.ok) {
@@ -260,7 +280,11 @@ const loadContent = async () => {
   workingContent = cloneContent(savedDraft?.content || publishedContent);
   hasDraft = Boolean(savedDraft);
   renderForm();
-  setStatus(hasDraft ? "已載入尚未上架的草稿。" : "已載入正式內容，可開始編輯。");
+  setStatus(
+    hasDraft ? "已載入草稿" : "已載入正式內容",
+    hasDraft ? "目前畫面是尚未上架的草稿，確認後可預覽或變更上架。" : "你可以開始編輯，編輯後請先儲存草稿或預覽。",
+    hasDraft ? "draft" : "ready"
+  );
 };
 
 pageList?.addEventListener("click", (event) => {
@@ -270,13 +294,22 @@ pageList?.addEventListener("click", (event) => {
   syncActivePageToWorking();
   activePageId = button.dataset.page;
   renderForm();
-  setStatus(hasDraft ? `正在編輯草稿：${getActivePage().label}` : `正在編輯：${getActivePage().label}`);
+  setStatus(
+    hasDraft || hasUnsavedChanges ? "編輯草稿中" : "編輯中",
+    `目前正在維護「${getActivePage().label}」頁面。`,
+    hasDraft || hasUnsavedChanges ? "draft" : "ready"
+  );
+});
+
+fieldsElement?.addEventListener("input", () => {
+  hasUnsavedChanges = true;
+  setStatus("尚未儲存", "欄位已變更。請按「儲存草稿」保留草稿，或按「預覽草稿」查看效果。", "pending");
 });
 
 draftButton?.addEventListener("click", () => {
   syncActivePageToWorking();
   writeDraft();
-  setStatus("草稿已儲存。這不會影響前台正式內容。", "success");
+  setStatus("已儲存草稿", "草稿已保存在這台瀏覽器，尚未正式上架，一般訪客不會看到。", "draft");
 });
 
 previewButton?.addEventListener("click", () => {
@@ -287,20 +320,21 @@ previewButton?.addEventListener("click", () => {
   const activePage = getActivePage();
   const separator = activePage.href.includes("?") ? "&" : "?";
   window.open(`${activePage.href}${separator}cms-preview=1&ts=${Date.now()}`, "_blank", "noreferrer");
-  setStatus("已開啟草稿預覽。預覽不會上架，也不會影響一般訪客。", "success");
+  setStatus("預覽中", "已開啟草稿預覽。預覽不會上架，也不會影響一般訪客。", "preview");
 });
 
 resetButton?.addEventListener("click", () => {
   clearDraft();
   workingContent = cloneContent(publishedContent);
   renderForm();
-  setStatus("草稿已放棄，畫面已還原為目前正式內容。");
+  setStatus("已放棄草稿", "畫面已還原為目前正式上架內容。", "ready");
 });
 
 form?.addEventListener("submit", async (event) => {
   event.preventDefault();
   syncActivePageToWorking();
-  setStatus("正在上架變更...");
+  setStatus("上架中", "正在把變更寫入 GitHub，完成後 Azure 會自動重新部署。", "publishing");
+  setBusy(true);
 
   try {
     const response = await fetch("/api/save-content", {
@@ -316,10 +350,12 @@ form?.addEventListener("submit", async (event) => {
 
     publishedContent = cloneContent(workingContent);
     clearDraft();
-    setStatus("已上架。Azure 正在重新部署，通常 1 到 3 分鐘後會更新前台。", "success");
+    setStatus("已上架", "變更已寫入 GitHub。Azure 正在重新部署，通常 1 到 3 分鐘後會更新前台。", "published");
   } catch (error) {
-    setStatus(error.message, "error");
+    setStatus("上架失敗", error.message, "error");
+  } finally {
+    setBusy(false);
   }
 });
 
-loadContent().catch((error) => setStatus(error.message, "error"));
+loadContent().catch((error) => setStatus("讀取失敗", error.message, "error"));

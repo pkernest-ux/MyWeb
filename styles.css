@@ -1263,18 +1263,58 @@ h3 {
 }
 
 .cms-status {
+  display: grid;
+  gap: 4px;
   margin: 0;
-  color: #ffc58a;
+  border: 1px solid rgba(255, 170, 32, 0.32);
+  border-radius: 8px;
+  background: rgba(255, 170, 32, 0.08);
+  color: #ffe1a8;
   font-family: "JetBrains Mono", monospace;
+  padding: 14px 16px;
+}
+
+.cms-status strong {
   font-size: 13px;
   font-weight: 800;
 }
 
-.cms-status[data-type="success"] {
+.cms-status span {
+  color: #d7c9bd;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.cms-status[data-type="ready"],
+.cms-status[data-type="published"] {
+  border-color: rgba(143, 240, 179, 0.42);
+  background: rgba(143, 240, 179, 0.1);
   color: #8ff0b3;
 }
 
+.cms-status[data-type="draft"],
+.cms-status[data-type="pending"] {
+  border-color: rgba(255, 197, 138, 0.48);
+  background: rgba(255, 197, 138, 0.1);
+  color: #ffc58a;
+}
+
+.cms-status[data-type="preview"] {
+  border-color: rgba(128, 201, 255, 0.44);
+  background: rgba(128, 201, 255, 0.1);
+  color: #a9d9ff;
+}
+
+.cms-status[data-type="loading"],
+.cms-status[data-type="publishing"] {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+  color: #f4efe8;
+}
+
 .cms-status[data-type="error"] {
+  border-color: rgba(255, 180, 171, 0.52);
+  background: rgba(255, 180, 171, 0.1);
   color: #ffb4ab;
 }
 
