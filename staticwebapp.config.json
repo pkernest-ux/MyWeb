@@ -3,6 +3,10 @@
     {
       "route": "/admin-dashboard.html",
       "allowedRoles": ["authenticated"]
+    },
+    {
+      "route": "/api/save-content",
+      "allowedRoles": ["authenticated"]
     }
   ],
   "responseOverrides": {

@@ -43,16 +43,16 @@
       <main id="top">
         <section class="hero section-grid">
           <div class="hero-copy reveal">
-            <p class="system-label"><span></span> Digital Innovation Architect</p>
-            <h1>Build Digital Experiences With <em>AI, GIS and XR</em></h1>
-            <p class="hero-lede">
+            <p class="system-label"><span></span> <span data-content="home.heroLabel">Digital Innovation Architect</span></p>
+            <h1 data-content="home.heroTitle">Build Digital Experiences With AI, GIS and XR</h1>
+            <p class="hero-lede" data-content="home.heroLead">
               I architect high-performance, future-ready digital ecosystems. I connect strategy,
               spatial intelligence, artificial intelligence, and immersive realities to solve
               complex enterprise challenges.
             </p>
             <div class="actions">
-              <a class="button primary" href="./works.html">View My Work</a>
-              <a class="button ghost" href="mailto:hello@example.com">Contact Me</a>
+              <a class="button primary" href="./works.html" data-content="home.primaryCta">View My Work</a>
+              <a class="button ghost" href="mailto:hello@example.com" data-content="home.secondaryCta">Contact Me</a>
             </div>
             <dl class="metrics" aria-label="Portfolio metrics">
               <div>
@@ -97,8 +97,8 @@
         <section id="about" class="section split-section">
           <div class="section-kicker reveal">01 // Profile</div>
           <div class="section-copy reveal">
-            <h2>Turning ideas into practical digital systems.</h2>
-            <p>
+            <h2 data-content="home.aboutTitle">Turning ideas into practical digital systems.</h2>
+            <p data-content="home.aboutText">
               I help teams move from abstract ambition to usable digital products: strategy,
               architecture, prototypes, dashboards, and interactive experiences that are elegant
               enough for users and robust enough for operations.
@@ -167,7 +167,7 @@
           <div class="work-hero reveal">
             <div>
               <p class="system-label"><span></span> Portfolio / V1.0</p>
-              <h2>Digital projects built from strategy to experience.</h2>
+              <h2 data-content="home.workTitle">Digital projects built from strategy to experience.</h2>
             </div>
             <div class="system-preview" aria-hidden="true">
               <span></span>
@@ -210,8 +210,8 @@
         <section id="toolkit" class="section toolkit-section">
           <div class="section-heading reveal">
             <p class="system-label"><span></span> 03 // Digital Toolkit</p>
-            <h2>The tools behind digital innovation.</h2>
-            <p>
+            <h2 data-content="home.toolkitTitle">The tools behind digital innovation.</h2>
+            <p data-content="home.toolkitText">
               A practical stack for prototyping, building, measuring, and scaling modern digital
               experiences.
             </p>
@@ -245,8 +245,8 @@
 
         <section id="contact" class="section contact-section glass-card reveal">
           <p class="system-label"><span></span> Active Brief</p>
-          <h2>Ready to architect your next digital future?</h2>
-          <p>
+          <h2 data-content="home.contactTitle">Ready to architect your next digital future?</h2>
+          <p data-content="home.contactText">
             Bring the idea, the business challenge, or the unfinished prototype. I will help shape
             it into a clear, buildable digital system.
           </p>
@@ -269,6 +269,7 @@
       </footer>
     </div>
 
+    <script src="./content.js"></script>
     <script src="./script.js"></script>
   </body>
 </html>

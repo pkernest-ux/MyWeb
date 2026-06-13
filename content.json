@@ -1,0 +1,52 @@
+{
+  "home": {
+    "heroLabel": "Digital Innovation Architect",
+    "heroTitle": "Build Digital Experiences With AI, GIS and XR",
+    "heroLead": "I architect high-performance, future-ready digital ecosystems. I connect strategy, spatial intelligence, artificial intelligence, and immersive realities to solve complex enterprise challenges.",
+    "primaryCta": "View My Work",
+    "secondaryCta": "Contact Me",
+    "aboutTitle": "Turning ideas into practical digital systems.",
+    "aboutText": "I help teams move from abstract ambition to usable digital products: strategy, architecture, prototypes, dashboards, and interactive experiences that are elegant enough for users and robust enough for operations.",
+    "workTitle": "Digital projects built from strategy to experience.",
+    "toolkitTitle": "The tools behind digital innovation.",
+    "toolkitText": "A practical stack for prototyping, building, measuring, and scaling modern digital experiences.",
+    "contactTitle": "Ready to architect your next digital future?",
+    "contactText": "Bring the idea, the business challenge, or the unfinished prototype. I will help shape it into a clear, buildable digital system."
+  },
+  "about": {
+    "heroTitle": "Architecting digital futures from strategy to shipped experience.",
+    "heroLead": "I work across AI, GIS, cloud platforms, and immersive interaction to turn ambiguous business goals into clear digital systems.",
+    "sectionTitle": "Systems thinking with product taste.",
+    "sectionText": "My work sits between business architecture and implementation. I help teams clarify what should exist, how it should behave, and which technology choices will make it maintainable after launch."
+  },
+  "expertise": {
+    "heroTitle": "AI, spatial intelligence, immersive systems, and cloud-ready delivery.",
+    "heroLead": "A connected capability map for teams building intelligent digital experiences."
+  },
+  "works": {
+    "heroTitle": "Digital projects built from strategy to experience.",
+    "heroLead": "A curated set of scalable platforms, immersive environments, and intelligent systems engineered for the modern enterprise."
+  },
+  "services": {
+    "heroTitle": "Turning ideas into digital experiences.",
+    "heroLead": "From strategy and planning to implementation and innovation, each service is structured to create practical business value."
+  },
+  "toolkit": {
+    "heroTitle": "The tools behind digital innovation.",
+    "heroLead": "A curated collection of technologies, platforms, and systems used to transform ideas into meaningful digital experiences.",
+    "videoTitle": "Motion, prototypes, and immersive product stories.",
+    "videoText": "Demo reels, product explainers, spatial walkthroughs, and visual storytelling can live in the Video area."
+  },
+  "journal": {
+    "heroTitle": "Field notes for intelligent digital systems.",
+    "heroLead": "Short essays and thinking fragments on architecture, AI workflows, spatial interfaces, and digital futures."
+  },
+  "video": {
+    "heroTitle": "Digital Ideas In Motion",
+    "heroLead": "A curated archive of process demonstrations, workflow experiments, and kinetic architectural models. Translating complex technical concepts into accessible visual narratives.",
+    "featuredTitle": "Generative Form Finding V2",
+    "recentTitle": "Recent Explorations",
+    "ctaTitle": "Want to See an Idea Become a Demo?",
+    "ctaText": "Whether it's a complex system architecture or a new digital product concept, visual narrative clarifies intent."
+  }
+}
