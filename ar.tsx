@@ -1223,12 +1223,18 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           </div>
 
           <div className="absolute left-2 right-2 bottom-3 md:left-auto md:right-4 md:bottom-auto md:top-4 z-40 flex flex-row md:flex-col gap-2 overflow-x-auto md:overflow-visible bg-slate-950/60 md:bg-transparent backdrop-blur md:backdrop-blur-0 p-2 md:p-0 rounded-xl md:rounded-none border border-slate-800/70 md:border-0">
+            <button
+              onClick={() => { if (!currentFloor?.imageUrl) return; setIsNavTestMode(!isNavTestMode); setIsPathMode(false); setIsToggleShaftMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setHoverPos(null); setNavTestPoints([]); setNavTestPath([]); }}
+              disabled={!currentFloor?.imageUrl}
+              className={`flex shrink-0 items-center justify-center gap-2 h-10 px-3 rounded-xl transition-all shadow-lg font-bold text-xs ${isNavTestMode ? 'bg-blue-500 text-white shadow-[0_0_15px_rgba(59,130,246,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-blue-400 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed'}`}
+              title="路網分析測試"
+            >
+              {isNavTestMode ? <X className="w-5 h-5" /> : <Activity className="w-5 h-5" />}
+              <span>路網測試</span>
+            </button>
             {currentFloor?.imageUrl && (
               <>
-                <button onClick={() => { setIsNavTestMode(!isNavTestMode); setIsPathMode(false); setIsToggleShaftMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setHoverPos(null); setNavTestPoints([]); setNavTestPath([]); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isNavTestMode ? 'bg-blue-500 text-white shadow-[0_0_15px_rgba(59,130,246,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-blue-400 hover:bg-slate-800'}`} title="路網分析測試">
-                  {isNavTestMode ? <X className="w-5 h-5" /> : <Activity className="w-5 h-5" />}
-                </button>
-                <div className="w-6 h-px bg-slate-700 mx-auto my-0.5"></div>
+                <div className="hidden md:block w-6 h-px bg-slate-700 mx-auto my-0.5"></div>
                 <button onClick={() => { setIsToggleShaftMode(!isToggleShaftMode); setIsPathMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isToggleShaftMode ? 'bg-green-500 text-white shadow-[0_0_15px_rgba(34,197,94,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-green-400 hover:bg-slate-800'}`} title="指定跨樓層轉折點 (點擊節點切換)">
                   {isToggleShaftMode ? <X className="w-5 h-5" /> : <ArrowUpDown className="w-5 h-5" />}
                 </button>
@@ -1470,7 +1476,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             )}
             
             {currentFloor?.imageUrl && scaleBarWidthPx > 0 && (
-              <div onClick={() => setBoundsModal({ isOpen: true, blX: currentBounds.blX, blY: currentBounds.blY, trX: currentBounds.trX, trY: currentBounds.trY })} className="absolute bottom-4 left-4 z-40 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2.5 rounded-lg shadow-lg cursor-pointer hover:bg-slate-800 transition-colors" title="點擊校正全域座標">
+              <div onClick={() => setBoundsModal({ isOpen: true, blX: currentBounds.blX, blY: currentBounds.blY, trX: currentBounds.trX, trY: currentBounds.trY })} className="absolute top-20 right-3 md:top-4 md:right-20 z-40 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2.5 rounded-lg shadow-lg cursor-pointer hover:bg-slate-800 transition-colors" title="點擊校正全域座標">
                 <span className="text-[10px] text-cyan-400 font-bold mb-1.5 flex items-center"><Target className="w-3 h-3 mr-1"/> 比例尺: {scaleBarMeters} m</span>
                 <div className="h-1.5 bg-cyan-500/50 border-x-2 border-cyan-400" style={{ width: `${scaleBarWidthPx}px` }}></div>
               </div>
