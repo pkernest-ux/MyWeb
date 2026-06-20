@@ -1104,6 +1104,16 @@ h3 {
   margin-top: 26px;
 }
 
+.cms-page-group {
+  margin: 16px 0 2px;
+  color: #ffc58a;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .cms-page-button {
   width: 100%;
   display: grid;
@@ -1143,6 +1153,15 @@ h3 {
 .cms-page-button strong {
   font-family: Sora, sans-serif;
   font-size: 17px;
+}
+
+.cms-page-button.is-subpage {
+  margin-left: 10px;
+  width: calc(100% - 10px);
+}
+
+.cms-page-button.is-subpage strong {
+  font-size: 15px;
 }
 
 .admin-grid {
@@ -1219,6 +1238,29 @@ h3 {
   gap: 18px;
   padding-top: 8px;
   border-top: 1px solid var(--line);
+}
+
+.cms-ar-panel {
+  margin-top: 4px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 170, 32, 0.24);
+  border-radius: 8px;
+  background: #020617;
+}
+
+.cms-ar-panel iframe {
+  display: block;
+  width: 100%;
+  min-height: 760px;
+  border: 0;
+  background: #020617;
+}
+
+.cms-ar-panel[hidden],
+.cms-fields[hidden],
+.admin-form-actions[hidden],
+#cms-preview-button[hidden] {
+  display: none;
 }
 
 .cms-field {

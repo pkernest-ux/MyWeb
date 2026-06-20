@@ -16,3 +16,7 @@ body {
 #ar-root {
   min-height: 100vh;
 }
+
+#ar-root[data-embedded="true"] {
+  min-height: 760px;
+}

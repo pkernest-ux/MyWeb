@@ -11,7 +11,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&family=Sora:wght@600;700;800&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=status-flow" />
+    <link rel="stylesheet" href="./styles.css?v=ar-integrated" />
   </head>
   <body>
     <div class="site-shell">
@@ -58,6 +58,14 @@
                 <span>正在載入目前網站內容。</span>
               </div>
               <div id="cms-fields" class="cms-fields"></div>
+              <div id="cms-ar-panel" class="cms-ar-panel" hidden>
+                <iframe
+                  id="cms-ar-frame"
+                  title="AR導引功能"
+                  src="./ar.html?embedded=1&tab=map"
+                  loading="lazy"
+                ></iframe>
+              </div>
 
               <div class="admin-form-actions">
                 <button id="cms-draft-button" class="button ghost" type="button">儲存草稿</button>
@@ -69,6 +77,6 @@
         </section>
       </main>
     </div>
-    <script src="./admin-cms.js?v=status-flow"></script>
+    <script src="./admin-cms.js?v=ar-integrated"></script>
   </body>
 </html>

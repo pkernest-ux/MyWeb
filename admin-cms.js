@@ -107,18 +107,70 @@ const pages = [
   }
 ];
 
+const arPages = [
+  {
+    id: "ar-map",
+    label: "平面圖管理",
+    eyebrow: "AR",
+    groupLabel: "AR導引功能",
+    href: "./ar.html",
+    description: "管理 AR 導引用的建築、樓層、平面圖、定位點與路徑節點。",
+    type: "ar",
+    arTab: "map",
+    fields: []
+  },
+  {
+    id: "ar-list",
+    label: "點位列表",
+    eyebrow: "AR",
+    groupLabel: "AR導引功能",
+    href: "./ar.html",
+    description: "以列表方式檢視與維護所有 AR 點位資料。",
+    type: "ar",
+    arTab: "list",
+    fields: []
+  },
+  {
+    id: "ar-settings",
+    label: "系統設定",
+    eyebrow: "AR",
+    groupLabel: "AR導引功能",
+    href: "./ar.html",
+    description: "調整 AR 導引系統的專案名稱與導覽參數。",
+    type: "ar",
+    arTab: "settings",
+    fields: []
+  },
+  {
+    id: "ar-export",
+    label: "匯出JSON",
+    eyebrow: "AR",
+    groupLabel: "AR導引功能",
+    href: "./ar.html",
+    description: "匯出目前 AR 導引資料，提供前台或系統串接使用。",
+    type: "ar",
+    arTab: "export",
+    fields: []
+  }
+];
+
+pages.push(...arPages);
+
 const draftStorageKey = "ernest-cms-draft";
 const previewStorageKey = "ernest-cms-preview-content";
 
 const form = document.querySelector("#cms-form");
 const pageList = document.querySelector("#cms-page-list");
 const fieldsElement = document.querySelector("#cms-fields");
+const arPanel = document.querySelector("#cms-ar-panel");
+const arFrame = document.querySelector("#cms-ar-frame");
 const statusElement = document.querySelector("#cms-status");
 const pageTitle = document.querySelector("#cms-page-title");
 const pageDescription = document.querySelector("#cms-page-description");
 const previewButton = document.querySelector("#cms-preview-button");
 const draftButton = document.querySelector("#cms-draft-button");
 const resetButton = document.querySelector("#cms-reset-button");
+const formActions = document.querySelector(".admin-form-actions");
 const publishButton = form?.querySelector('button[type="submit"]');
 let publishedContent = {};
 let workingContent = {};
@@ -241,10 +293,19 @@ const renderPageList = () => {
   if (!pageList) return;
   pageList.innerHTML = "";
 
+  const renderedGroups = new Set();
   pages.forEach((page) => {
+    if (page.groupLabel && !renderedGroups.has(page.groupLabel)) {
+      const group = document.createElement("div");
+      group.className = "cms-page-group";
+      group.textContent = page.groupLabel;
+      pageList.append(group);
+      renderedGroups.add(page.groupLabel);
+    }
+
     const button = document.createElement("button");
     button.type = "button";
-    button.className = "cms-page-button";
+    button.className = `cms-page-button${page.groupLabel ? " is-subpage" : ""}`;
     button.dataset.page = page.id;
     button.setAttribute("aria-pressed", String(page.id === activePageId));
     button.innerHTML = `<span>${page.eyebrow}</span><strong>${page.label}</strong>`;
@@ -259,6 +320,23 @@ const renderForm = () => {
   fieldsElement.innerHTML = "";
   pageTitle.textContent = activePage.label;
   pageDescription.textContent = activePage.description;
+
+  const isArPage = activePage.type === "ar";
+  fieldsElement.hidden = isArPage;
+  if (arPanel) arPanel.hidden = !isArPage;
+  if (formActions) formActions.hidden = isArPage;
+  if (previewButton) previewButton.hidden = isArPage;
+
+  if (isArPage) {
+    if (arFrame) {
+      const targetSrc = `./ar.html?embedded=1&tab=${encodeURIComponent(activePage.arTab)}`;
+      if (!arFrame.getAttribute("src")?.includes(`tab=${activePage.arTab}`)) {
+        arFrame.setAttribute("src", targetSrc);
+      }
+    }
+    renderPageList();
+    return;
+  }
 
   activePage.fields.forEach((field) => {
     fieldsElement.append(createField(field, workingContent));
@@ -294,6 +372,15 @@ pageList?.addEventListener("click", (event) => {
   syncActivePageToWorking();
   activePageId = button.dataset.page;
   renderForm();
+  const activePage = getActivePage();
+  if (activePage.type === "ar") {
+    setStatus(
+      "AR導引功能已開啟",
+      `目前正在維護「${activePage.label}」。AR 資料會先儲存在瀏覽器，完成後可到「匯出JSON」下載配置檔。`,
+      "ready"
+    );
+    return;
+  }
   setStatus(
     hasDraft || hasUnsavedChanges ? "編輯草稿中" : "編輯中",
     `目前正在維護「${getActivePage().label}」頁面。`,

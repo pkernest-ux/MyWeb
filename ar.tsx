@@ -59,8 +59,8 @@ const getFloorLevel = (name) => {
 
 const getFloorBounds = (floor) => floor?.bounds || { blX: 0, blY: 0, trX: 100, trY: 100 };
 
-export default function ARManagerApp() {
-  const [activeTab, setActiveTab] = useState('map'); 
+export default function ARManagerApp({ embedded = false, initialTab = 'map' }) {
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
   const [promptModal, setPromptModal] = useState({ isOpen: false, title: '', placeholder: '', onSubmit: null, defaultValue: '' });
@@ -118,6 +118,18 @@ export default function ARManagerApp() {
   const markerImageInputRef = useRef(null);
 
   const [mapTransform, setMapTransform] = useState({ x: 0, y: 0, scale: 1 });
+
+  useEffect(() => {
+    const handleExternalTabChange = (event) => {
+      const nextTab = event?.detail?.tab;
+      if (['map', 'list', 'settings', 'export'].includes(nextTab)) {
+        switchTab(nextTab);
+      }
+    };
+
+    window.addEventListener('ar-manager:set-tab', handleExternalTabChange);
+    return () => window.removeEventListener('ar-manager:set-tab', handleExternalTabChange);
+  }, []);
 
   useEffect(() => {
     try { localStorage.setItem('arManager_buildings', JSON.stringify(buildings)); } 
@@ -876,10 +888,10 @@ export default function ARManagerApp() {
   );
 
   return (
-    <div className="flex h-screen w-full bg-slate-950 text-slate-200 font-sans overflow-hidden selection:bg-cyan-500/30 relative">
-      {isMobileMenuOpen && ( <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-40 md:hidden" onClick={() => setIsMobileMenuOpen(false)} /> )}
+    <div className={`${embedded ? 'flex min-h-[760px] w-full' : 'flex h-screen w-full'} bg-slate-950 text-slate-200 font-sans overflow-hidden selection:bg-cyan-500/30 relative`}>
+      {!embedded && isMobileMenuOpen && ( <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-40 md:hidden" onClick={() => setIsMobileMenuOpen(false)} /> )}
       
-      <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 border-r border-slate-800 flex flex-col justify-between shrink-0 transition-transform duration-300 shadow-2xl md:relative md:translate-x-0 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      {!embedded && <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 border-r border-slate-800 flex flex-col justify-between shrink-0 transition-transform duration-300 shadow-2xl md:relative md:translate-x-0 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div>
           <div className="h-16 flex items-center px-6 border-b border-slate-800 bg-slate-950/50 justify-between md:justify-start">
             <div className="flex items-center">
@@ -898,7 +910,7 @@ export default function ARManagerApp() {
         <div className="p-4 border-t border-slate-800 bg-slate-900/50">
           <div className="text-[11px] leading-relaxed text-slate-500">管理平面圖、點位、系統參數，並匯出 AR 導引 JSON。</div>
         </div>
-      </div>
+      </div>}
 
       {activeTab === 'frontend' && (
         <FrontendUserView buildings={buildings} systemConfig={systemConfig} onMenuClick={() => setIsMobileMenuOpen(true)} />
@@ -914,7 +926,7 @@ export default function ARManagerApp() {
         <div className="flex-1 flex flex-col relative overflow-hidden bg-slate-950 w-full">
           
           <div className="absolute top-4 left-4 z-40 flex items-center gap-2 bg-slate-900/90 backdrop-blur-md border border-slate-700 p-2 rounded-xl shadow-lg">
-            <button className="md:hidden text-slate-400 hover:text-white mr-1" onClick={() => setIsMobileMenuOpen(true)}><Menu className="w-5 h-5" /></button>
+            {!embedded && <button className="md:hidden text-slate-400 hover:text-white mr-1" onClick={() => setIsMobileMenuOpen(true)}><Menu className="w-5 h-5" /></button>}
             <div className="flex items-center">
               <Building className="w-4 h-4 text-slate-500 ml-1 mr-2"/>
               <select className="bg-transparent text-slate-200 text-sm font-medium focus:outline-none max-w-[120px] truncate" value={activeBuildingId} onChange={(e) => setActiveBuildingId(e.target.value)}>
