@@ -1104,17 +1104,8 @@ h3 {
   margin-top: 26px;
 }
 
-.cms-page-group {
-  margin: 16px 0 2px;
-  color: #ffc58a;
-  font-family: "JetBrains Mono", monospace;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .cms-page-button {
+  position: relative;
   width: 100%;
   display: grid;
   gap: 5px;
@@ -1162,6 +1153,27 @@ h3 {
 
 .cms-page-button.is-subpage strong {
   font-size: 15px;
+}
+
+.cms-page-group-button {
+  margin-top: 16px;
+  padding-right: 42px;
+}
+
+.cms-page-group-button::after {
+  content: "+";
+  position: absolute;
+  right: 16px;
+  top: 50%;
+  color: #ffc58a;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 18px;
+  font-weight: 800;
+  transform: translateY(-50%);
+}
+
+.cms-page-group-button[aria-expanded="true"]::after {
+  content: "-";
 }
 
 .admin-grid {

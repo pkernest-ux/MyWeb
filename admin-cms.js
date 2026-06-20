@@ -175,6 +175,7 @@ const publishButton = form?.querySelector('button[type="submit"]');
 let publishedContent = {};
 let workingContent = {};
 let activePageId = pages[0].id;
+let arMenuExpanded = false;
 let hasDraft = false;
 let hasUnsavedChanges = false;
 
@@ -296,12 +297,17 @@ const renderPageList = () => {
   const renderedGroups = new Set();
   pages.forEach((page) => {
     if (page.groupLabel && !renderedGroups.has(page.groupLabel)) {
-      const group = document.createElement("div");
-      group.className = "cms-page-group";
-      group.textContent = page.groupLabel;
+      const group = document.createElement("button");
+      group.type = "button";
+      group.className = "cms-page-button cms-page-group-button";
+      group.dataset.group = "ar";
+      group.setAttribute("aria-expanded", String(arMenuExpanded));
+      group.innerHTML = `<span>AR</span><strong>${page.groupLabel}</strong>`;
       pageList.append(group);
       renderedGroups.add(page.groupLabel);
     }
+
+    if (page.groupLabel && !arMenuExpanded) return;
 
     const button = document.createElement("button");
     button.type = "button";
@@ -367,10 +373,24 @@ const loadContent = async () => {
 
 pageList?.addEventListener("click", (event) => {
   const button = event.target.closest(".cms-page-button");
+  if (button?.dataset.group === "ar") {
+    arMenuExpanded = !arMenuExpanded;
+    renderPageList();
+    setStatus(
+      arMenuExpanded ? "AR導引功能已展開" : "AR導引功能已收合",
+      arMenuExpanded
+        ? "請選擇平面圖管理、點位列表、系統設定或匯出JSON。"
+        : "AR 子功能已收合，需要維護時再點擊 AR導引功能。",
+      arMenuExpanded ? "ready" : "draft"
+    );
+    return;
+  }
+
   if (!button || button.dataset.page === activePageId) return;
 
   syncActivePageToWorking();
   activePageId = button.dataset.page;
+  if (getActivePage().type === "ar") arMenuExpanded = true;
   renderForm();
   const activePage = getActivePage();
   if (activePage.type === "ar") {
