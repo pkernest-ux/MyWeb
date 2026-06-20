@@ -803,7 +803,7 @@ export default function ARManagerApp() {
             <button className="md:hidden mr-3 text-slate-400 hover:text-white shrink-0" onClick={() => setIsMobileMenuOpen(true)}><Menu className="w-6 h-6" /></button>
             <h2 className="text-xl md:text-2xl font-bold text-slate-200 flex items-center"><Settings className="mr-2 md:mr-3 text-cyan-400" /> 系統設定</h2>
           </div>
-          <p className="text-slate-500 text-xs md:text-sm">管理全域變數與 AR 辨識引擎環境配置。</p>
+          <p className="text-slate-500 text-xs md:text-sm">匯出目前 AR 導引資料，包含大樓、樓層、平面圖、點位、路徑與設定資料。</p>
         </div>
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 md:p-6 shadow-lg">
           <h3 className="text-base md:text-lg font-bold text-slate-300 mb-4 md:mb-6 flex items-center"><HardDrive className="w-5 h-5 mr-2 text-blue-400" /> 基礎環境參數</h3>
@@ -837,6 +837,44 @@ export default function ARManagerApp() {
     </div>
   );
 
+  const renderExportView = () => (
+    <div className="flex-1 p-4 md:p-8 overflow-auto bg-slate-950">
+      <div className="max-w-4xl mx-auto space-y-6">
+        <div>
+          <div className="flex items-center mb-2">
+            <button className="md:hidden mr-3 text-slate-400 hover:text-white shrink-0" onClick={() => setIsMobileMenuOpen(true)}><Menu className="w-6 h-6" /></button>
+            <h2 className="text-xl md:text-2xl font-bold text-slate-200 flex items-center"><Download className="mr-2 md:mr-3 text-cyan-400" /> 匯出JSON</h2>
+          </div>
+          <p className="text-slate-500 text-xs md:text-sm">匯出目前 AR 導引資料，包含大樓、樓層、平面圖、點位、路徑與設定資料。</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+            <div className="text-2xl font-bold text-cyan-400">{buildings.length}</div>
+            <div className="text-xs text-slate-400 mt-1">大樓數量</div>
+          </div>
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+            <div className="text-2xl font-bold text-cyan-400">{buildings.reduce((sum, b) => sum + b.floors.length, 0)}</div>
+            <div className="text-xs text-slate-400 mt-1">樓層數量</div>
+          </div>
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+            <div className="text-2xl font-bold text-cyan-400">{buildings.reduce((sum, b) => sum + b.floors.reduce((floorSum, f) => floorSum + (f.markers || []).length, 0), 0)}</div>
+            <div className="text-xs text-slate-400 mt-1">AR 點位數量</div>
+          </div>
+        </div>
+
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 md:p-6 shadow-lg">
+          <h3 className="text-base md:text-lg font-bold text-slate-200 mb-3 flex items-center"><Database className="w-5 h-5 mr-2 text-cyan-400" /> JSON 配置檔</h3>
+          <p className="text-sm text-slate-400 mb-5">按下按鈕後會下載一份 <span className="text-cyan-300 font-mono">ar_buildings_config_v6.json</span>，可供後續系統串接、備份或移轉使用。</p>
+          <button onClick={exportJSON} className="w-full sm:w-auto flex items-center justify-center space-x-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold py-3 px-6 rounded-xl transition-all shadow-[0_0_18px_rgba(6,182,212,0.28)]">
+            <Download className="w-5 h-5" />
+            <span>下載 JSON 配置</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="flex h-screen w-full bg-slate-950 text-slate-200 font-sans overflow-hidden selection:bg-cyan-500/30 relative">
       {isMobileMenuOpen && ( <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-40 md:hidden" onClick={() => setIsMobileMenuOpen(false)} /> )}
@@ -846,20 +884,19 @@ export default function ARManagerApp() {
           <div className="h-16 flex items-center px-6 border-b border-slate-800 bg-slate-950/50 justify-between md:justify-start">
             <div className="flex items-center">
               <Target className="w-7 h-7 md:w-8 md:h-8 text-cyan-400 drop-shadow-[0_0_8px_rgba(6,182,212,0.8)]" />
-              <span className="ml-3 font-bold text-base md:text-lg tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">X-VISION AR</span>
+              <span className="ml-3 font-bold text-base md:text-lg tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-500">AR導引功能</span>
             </div>
             <button className="md:hidden text-slate-400 hover:text-white" onClick={() => setIsMobileMenuOpen(false)}><X className="w-6 h-6" /></button>
           </div>
           <nav className="p-4 space-y-2">
-            <NavItem icon={<Scan />} label="前台導覽 (民眾端)" active={activeTab === 'frontend'} onClick={() => switchTab('frontend')} />
-            <div className="h-px bg-slate-800 my-2"></div>
             <NavItem icon={<Map />} label="平面圖管理" active={activeTab === 'map'} onClick={() => switchTab('map')} />
             <NavItem icon={<MapPin />} label="點位列表" active={activeTab === 'list'} onClick={() => switchTab('list')} />
             <NavItem icon={<Settings />} label="系統設定" active={activeTab === 'settings'} onClick={() => switchTab('settings')} />
+            <NavItem icon={<Download />} label="匯出JSON" active={activeTab === 'export'} onClick={() => switchTab('export')} />
           </nav>
         </div>
         <div className="p-4 border-t border-slate-800 bg-slate-900/50">
-          <button onClick={exportJSON} className="w-full flex items-center justify-center md:justify-start space-x-2 bg-slate-800 hover:bg-slate-700 text-slate-300 py-3 px-4 rounded-xl transition-all border border-slate-700"><Download className="w-5 h-5" /><span className="font-medium text-sm md:text-base">匯出 JSON 配置</span></button>
+          <div className="text-[11px] leading-relaxed text-slate-500">管理平面圖、點位、系統參數，並匯出 AR 導引 JSON。</div>
         </div>
       </div>
 
@@ -870,6 +907,8 @@ export default function ARManagerApp() {
       {activeTab === 'list' && renderListView()}
 
       {activeTab === 'settings' && renderSettingsView()}
+
+      {activeTab === 'export' && renderExportView()}
 
       {activeTab === 'map' && (
         <div className="flex-1 flex flex-col relative overflow-hidden bg-slate-950 w-full">
