@@ -1,0 +1,14 @@
+{
+  "version": "7.0",
+  "project": {
+    "id": "default",
+    "name": "AR導覽",
+    "description": "Published AR guide data",
+    "updatedAt": null
+  },
+  "systemConfig": {
+    "projectName": "AR導覽",
+    "lerpFactor": 15
+  },
+  "buildings": []
+}

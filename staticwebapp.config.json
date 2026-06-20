@@ -11,6 +11,10 @@
     {
       "route": "/api/save-content",
       "allowedRoles": ["authenticated"]
+    },
+    {
+      "route": "/api/save-ar-content",
+      "allowedRoles": ["authenticated"]
     }
   ],
   "responseOverrides": {

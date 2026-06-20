@@ -93,6 +93,15 @@ const createProject = (name = '新導引專案', description = '') => ({
   buildings: createDefaultBuildings()
 });
 
+const createProjectFromPublishedData = (data) => ({
+  id: data?.project?.id || 'published',
+  name: data?.project?.name || data?.systemConfig?.projectName || 'AR導覽',
+  description: data?.project?.description || '',
+  updatedAt: data?.project?.updatedAt || new Date().toISOString(),
+  systemConfig: { ...createDefaultConfig(data?.project?.name || 'AR導覽'), ...(data?.systemConfig || {}) },
+  buildings: Array.isArray(data?.buildings) ? data.buildings : []
+});
+
 export default function ARManagerApp({ embedded = false, initialTab = 'map', publicOnly = false }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -105,6 +114,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const isLoadingProjectRef = useRef(false);
 
   const [projects, setProjects] = useState(() => {
+    if (publicOnly) return [createProjectFromPublishedData({})];
+
     try {
       const savedProjects = localStorage.getItem('arManager_projects');
       if (savedProjects) {
@@ -184,11 +195,44 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   }, []);
 
   useEffect(() => {
+    if (publicOnly) return;
     try { localStorage.setItem('arManager_projects', JSON.stringify(projects)); }
     catch (e) { if (e.name === 'QuotaExceededError') setAlertModal({ isOpen: true, message: "專案資料太大，請先匯出 JSON 或移除不需要的圖片資料。" }); }
-  }, [projects]);
+  }, [projects, publicOnly]);
 
   useEffect(() => {
+    if (!publicOnly) return;
+
+    let cancelled = false;
+    fetch(`/ar-data.json?ts=${Date.now()}`, { cache: 'no-store' })
+      .then(response => {
+        if (!response.ok) throw new Error(`Unable to load AR data: ${response.status}`);
+        return response.json();
+      })
+      .then(data => {
+        if (cancelled) return;
+        const project = createProjectFromPublishedData(data);
+        setProjects([project]);
+        setActiveProjectId(project.id);
+        setSystemConfig(cloneData(project.systemConfig));
+        setBuildings(cloneData(project.buildings));
+        setActiveBuildingId(project.buildings[0]?.id);
+        setActiveFloorId(project.buildings[0]?.floors[0]?.id);
+      })
+      .catch(error => {
+        console.warn("Published AR data unavailable", error);
+        if (!cancelled) {
+          setProjects([createProjectFromPublishedData({})]);
+          setSystemConfig(createDefaultConfig('AR導覽'));
+          setBuildings([]);
+        }
+      });
+
+    return () => { cancelled = true; };
+  }, [publicOnly]);
+
+  useEffect(() => {
+    if (publicOnly) return;
     if (!activeProject) return;
     isLoadingProjectRef.current = true;
     const nextBuildings = cloneData(activeProject.buildings || createDefaultBuildings());
@@ -200,9 +244,10 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     setSelectedWaypointId(null);
     setReferenceFloorId('');
     setMapTransform({ x: 0, y: 0, scale: 1 });
-  }, [activeProjectId]);
+  }, [activeProjectId, publicOnly]);
 
   useEffect(() => {
+    if (publicOnly) return;
     if (!activeProjectId) return;
     if (isLoadingProjectRef.current) {
       isLoadingProjectRef.current = false;
@@ -215,17 +260,19 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       buildings: cloneData(buildings),
       updatedAt: new Date().toISOString()
     } : project));
-  }, [activeProjectId, buildings, systemConfig]);
+  }, [activeProjectId, buildings, systemConfig, publicOnly]);
 
   useEffect(() => {
+    if (publicOnly) return;
     try { localStorage.setItem('arManager_buildings', JSON.stringify(buildings)); } 
     catch (e) { if (e.name === 'QuotaExceededError') setAlertModal({ isOpen: true, message: "⚠️ 瀏覽器本地暫存空間已滿！" }); }
-  }, [buildings]);
+  }, [buildings, publicOnly]);
 
   useEffect(() => {
+    if (publicOnly) return;
     try { localStorage.setItem('arManager_config', JSON.stringify(systemConfig)); } 
     catch (e) { console.error("Config save error:", e); }
-  }, [systemConfig]);
+  }, [systemConfig, publicOnly]);
 
   useEffect(() => {
     const b = buildings.find(b => b.id === activeBuildingId);
@@ -747,15 +794,43 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     setActiveBuildingId(bId); setActiveFloorId(fId); setSelectedMarkerId(mId); setSelectedWaypointId(null); setActiveTab('map'); 
   };
 
-  const saveActiveProject = () => {
+  const saveActiveProject = async () => {
+    const payload = {
+      version: '7.0',
+      project: {
+        id: activeProjectId,
+        name: systemConfig.projectName || activeProject?.name || 'AR導覽',
+        description: activeProject?.description || '',
+        updatedAt: new Date().toISOString()
+      },
+      systemConfig: cloneData(systemConfig),
+      buildings: cloneData(buildings)
+    };
+
     setProjects(prev => prev.map(project => project.id === activeProjectId ? {
       ...project,
-      name: systemConfig.projectName || project.name,
-      systemConfig: cloneData(systemConfig),
-      buildings: cloneData(buildings),
-      updatedAt: new Date().toISOString()
+      name: payload.project.name,
+      systemConfig: payload.systemConfig,
+      buildings: payload.buildings,
+      updatedAt: payload.project.updatedAt
     } : project));
-    setAlertModal({ isOpen: true, message: `「${systemConfig.projectName || activeProject?.name || '導引專案'}」已儲存。` });
+
+    try {
+      const response = await fetch('/api/save-ar-content', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(result.error || `Save failed: ${response.status}`);
+      }
+
+      setAlertModal({ isOpen: true, message: `「${payload.project.name}」已儲存並發布到網站。民眾端將讀取最新 Web 資料。` });
+    } catch (error) {
+      setAlertModal({ isOpen: true, message: `已儲存在後台暫存，但發布到網站失敗：${error.message}` });
+    }
   };
 
   const addProject = () => {
@@ -1126,7 +1201,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 md:p-6 shadow-lg">
           <h3 className="text-base md:text-lg font-bold text-slate-200 mb-3 flex items-center"><Database className="w-5 h-5 mr-2 text-cyan-400" /> JSON 配置檔</h3>
-          <p className="text-sm text-slate-400 mb-5">按下按鈕後會下載一份 <span className="text-cyan-300 font-mono">ar_buildings_config_v6.json</span>，可供後續系統串接、備份或移轉使用。</p>
+          <p className="text-sm text-slate-400 mb-5">按下按鈕後會下載一份目前專案的 <span className="text-cyan-300 font-mono">AR JSON v7</span>，可供後續系統串接、備份或移轉使用。</p>
           <button onClick={exportJSON} className="w-full sm:w-auto flex items-center justify-center space-x-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold py-3 px-6 rounded-xl transition-all shadow-[0_0_18px_rgba(6,182,212,0.28)]">
             <Download className="w-5 h-5" />
             <span>下載 JSON 配置</span>
