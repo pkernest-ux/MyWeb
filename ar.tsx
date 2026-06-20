@@ -59,6 +59,40 @@ const getFloorLevel = (name) => {
 
 const getFloorBounds = (floor) => floor?.bounds || { blX: 0, blY: 0, trX: 100, trY: 100 };
 
+const cloneData = (value) => JSON.parse(JSON.stringify(value));
+
+const createDefaultConfig = (name = '新導引專案') => ({
+  projectName: name,
+  lerpFactor: 15
+});
+
+const createDefaultBuildings = () => [
+  {
+    id: `b_${Date.now()}`,
+    name: '預設場域',
+    floors: [
+      {
+        id: `f_${Date.now()}`,
+        name: '1F',
+        imageUrl: null,
+        markers: [],
+        waypoints: [],
+        edges: [],
+        bounds: { blX: 0, blY: 0, trX: 100, trY: 100 }
+      }
+    ]
+  }
+];
+
+const createProject = (name = '新導引專案', description = '') => ({
+  id: `project_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+  name,
+  description,
+  updatedAt: new Date().toISOString(),
+  systemConfig: createDefaultConfig(name),
+  buildings: createDefaultBuildings()
+});
+
 export default function ARManagerApp({ embedded = false, initialTab = 'map' }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -68,23 +102,41 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map' }) {
   const [alertModal, setAlertModal] = useState({ isOpen: false, message: '' });
   const [permissionsModal, setPermissionsModal] = useState(false);
   const [boundsModal, setBoundsModal] = useState({ isOpen: false, blX: 0, blY: 0, trX: 100, trY: 100 });
+  const isLoadingProjectRef = useRef(false);
 
-  const [systemConfig, setSystemConfig] = useState(() => {
+  const [projects, setProjects] = useState(() => {
     try {
-      const saved = localStorage.getItem('arManager_config');
-      if (saved) return JSON.parse(saved);
-    } catch (e) { console.error(e); }
-    return { projectName: '多樓層大樓導覽系統', lerpFactor: 15 }; 
-  });
+      const savedProjects = localStorage.getItem('arManager_projects');
+      if (savedProjects) {
+        const parsed = JSON.parse(savedProjects);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) { console.error("Project load error:", e); }
 
-  const [buildings, setBuildings] = useState(() => {
+    let migratedConfig = createDefaultConfig('預設導引專案');
+    let migratedBuildings = createDefaultBuildings();
     try {
-      const saved = localStorage.getItem('arManager_buildings');
-      if (saved) return JSON.parse(saved);
-    } catch (e) { console.error("Data load error:", e); }
-    return [{ id: `b_${Date.now()}`, name: 'A棟 (預設)', floors: [{ id: `f_${Date.now()}`, name: '1F', imageUrl: null, markers: [], waypoints: [], edges: [], bounds: { blX: 0, blY: 0, trX: 100, trY: 100 } }] }];
-  });
+      const savedConfig = localStorage.getItem('arManager_config');
+      if (savedConfig) migratedConfig = { ...migratedConfig, ...JSON.parse(savedConfig) };
+      const savedBuildings = localStorage.getItem('arManager_buildings');
+      if (savedBuildings) migratedBuildings = JSON.parse(savedBuildings);
+    } catch (e) { console.error("Legacy AR data migration error:", e); }
 
+    return [{
+      id: `project_${Date.now()}`,
+      name: migratedConfig.projectName || '預設導引專案',
+      description: '由既有 AR 導引資料自動建立',
+      updatedAt: new Date().toISOString(),
+      systemConfig: migratedConfig,
+      buildings: migratedBuildings
+    }];
+  });
+  const [activeProjectId, setActiveProjectId] = useState(projects[0]?.id);
+  const activeProject = projects.find(project => project.id === activeProjectId) || projects[0];
+
+  const [systemConfig, setSystemConfig] = useState(() => cloneData(activeProject?.systemConfig || createDefaultConfig()));
+
+  const [buildings, setBuildings] = useState(() => cloneData(activeProject?.buildings || createDefaultBuildings()));
   const [activeBuildingId, setActiveBuildingId] = useState(buildings[0]?.id);
   const [activeFloorId, setActiveFloorId] = useState(buildings[0]?.floors[0]?.id);
   const [referenceFloorId, setReferenceFloorId] = useState('');
@@ -94,7 +146,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map' }) {
   const [draggingId, setDraggingId] = useState(null);
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
 
-  // 工作模式狀態
+  // 路徑與節點編輯模式
   const [isPathMode, setIsPathMode] = useState(false);
   const [isToggleShaftMode, setIsToggleShaftMode] = useState(false);
   const [pathStartNodeId, setPathStartNodeId] = useState(null); 
@@ -130,6 +182,40 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map' }) {
     window.addEventListener('ar-manager:set-tab', handleExternalTabChange);
     return () => window.removeEventListener('ar-manager:set-tab', handleExternalTabChange);
   }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem('arManager_projects', JSON.stringify(projects)); }
+    catch (e) { if (e.name === 'QuotaExceededError') setAlertModal({ isOpen: true, message: "專案資料太大，請先匯出 JSON 或移除不需要的圖片資料。" }); }
+  }, [projects]);
+
+  useEffect(() => {
+    if (!activeProject) return;
+    isLoadingProjectRef.current = true;
+    const nextBuildings = cloneData(activeProject.buildings || createDefaultBuildings());
+    setSystemConfig(cloneData(activeProject.systemConfig || createDefaultConfig(activeProject.name)));
+    setBuildings(nextBuildings);
+    setActiveBuildingId(nextBuildings[0]?.id);
+    setActiveFloorId(nextBuildings[0]?.floors[0]?.id);
+    setSelectedMarkerId(null);
+    setSelectedWaypointId(null);
+    setReferenceFloorId('');
+    setMapTransform({ x: 0, y: 0, scale: 1 });
+  }, [activeProjectId]);
+
+  useEffect(() => {
+    if (!activeProjectId) return;
+    if (isLoadingProjectRef.current) {
+      isLoadingProjectRef.current = false;
+      return;
+    }
+    setProjects(prev => prev.map(project => project.id === activeProjectId ? {
+      ...project,
+      name: systemConfig.projectName || project.name,
+      systemConfig: cloneData(systemConfig),
+      buildings: cloneData(buildings),
+      updatedAt: new Date().toISOString()
+    } : project));
+  }, [activeProjectId, buildings, systemConfig]);
 
   useEffect(() => {
     try { localStorage.setItem('arManager_buildings', JSON.stringify(buildings)); } 
@@ -661,19 +747,104 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map' }) {
     setActiveBuildingId(bId); setActiveFloorId(fId); setSelectedMarkerId(mId); setSelectedWaypointId(null); setActiveTab('map'); 
   };
 
+  const saveActiveProject = () => {
+    setProjects(prev => prev.map(project => project.id === activeProjectId ? {
+      ...project,
+      name: systemConfig.projectName || project.name,
+      systemConfig: cloneData(systemConfig),
+      buildings: cloneData(buildings),
+      updatedAt: new Date().toISOString()
+    } : project));
+    setAlertModal({ isOpen: true, message: `「${systemConfig.projectName || activeProject?.name || '導引專案'}」已儲存。` });
+  };
+
+  const addProject = () => {
+    setPromptModal({
+      isOpen: true,
+      title: '新增 AR 導引專案',
+      placeholder: '請輸入場域或導引服務名稱',
+      defaultValue: `導引專案 ${projects.length + 1}`,
+      onSubmit: (name) => {
+        if (!name) return;
+        const project = createProject(name);
+        setProjects(prev => [...prev, project]);
+        setActiveProjectId(project.id);
+        setActiveTab('map');
+      }
+    });
+  };
+
+  const editProject = () => {
+    setPromptModal({
+      isOpen: true,
+      title: '編輯專案名稱',
+      placeholder: '請輸入專案名稱',
+      defaultValue: activeProject?.name || systemConfig.projectName || '',
+      onSubmit: (name) => {
+        if (!name) return;
+        setSystemConfig(prev => ({ ...prev, projectName: name }));
+        setProjects(prev => prev.map(project => project.id === activeProjectId ? {
+          ...project,
+          name,
+          systemConfig: { ...project.systemConfig, projectName: name },
+          updatedAt: new Date().toISOString()
+        } : project));
+      }
+    });
+  };
+
+  const deleteProject = () => {
+    if (projects.length <= 1) {
+      setAlertModal({ isOpen: true, message: '\u81f3\u5c11\u9700\u8981\u4fdd\u7559\u4e00\u500b AR \u5c0e\u5f15\u5c08\u6848\u3002' });
+      return;
+    }
+
+    setConfirmModal({
+      isOpen: true,
+      title: '\u522a\u9664 AR \u5c0e\u5f15\u5c08\u6848',
+      message: `\u78ba\u5b9a\u8981\u522a\u9664\u300c${activeProject?.name || systemConfig.projectName}\u300d\u55ce\uff1f\u6b64\u5c08\u6848\u5167\u7684\u5e73\u9762\u5716\u3001\u8def\u5f91\u8207 AR \u9ede\u4f4d\u90fd\u6703\u4e00\u4f75\u79fb\u9664\u3002`,
+      onConfirm: () => {
+        setProjects(prev => {
+          const remaining = prev.filter(project => project.id !== activeProjectId);
+          setActiveProjectId(remaining[0]?.id);
+          return remaining;
+        });
+      }
+    });
+  };
+
   const handleClearAllData = () => {
-    setBuildings([{ id: `b_${Date.now()}`, name: '預設大樓', floors: [{ id: `f_${Date.now()}`, name: '1F', imageUrl: null, markers: [], waypoints: [], edges: [], bounds: { blX: 0, blY: 0, trX: 100, trY: 100 } }] }]);
-    setSelectedMarkerId(null); setSelectedWaypointId(null); setMapTransform({ x: 0, y: 0, scale: 1 }); 
-    setIsAddMode(false); setIsPathMode(false); setIsToggleShaftMode(false); setPathStartNodeId(null); setHoverPos(null); setIsNavTestMode(false); setNavTestPoints([]); setNavTestPath([]);
-    localStorage.removeItem('arManager_buildings'); localStorage.removeItem('arManager_floorPlan'); localStorage.removeItem('arManager_markers');
-    setAlertModal({ isOpen: true, message: '所有資料已成功清空。' });
+    setBuildings(createDefaultBuildings());
+    setSelectedMarkerId(null);
+    setSelectedWaypointId(null);
+    setMapTransform({ x: 0, y: 0, scale: 1 });
+    setIsAddMode(false);
+    setIsPathMode(false);
+    setIsToggleShaftMode(false);
+    setPathStartNodeId(null);
+    setHoverPos(null);
+    setIsNavTestMode(false);
+    setNavTestPoints([]);
+    setNavTestPath([]);
+    setAlertModal({ isOpen: true, message: '\u76ee\u524d\u5c08\u6848\u7684 AR \u8cc7\u6599\u5df2\u6e05\u9664\u3002' });
   };
 
   const exportJSON = () => {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ version: '6.0', buildings }, null, 2));
+    const exportName = (systemConfig.projectName || activeProject?.name || 'ar_project').replace(/[^\w\u4e00-\u9fff-]+/g, '_');
+    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({
+      version: '7.0',
+      project: {
+        id: activeProjectId,
+        name: systemConfig.projectName || activeProject?.name,
+        description: activeProject?.description || '',
+        updatedAt: activeProject?.updatedAt
+      },
+      systemConfig,
+      buildings
+    }, null, 2));
     const downloadAnchorNode = document.createElement('a');
     downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", "ar_buildings_config_v6.json");
+    downloadAnchorNode.setAttribute("download", `${exportName}_ar_config_v7.json`);
     document.body.appendChild(downloadAnchorNode); 
     downloadAnchorNode.click(); downloadAnchorNode.remove();
   };
@@ -721,6 +892,50 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map' }) {
       }
   }
 
+  const totalProjectMarkers = buildings.reduce((sum, b) => sum + b.floors.reduce((floorSum, f) => floorSum + (f.markers || []).length, 0), 0);
+  const totalProjectFloors = buildings.reduce((sum, b) => sum + b.floors.length, 0);
+
+  const renderProjectManager = () => (
+    <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 md:p-5 shadow-lg mb-5">
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
+        <div className="min-w-0">
+          <div className="text-xs font-bold text-cyan-400 tracking-widest uppercase mb-1">AR 導引專案</div>
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <select
+              value={activeProjectId}
+              onChange={(e) => setActiveProjectId(e.target.value)}
+              className="bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-100 focus:outline-none focus:border-cyan-500 min-w-[220px]"
+            >
+              {projects.map(project => (
+                <option key={project.id} value={project.id} className="bg-slate-950">{project.name}</option>
+              ))}
+            </select>
+            <div className="text-xs text-slate-500">
+              共 {projects.length} 個專案 · {buildings.length} 棟建築 · {totalProjectFloors} 個樓層 · {totalProjectMarkers} 個 AR 點位
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={addProject} className="inline-flex items-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold px-3 py-2 rounded-lg text-xs transition-colors">
+            <Plus className="w-4 h-4" />新增專案
+          </button>
+          <button onClick={editProject} className="inline-flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-3 py-2 rounded-lg text-xs transition-colors">
+            <Edit className="w-4 h-4" />編輯
+          </button>
+          <button onClick={saveActiveProject} className="inline-flex items-center gap-2 bg-green-500/10 hover:bg-green-500/20 text-green-400 border border-green-500/30 px-3 py-2 rounded-lg text-xs transition-colors">
+            <CheckCircle2 className="w-4 h-4" />儲存
+          </button>
+          <button onClick={deleteProject} className="inline-flex items-center gap-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-2 rounded-lg text-xs transition-colors">
+            <Trash2 className="w-4 h-4" />刪除
+          </button>
+        </div>
+      </div>
+      <div className="mt-3 text-xs text-slate-500">
+        每個專案都會獨立保存平面圖、路徑節點、AR 導引點與系統設定。切換專案後，下方維護區會載入該場域自己的資料。
+      </div>
+    </div>
+  );
+
   const renderListView = () => {
     const seenShafts = new Set();
     const allFlatMarkers = buildings.flatMap(b => b.floors.flatMap(f => (f.markers||[]).reduce((acc, m) => {
@@ -730,7 +945,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map' }) {
 
     return (
       <div className="flex-1 p-4 md:p-8 overflow-auto bg-slate-950">
-        <div className="max-w-7xl mx-auto">
+      <div className="max-w-7xl mx-auto">
+          {renderProjectManager()}
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
             <div className="flex items-center">
               <button className="md:hidden mr-3 text-slate-400 hover:text-white shrink-0" onClick={() => setIsMobileMenuOpen(true)}>
@@ -810,6 +1026,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map' }) {
   const renderSettingsView = () => (
     <div className="flex-1 p-4 md:p-8 overflow-auto bg-slate-950">
       <div className="max-w-3xl mx-auto space-y-6 md:space-y-8">
+        {renderProjectManager()}
         <div>
           <div className="flex items-center mb-2">
             <button className="md:hidden mr-3 text-slate-400 hover:text-white shrink-0" onClick={() => setIsMobileMenuOpen(true)}><Menu className="w-6 h-6" /></button>
@@ -852,6 +1069,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map' }) {
   const renderExportView = () => (
     <div className="flex-1 p-4 md:p-8 overflow-auto bg-slate-950">
       <div className="max-w-4xl mx-auto space-y-6">
+        {renderProjectManager()}
         <div>
           <div className="flex items-center mb-2">
             <button className="md:hidden mr-3 text-slate-400 hover:text-white shrink-0" onClick={() => setIsMobileMenuOpen(true)}><Menu className="w-6 h-6" /></button>
@@ -927,6 +1145,15 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map' }) {
           
           <div className="absolute top-4 left-4 z-40 flex items-center gap-2 bg-slate-900/90 backdrop-blur-md border border-slate-700 p-2 rounded-xl shadow-lg">
             {!embedded && <button className="md:hidden text-slate-400 hover:text-white mr-1" onClick={() => setIsMobileMenuOpen(true)}><Menu className="w-5 h-5" /></button>}
+            <div className="flex items-center">
+              <Target className="w-4 h-4 text-cyan-400 ml-1 mr-2"/>
+              <select className="bg-transparent text-cyan-300 text-sm font-bold focus:outline-none max-w-[150px] truncate" value={activeProjectId} onChange={(e) => setActiveProjectId(e.target.value)}>
+                {projects.map(project => <option key={project.id} value={project.id} className="bg-slate-900">{project.name}</option>)}
+              </select>
+              <button onClick={addProject} className="ml-1 px-1 text-cyan-400 hover:text-cyan-300 transition-colors" title="新增專案"><Plus className="w-4 h-4"/></button>
+              <button onClick={saveActiveProject} className="px-1 text-green-400 hover:text-green-300 transition-colors" title="儲存專案"><CheckCircle2 className="w-4 h-4"/></button>
+            </div>
+            <div className="w-px h-5 bg-slate-700 mx-1"></div>
             <div className="flex items-center">
               <Building className="w-4 h-4 text-slate-500 ml-1 mr-2"/>
               <select className="bg-transparent text-slate-200 text-sm font-medium focus:outline-none max-w-[120px] truncate" value={activeBuildingId} onChange={(e) => setActiveBuildingId(e.target.value)}>
