@@ -10,12 +10,16 @@ if (!rootElement) {
 }
 
 const searchParams = new URLSearchParams(window.location.search);
+const isAdminArPage = window.location.pathname.endsWith("/admin-ar.html");
+const isEmbeddedAdmin = rootElement.dataset.embedded === "true" || searchParams.get("embedded") === "1";
+const isAdminMode = isAdminArPage || isEmbeddedAdmin;
 
 createRoot(rootElement).render(
   <React.StrictMode>
     <ARManagerApp
-      embedded={rootElement.dataset.embedded === "true" || searchParams.get("embedded") === "1"}
-      initialTab={rootElement.dataset.initialTab || searchParams.get("tab") || "map"}
+      embedded={isEmbeddedAdmin}
+      initialTab={isAdminMode ? rootElement.dataset.initialTab || searchParams.get("tab") || "map" : "frontend"}
+      publicOnly={!isAdminMode}
     />
   </React.StrictMode>
 );

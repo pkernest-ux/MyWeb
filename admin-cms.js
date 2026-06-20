@@ -113,7 +113,7 @@ const arPages = [
     label: "平面圖管理",
     eyebrow: "AR",
     groupLabel: "AR導引功能",
-    href: "./ar.html",
+    href: "./admin-ar.html",
     description: "管理 AR 導引用的建築、樓層、平面圖、定位點與路徑節點。",
     type: "ar",
     arTab: "map",
@@ -124,7 +124,7 @@ const arPages = [
     label: "點位列表",
     eyebrow: "AR",
     groupLabel: "AR導引功能",
-    href: "./ar.html",
+    href: "./admin-ar.html",
     description: "以列表方式檢視與維護所有 AR 點位資料。",
     type: "ar",
     arTab: "list",
@@ -135,7 +135,7 @@ const arPages = [
     label: "系統設定",
     eyebrow: "AR",
     groupLabel: "AR導引功能",
-    href: "./ar.html",
+    href: "./admin-ar.html",
     description: "調整 AR 導引系統的專案名稱與導覽參數。",
     type: "ar",
     arTab: "settings",
@@ -146,7 +146,7 @@ const arPages = [
     label: "匯出JSON",
     eyebrow: "AR",
     groupLabel: "AR導引功能",
-    href: "./ar.html",
+    href: "./admin-ar.html",
     description: "匯出目前 AR 導引資料，提供前台或系統串接使用。",
     type: "ar",
     arTab: "export",
@@ -335,7 +335,7 @@ const renderForm = () => {
 
   if (isArPage) {
     if (arFrame) {
-      const targetSrc = `./ar.html?embedded=1&tab=${encodeURIComponent(activePage.arTab)}`;
+      const targetSrc = `./admin-ar.html?embedded=1&tab=${encodeURIComponent(activePage.arTab)}`;
       if (!arFrame.getAttribute("src")?.includes(`tab=${activePage.arTab}`)) {
         arFrame.setAttribute("src", targetSrc);
       }

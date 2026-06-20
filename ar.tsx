@@ -93,7 +93,7 @@ const createProject = (name = '新導引專案', description = '') => ({
   buildings: createDefaultBuildings()
 });
 
-export default function ARManagerApp({ embedded = false, initialTab = 'map' }) {
+export default function ARManagerApp({ embedded = false, initialTab = 'map', publicOnly = false }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   
@@ -1104,6 +1104,14 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map' }) {
       </div>
     </div>
   );
+
+  if (publicOnly) {
+    return (
+      <div className="flex h-screen w-full bg-slate-950 text-slate-200 font-sans overflow-hidden selection:bg-cyan-500/30 relative">
+        <FrontendUserView buildings={buildings} systemConfig={systemConfig} onMenuClick={() => {}} />
+      </div>
+    );
+  }
 
   return (
     <div className={`${embedded ? 'flex min-h-[760px] w-full' : 'flex h-screen w-full'} bg-slate-950 text-slate-200 font-sans overflow-hidden selection:bg-cyan-500/30 relative`}>
