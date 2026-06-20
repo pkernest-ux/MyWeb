@@ -1,0 +1,18 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#ar-root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #020617;
+}
+
+#ar-root {
+  min-height: 100vh;
+}
