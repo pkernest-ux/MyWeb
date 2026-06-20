@@ -915,17 +915,17 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             </div>
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button onClick={addProject} className="inline-flex items-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold px-3 py-2 rounded-lg text-xs transition-colors">
+        <div className="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 w-full xl:w-auto">
+          <button onClick={addProject} className="inline-flex items-center justify-center gap-2 bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold px-3 py-2 rounded-lg text-xs transition-colors">
             <Plus className="w-4 h-4" />新增專案
           </button>
-          <button onClick={editProject} className="inline-flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-3 py-2 rounded-lg text-xs transition-colors">
+          <button onClick={editProject} className="inline-flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-3 py-2 rounded-lg text-xs transition-colors">
             <Edit className="w-4 h-4" />編輯
           </button>
-          <button onClick={saveActiveProject} className="inline-flex items-center gap-2 bg-green-500/10 hover:bg-green-500/20 text-green-400 border border-green-500/30 px-3 py-2 rounded-lg text-xs transition-colors">
+          <button onClick={saveActiveProject} className="inline-flex items-center justify-center gap-2 bg-green-500/10 hover:bg-green-500/20 text-green-400 border border-green-500/30 px-3 py-2 rounded-lg text-xs transition-colors">
             <CheckCircle2 className="w-4 h-4" />儲存
           </button>
-          <button onClick={deleteProject} className="inline-flex items-center gap-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-2 rounded-lg text-xs transition-colors">
+          <button onClick={deleteProject} className="inline-flex items-center justify-center gap-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-2 rounded-lg text-xs transition-colors">
             <Trash2 className="w-4 h-4" />刪除
           </button>
         </div>
@@ -966,7 +966,37 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               <button onClick={() => switchTab('map')} className="mt-6 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 px-6 py-2 rounded-lg transition-all text-sm">前往平面圖</button>
             </div>
           ) : (
-            <div className="bg-slate-900 border border-slate-800 rounded-xl shadow-xl overflow-hidden">
+            <>
+            <div className="md:hidden space-y-3">
+              {allFlatMarkers.map(marker => (
+                <div key={marker.id} className="bg-slate-900 border border-slate-800 rounded-xl p-4 shadow-lg">
+                  <div className="flex items-start gap-3">
+                    {marker.imageUrl ? (
+                      <img src={marker.imageUrl} alt={marker.code} className="w-12 h-12 object-cover rounded-lg bg-slate-950 border border-slate-700 shrink-0" />
+                    ) : (
+                      <div className="w-12 h-12 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-center text-slate-600 shrink-0"><ImageIcon className="w-5 h-5" /></div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="font-mono text-cyan-400 font-bold text-sm">{marker.code}</div>
+                        <StatusBadge status={marker.recognitionStatus} />
+                      </div>
+                      <div className="font-bold text-slate-100 mt-1 truncate">{marker.title || '未命名點位'}</div>
+                      <div className="text-xs text-slate-500 mt-1 truncate">{marker.buildingName} · {marker.floorName}</div>
+                    </div>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <span className={`px-2.5 py-1 rounded text-xs font-medium ${marker.enabled ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-slate-800 text-slate-400 border border-slate-700'}`}>
+                      {marker.enabled ? '已啟用' : '未啟用'}
+                    </span>
+                    <button onClick={() => handleEditFromList(marker.bId, marker.fId, marker.id)} className="inline-flex items-center gap-2 px-3 py-2 text-blue-400 bg-blue-400/10 hover:bg-blue-400/20 rounded-lg transition-colors text-sm">
+                      <Edit className="w-4 h-4" />編輯
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="hidden md:block bg-slate-900 border border-slate-800 rounded-xl shadow-xl overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-sm text-slate-300 min-w-[900px]">
                   <thead className="bg-slate-950/80 border-b border-slate-800 text-slate-400 whitespace-nowrap">
@@ -1017,6 +1047,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 </table>
               </div>
             </div>
+            </>
           )}
         </div>
       </div>
@@ -1107,17 +1138,17 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
   if (publicOnly) {
     return (
-      <div className="flex h-screen w-full bg-slate-950 text-slate-200 font-sans overflow-hidden selection:bg-cyan-500/30 relative">
+      <div className="flex h-[100dvh] w-full bg-slate-950 text-slate-200 font-sans overflow-hidden selection:bg-cyan-500/30 relative">
         <FrontendUserView buildings={buildings} systemConfig={systemConfig} onMenuClick={() => {}} />
       </div>
     );
   }
 
   return (
-    <div className={`${embedded ? 'flex min-h-[760px] w-full' : 'flex h-screen w-full'} bg-slate-950 text-slate-200 font-sans overflow-hidden selection:bg-cyan-500/30 relative`}>
+    <div className={`${embedded ? 'flex min-h-[760px] w-full' : 'flex h-[100dvh] w-full'} bg-slate-950 text-slate-200 font-sans overflow-hidden selection:bg-cyan-500/30 relative`}>
       {!embedded && isMobileMenuOpen && ( <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-40 md:hidden" onClick={() => setIsMobileMenuOpen(false)} /> )}
       
-      {!embedded && <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 border-r border-slate-800 flex flex-col justify-between shrink-0 transition-transform duration-300 shadow-2xl md:relative md:translate-x-0 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      {!embedded && <div className={`fixed inset-y-0 left-0 z-50 w-[82vw] max-w-xs md:w-64 bg-slate-900 border-r border-slate-800 flex flex-col justify-between shrink-0 transition-transform duration-300 shadow-2xl md:relative md:translate-x-0 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div>
           <div className="h-16 flex items-center px-6 border-b border-slate-800 bg-slate-950/50 justify-between md:justify-start">
             <div className="flex items-center">
@@ -1151,11 +1182,11 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       {activeTab === 'map' && (
         <div className="flex-1 flex flex-col relative overflow-hidden bg-slate-950 w-full">
           
-          <div className="absolute top-4 left-4 z-40 flex items-center gap-2 bg-slate-900/90 backdrop-blur-md border border-slate-700 p-2 rounded-xl shadow-lg">
+          <div className="absolute top-3 left-2 right-2 md:top-4 md:left-4 md:right-auto z-40 flex items-center gap-2 bg-slate-900/90 backdrop-blur-md border border-slate-700 p-2 rounded-xl shadow-lg overflow-x-auto md:overflow-visible whitespace-nowrap">
             {!embedded && <button className="md:hidden text-slate-400 hover:text-white mr-1" onClick={() => setIsMobileMenuOpen(true)}><Menu className="w-5 h-5" /></button>}
             <div className="flex items-center">
               <Target className="w-4 h-4 text-cyan-400 ml-1 mr-2"/>
-              <select className="bg-transparent text-cyan-300 text-sm font-bold focus:outline-none max-w-[150px] truncate" value={activeProjectId} onChange={(e) => setActiveProjectId(e.target.value)}>
+              <select className="bg-transparent text-cyan-300 text-sm font-bold focus:outline-none max-w-[120px] md:max-w-[150px] truncate" value={activeProjectId} onChange={(e) => setActiveProjectId(e.target.value)}>
                 {projects.map(project => <option key={project.id} value={project.id} className="bg-slate-900">{project.name}</option>)}
               </select>
               <button onClick={addProject} className="ml-1 px-1 text-cyan-400 hover:text-cyan-300 transition-colors" title="新增專案"><Plus className="w-4 h-4"/></button>
@@ -1164,7 +1195,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             <div className="w-px h-5 bg-slate-700 mx-1"></div>
             <div className="flex items-center">
               <Building className="w-4 h-4 text-slate-500 ml-1 mr-2"/>
-              <select className="bg-transparent text-slate-200 text-sm font-medium focus:outline-none max-w-[120px] truncate" value={activeBuildingId} onChange={(e) => setActiveBuildingId(e.target.value)}>
+              <select className="bg-transparent text-slate-200 text-sm font-medium focus:outline-none max-w-[110px] md:max-w-[120px] truncate" value={activeBuildingId} onChange={(e) => setActiveBuildingId(e.target.value)}>
                 {buildings.map(b => <option key={b.id} value={b.id} className="bg-slate-900">{b.name}</option>)}
               </select>
               <button onClick={addBuilding} className="ml-1 px-1 text-cyan-400 hover:text-cyan-300 transition-colors"><Plus className="w-4 h-4"/></button>
@@ -1191,32 +1222,32 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             </div>
           </div>
 
-          <div className="absolute top-4 right-4 z-40 flex flex-col gap-2">
+          <div className="absolute left-2 right-2 bottom-3 md:left-auto md:right-4 md:bottom-auto md:top-4 z-40 flex flex-row md:flex-col gap-2 overflow-x-auto md:overflow-visible bg-slate-950/60 md:bg-transparent backdrop-blur md:backdrop-blur-0 p-2 md:p-0 rounded-xl md:rounded-none border border-slate-800/70 md:border-0">
             {currentFloor?.imageUrl && (
               <>
-                <button onClick={() => { setIsNavTestMode(!isNavTestMode); setIsPathMode(false); setIsToggleShaftMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setHoverPos(null); setNavTestPoints([]); setNavTestPath([]); }} className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isNavTestMode ? 'bg-blue-500 text-white shadow-[0_0_15px_rgba(59,130,246,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-blue-400 hover:bg-slate-800'}`} title="路網分析測試">
+                <button onClick={() => { setIsNavTestMode(!isNavTestMode); setIsPathMode(false); setIsToggleShaftMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setHoverPos(null); setNavTestPoints([]); setNavTestPath([]); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isNavTestMode ? 'bg-blue-500 text-white shadow-[0_0_15px_rgba(59,130,246,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-blue-400 hover:bg-slate-800'}`} title="路網分析測試">
                   {isNavTestMode ? <X className="w-5 h-5" /> : <Activity className="w-5 h-5" />}
                 </button>
                 <div className="w-6 h-px bg-slate-700 mx-auto my-0.5"></div>
-                <button onClick={() => { setIsToggleShaftMode(!isToggleShaftMode); setIsPathMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setHoverPos(null); }} className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isToggleShaftMode ? 'bg-green-500 text-white shadow-[0_0_15px_rgba(34,197,94,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-green-400 hover:bg-slate-800'}`} title="指定跨樓層轉折點 (點擊節點切換)">
+                <button onClick={() => { setIsToggleShaftMode(!isToggleShaftMode); setIsPathMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isToggleShaftMode ? 'bg-green-500 text-white shadow-[0_0_15px_rgba(34,197,94,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-green-400 hover:bg-slate-800'}`} title="指定跨樓層轉折點 (點擊節點切換)">
                   {isToggleShaftMode ? <X className="w-5 h-5" /> : <ArrowUpDown className="w-5 h-5" />}
                 </button>
-                <button onClick={() => { setIsPathMode(!isPathMode); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setHoverPos(null); }} className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isPathMode ? 'bg-orange-500 text-white shadow-[0_0_15px_rgba(249,115,22,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-orange-400 hover:bg-slate-800'}`} title="路徑建置 (一般轉折點與連線)">
+                <button onClick={() => { setIsPathMode(!isPathMode); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isPathMode ? 'bg-orange-500 text-white shadow-[0_0_15px_rgba(249,115,22,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-orange-400 hover:bg-slate-800'}`} title="路徑建置 (一般轉折點與連線)">
                   {isPathMode ? <X className="w-5 h-5" /> : <Route className="w-5 h-5" />}
                 </button>
-                <button onClick={() => { setIsMeasuring(!isMeasuring); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsPathMode(false); setMeasurePoints([]); setHoverPos(null); }} className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isMeasuring ? 'bg-purple-500 text-white shadow-[0_0_15px_rgba(168,85,247,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-purple-400 hover:bg-slate-800'}`} title="尺規量測">
+                <button onClick={() => { setIsMeasuring(!isMeasuring); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsPathMode(false); setMeasurePoints([]); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isMeasuring ? 'bg-purple-500 text-white shadow-[0_0_15px_rgba(168,85,247,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-purple-400 hover:bg-slate-800'}`} title="尺規量測">
                   {isMeasuring ? <X className="w-5 h-5" /> : <Ruler className="w-5 h-5" />}
                 </button>
-                <button onClick={() => { setIsAddMode(!isAddMode); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsMeasuring(false); setIsPathMode(false); setHoverPos(null); }} className={`flex items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isAddMode ? 'bg-cyan-500 text-slate-950 shadow-[0_0_15px_rgba(6,182,212,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-cyan-400 hover:bg-slate-800'}`} title="新增 AR 點位">
+                <button onClick={() => { setIsAddMode(!isAddMode); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsMeasuring(false); setIsPathMode(false); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isAddMode ? 'bg-cyan-500 text-slate-950 shadow-[0_0_15px_rgba(6,182,212,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-cyan-400 hover:bg-slate-800'}`} title="新增 AR 點位">
                   {isAddMode ? <X className="w-5 h-5" /> : <MapPin className="w-5 h-5" />}
                 </button>
-                <button onClick={() => setBoundsModal({ isOpen: true, blX: currentBounds.blX, blY: currentBounds.blY, trX: currentBounds.trX, trY: currentBounds.trY })} className="flex items-center justify-center w-10 h-10 bg-slate-900/90 backdrop-blur border border-slate-700 text-blue-400 hover:bg-slate-800 rounded-xl transition-all shadow-lg" title="座標與比例尺設定">
+                <button onClick={() => setBoundsModal({ isOpen: true, blX: currentBounds.blX, blY: currentBounds.blY, trX: currentBounds.trX, trY: currentBounds.trY })} className="flex shrink-0 items-center justify-center w-10 h-10 bg-slate-900/90 backdrop-blur border border-slate-700 text-blue-400 hover:bg-slate-800 rounded-xl transition-all shadow-lg" title="座標與比例尺設定">
                   <Target className="w-5 h-5" />
                 </button>
               </>
             )}
             <input type="file" ref={fileInputRef} onChange={handleFloorPlanUpload} className="hidden" accept="image/*" />
-            <button onClick={() => fileInputRef.current.click()} className="flex items-center justify-center w-10 h-10 bg-slate-900/90 backdrop-blur border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl transition-all shadow-lg" title="上傳底圖">
+            <button onClick={() => fileInputRef.current.click()} className="flex shrink-0 items-center justify-center w-10 h-10 bg-slate-900/90 backdrop-blur border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl transition-all shadow-lg" title="上傳底圖">
               <Upload className="w-5 h-5" />
             </button>
           </div>
@@ -1534,7 +1565,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         </div>
       )}
       
-      <div className={`fixed inset-y-0 right-0 z-50 w-full md:w-80 lg:w-96 bg-slate-900 border-l border-slate-800 flex flex-col shrink-0 transition-transform duration-300 ${activeTab === 'map' && (selectedMarkerId || selectedWaypointId) ? 'translate-x-0' : 'translate-x-full absolute invisible'}`}>
+      <div className={`fixed inset-x-0 bottom-0 z-50 max-h-[86dvh] rounded-t-2xl border-t border-slate-800 bg-slate-900 shadow-2xl md:inset-x-auto md:inset-y-0 md:right-0 md:max-h-none md:w-80 md:rounded-none md:border-t-0 md:border-l lg:w-96 flex flex-col shrink-0 transition-transform duration-300 ${activeTab === 'map' && (selectedMarkerId || selectedWaypointId) ? 'translate-y-0 md:translate-x-0' : 'translate-y-full md:translate-y-0 md:translate-x-full absolute invisible'}`}>
         <div className="h-16 flex items-center justify-between px-4 border-b border-slate-800 bg-slate-950/80 backdrop-blur shrink-0">
           <h2 className="font-bold text-slate-200">
             {selectedMarkerId ? 'AR 點位設定' : '轉折點 (Waypoint) 設定'}
