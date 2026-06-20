@@ -1483,7 +1483,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             )}
 
             {currentFloor?.imageUrl && (
-              <div className="absolute bottom-4 right-4 flex flex-col space-y-2 z-40">
+              <div className="absolute bottom-28 right-3 md:bottom-4 md:right-4 flex flex-col space-y-2 z-40">
                 <button onClick={() => setMapTransform(prev => ({...prev, scale: Math.min(10, prev.scale * 1.2)}))} className="p-2 bg-slate-900/90 backdrop-blur border border-slate-700 hover:bg-slate-800 text-slate-200 rounded-xl shadow-lg transition-colors"><ZoomIn className="w-5 h-5"/></button>
                 <button onClick={() => setMapTransform(prev => ({...prev, scale: Math.max(0.1, prev.scale / 1.2)}))} className="p-2 bg-slate-900/90 backdrop-blur border border-slate-700 hover:bg-slate-800 text-slate-200 rounded-xl shadow-lg transition-colors"><ZoomOut className="w-5 h-5"/></button>
                 <button onClick={resetMapView} className="p-2 bg-slate-900/90 backdrop-blur border border-slate-700 hover:bg-slate-800 text-slate-200 rounded-xl shadow-lg transition-colors mt-1"><Maximize className="w-5 h-5"/></button>
