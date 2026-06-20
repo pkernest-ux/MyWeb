@@ -1,14 +1,69 @@
 {
   "version": "7.0",
   "project": {
-    "id": "default",
-    "name": "AR導覽",
-    "description": "Published AR guide data",
-    "updatedAt": null
+    "id": "project_1781971951563_5qo9d",
+    "name": "巨鷗跨界",
+    "description": "",
+    "updatedAt": "2026-06-20T16:13:16.659Z"
   },
   "systemConfig": {
-    "projectName": "AR導覽",
+    "projectName": "巨鷗跨界",
     "lerpFactor": 15
   },
-  "buildings": []
+  "buildings": [
+    {
+      "id": "b_1781971951563",
+      "name": "預設場域",
+      "floors": [
+        {
+          "id": "f_1781971951563",
+          "name": "1F",
+          "imageUrl": null,
+          "markers": [],
+          "waypoints": [],
+          "edges": [],
+          "bounds": {
+            "blX": 0,
+            "blY": 0,
+            "trX": 100,
+            "trY": 100
+          }
+        }
+      ]
+    },
+    {
+      "id": "b_1781971969064",
+      "name": "CBD",
+      "floors": [
+        {
+          "id": "f_1781971969064",
+          "name": "1F",
+          "imageUrl": null,
+          "markers": [],
+          "waypoints": [],
+          "edges": [],
+          "bounds": {
+            "blX": 0,
+            "blY": 0,
+            "trX": 100,
+            "trY": 100
+          }
+        },
+        {
+          "id": "f_1781971991717",
+          "name": "2F",
+          "imageUrl": null,
+          "markers": [],
+          "waypoints": [],
+          "edges": [],
+          "bounds": {
+            "blX": 0,
+            "blY": 0,
+            "trX": 100,
+            "trY": 100
+          }
+        }
+      ]
+    }
+  ]
 }
