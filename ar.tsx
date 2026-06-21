@@ -204,11 +204,16 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     if (!publicOnly) return;
 
     let cancelled = false;
-    fetch(`/ar-data.json?ts=${Date.now()}`, { cache: 'no-store' })
-      .then(response => {
-        if (!response.ok) throw new Error(`Unable to load AR data: ${response.status}`);
-        return response.json();
-      })
+    const loadPublishedData = async () => {
+      const apiResponse = await fetch(`/api/ar-content?ts=${Date.now()}`, { cache: 'no-store' });
+      if (apiResponse.ok) return apiResponse.json();
+
+      const staticResponse = await fetch(`/ar-data.json?ts=${Date.now()}`, { cache: 'no-store' });
+      if (!staticResponse.ok) throw new Error(`Unable to load AR data: ${staticResponse.status}`);
+      return staticResponse.json();
+    };
+
+    loadPublishedData()
       .then(data => {
         if (cancelled) return;
         const project = createProjectFromPublishedData(data);
@@ -223,10 +228,35 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         console.warn("Published AR data unavailable", error);
         if (!cancelled) {
           setProjects([createProjectFromPublishedData({})]);
-          setSystemConfig(createDefaultConfig('AR導覽'));
+          setSystemConfig(createDefaultConfig('\u0041\u0052\u5c0e\u89bd'));
           setBuildings([]);
         }
       });
+
+    return () => { cancelled = true; };
+  }, [publicOnly]);
+
+  useEffect(() => {
+    if (publicOnly) return;
+    if (localStorage.getItem('arManager_projects')) return;
+
+    let cancelled = false;
+    fetch(`/api/ar-content?ts=${Date.now()}`, { cache: 'no-store' })
+      .then(response => {
+        if (!response.ok) throw new Error(`Unable to load AR data: ${response.status}`);
+        return response.json();
+      })
+      .then(data => {
+        if (cancelled || !Array.isArray(data?.buildings) || data.buildings.length === 0) return;
+        const project = createProjectFromPublishedData(data);
+        setProjects([project]);
+        setActiveProjectId(project.id);
+        setSystemConfig(cloneData(project.systemConfig));
+        setBuildings(cloneData(project.buildings));
+        setActiveBuildingId(project.buildings[0]?.id);
+        setActiveFloorId(project.buildings[0]?.floors[0]?.id);
+      })
+      .catch(error => console.warn("Published AR admin seed unavailable", error));
 
     return () => { cancelled = true; };
   }, [publicOnly]);
@@ -827,7 +857,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         throw new Error(result.error || `Save failed: ${response.status}`);
       }
 
-      setAlertModal({ isOpen: true, message: `「${payload.project.name}」已儲存並發布到網站。民眾端將讀取最新 Web 資料。` });
+      setAlertModal({ isOpen: true, message: `「${payload.project.name}」已儲存到 Web 端。民眾端會透過 /api/ar-content 讀取最新平面圖、AR 點位與路網資料。` });
     } catch (error) {
       setAlertModal({ isOpen: true, message: `已儲存在後台暫存，但發布到網站失敗：${error.message}` });
     }
