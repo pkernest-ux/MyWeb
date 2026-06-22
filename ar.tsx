@@ -138,15 +138,22 @@ const createFlowArrowGroup = (points) => {
   if (!points || points.length < 2) return null;
   const curve = new THREE.CatmullRomCurve3(points);
   const routeLength = Math.max(getVectorPathLength(points), 0.001);
-  const arrowCount = Math.max(3, Math.min(12, Math.ceil(routeLength / 0.45)));
+  const arrowCount = Math.max(4, Math.min(16, Math.ceil(routeLength / 0.34)));
   const arrows = [];
   const group = new THREE.Group();
 
   for (let i = 0; i < arrowCount; i++) {
-    const arrow = new THREE.Mesh(
-      new THREE.ConeGeometry(0.085, 0.26, 24),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95 })
+    const arrow = new THREE.Group();
+    const halo = new THREE.Mesh(
+      new THREE.ConeGeometry(0.14, 0.34, 24),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.22 })
     );
+    const core = new THREE.Mesh(
+      new THREE.ConeGeometry(0.09, 0.28, 24),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.98 })
+    );
+    arrow.add(halo);
+    arrow.add(core);
     arrow.userData.flowOffset = i / arrowCount;
     arrows.push(arrow);
     group.add(arrow);
@@ -167,7 +174,9 @@ const updateFlowArrowGroup = (group, elapsedMs) => {
     arrow.position.copy(point);
     arrow.position.y += 0.11;
     arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), tangent);
-    arrow.material.opacity = 0.55 + 0.45 * Math.sin(t * Math.PI);
+    arrow.children.forEach((child, index) => {
+      child.material.opacity = (index === 0 ? 0.16 : 0.58) + (index === 0 ? 0.18 : 0.4) * Math.sin(t * Math.PI);
+    });
   });
 };
 
@@ -2411,24 +2420,24 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       else ctx.lineTo(point.x, point.y);
     });
 
-    ctx.strokeStyle = isLockedFallback ? 'rgba(34, 211, 238, 0.68)' : 'rgba(0, 255, 204, 0.86)';
-    ctx.lineWidth = isLockedFallback ? 12 : 15;
+    ctx.strokeStyle = isLockedFallback ? 'rgba(255, 255, 255, 0.18)' : 'rgba(255, 255, 255, 0.24)';
+    ctx.lineWidth = isLockedFallback ? 8 : 10;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.shadowBlur = isLockedFallback ? 14 : 20;
-    ctx.shadowColor = '#00ffcc';
+    ctx.shadowBlur = isLockedFallback ? 8 : 12;
+    ctx.shadowColor = '#ffffff';
     ctx.stroke();
 
     if (routeLength > 8) {
-      const arrowSpacing = isLockedFallback ? 92 : 78;
-      const arrowSize = isLockedFallback ? 22 : 26;
-      const flowOffset = ((Date.now() / 12) % arrowSpacing);
+      const arrowSpacing = isLockedFallback ? 74 : 62;
+      const arrowSize = isLockedFallback ? 28 : 32;
+      const flowOffset = ((Date.now() / 10) % arrowSpacing);
 
       ctx.shadowBlur = isLockedFallback ? 10 : 16;
       ctx.shadowColor = '#ffffff';
-      ctx.fillStyle = 'rgba(255,255,255,0.95)';
-      ctx.strokeStyle = 'rgba(0,0,0,0.28)';
-      ctx.lineWidth = 2;
+      ctx.fillStyle = 'rgba(255,255,255,0.98)';
+      ctx.strokeStyle = 'rgba(0,0,0,0.34)';
+      ctx.lineWidth = 2.5;
 
       for (let distance = flowOffset; distance < routeLength; distance += arrowSpacing) {
         const sample = getPointAtPolylineDistance(points, distance);
@@ -2509,8 +2518,8 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     ));
 
     const group = new THREE.Group();
-    const glow = buildTubeFromPoints(points, 0.06, 0x00ffcc, 0.42);
-    const core = buildTubeFromPoints(points, 0.025, 0xffffff, 0.95);
+    const glow = buildTubeFromPoints(points, 0.045, 0xffffff, 0.18);
+    const core = buildTubeFromPoints(points, 0.016, 0xffffff, 0.36);
     if (glow) group.add(glow);
     if (core) group.add(core);
 
