@@ -23,7 +23,27 @@ module.exports = async function (context) {
     }
 
     const file = await response.json();
-    const json = JSON.parse(Buffer.from(file.content || "", "base64").toString("utf8"));
+    let text = "";
+
+    if (file.encoding === "base64" && file.content) {
+      text = Buffer.from(file.content, "base64").toString("utf8");
+    } else if (file.download_url) {
+      const rawResponse = await fetch(file.download_url, {
+        headers: token ? { Authorization: `Bearer ${token}`, "User-Agent": "myweb-ar-content" } : { "User-Agent": "myweb-ar-content" }
+      });
+
+      if (!rawResponse.ok) {
+        throw new Error(`Unable to download AR content file from GitHub: ${rawResponse.status}`);
+      }
+
+      text = await rawResponse.text();
+    }
+
+    if (!text) {
+      throw new Error("AR content file is empty or unavailable from GitHub.");
+    }
+
+    const json = JSON.parse(text);
 
     context.res = {
       status: 200,
