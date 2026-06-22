@@ -2055,6 +2055,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   const graphDataRef = useRef({ nodes: {}, edges: [] });
   const lockedPathOverlayRef = useRef(null);
   const arLockStatusRef = useRef('idle');
+  const orientationRef = useRef({ heading: 0, pitch: 0, roll: 0 });
 
   const graphData = React.useMemo(() => {
     const nodes = {}; const edges = [];
@@ -2170,6 +2171,11 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       }
       
       if (heading !== null) {
+        orientationRef.current = {
+          heading,
+          pitch: e.beta || 0,
+          roll: e.gamma || 0
+        };
         headingRef.current = heading;
         if (!hasGyroRef.current) {
           hasGyroRef.current = true;
@@ -2284,14 +2290,21 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   const drawLockedRouteOverlay = (ctx) => {
     const overlay = lockedPathOverlayRef.current;
     if (!overlay || !overlay.points || overlay.points.length < 2) return false;
-    if (Date.now() - overlay.updatedAt > 20000) return false;
 
-    const headingDelta = hasGyroRef.current ? ((((headingRef.current - overlay.heading) + 540) % 360) - 180) : 0;
-    const angle = headingDelta * Math.PI / 180;
-    const cos = Math.cos(angle);
-    const sin = Math.sin(angle);
+    const currentOrientation = orientationRef.current;
+    const headingDelta = hasGyroRef.current ? ((((currentOrientation.heading - overlay.orientation.heading) + 540) % 360) - 180) : 0;
+    const pitchDelta = hasGyroRef.current ? (currentOrientation.pitch - overlay.orientation.pitch) : 0;
+    const rollDelta = hasGyroRef.current ? (currentOrientation.roll - overlay.orientation.roll) : 0;
+    const rollAngle = rollDelta * Math.PI / 180;
+    const cos = Math.cos(rollAngle);
+    const sin = Math.sin(rollAngle);
     const cx = ctx.canvas.width / 2;
     const cy = ctx.canvas.height / 2;
+    const focalLength = Math.max(ctx.canvas.width, ctx.canvas.height) * 0.95;
+    const maxOffsetX = ctx.canvas.width * 1.8;
+    const maxOffsetY = ctx.canvas.height * 1.2;
+    const yawOffset = Math.max(-maxOffsetX, Math.min(maxOffsetX, Math.tan(headingDelta * Math.PI / 180) * focalLength));
+    const pitchOffset = Math.max(-maxOffsetY, Math.min(maxOffsetY, Math.tan(pitchDelta * Math.PI / 180) * focalLength * 0.75));
 
     const points = overlay.points.map(point => {
       const x = point.x * ctx.canvas.width;
@@ -2299,8 +2312,8 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       const dx = x - cx;
       const dy = y - cy;
       return {
-        x: cx + dx * cos - dy * sin,
-        y: cy + dx * sin + dy * cos
+        x: cx + dx * cos - dy * sin - yawOffset,
+        y: cy + dx * sin + dy * cos + pitchOffset
       };
     });
 
@@ -2397,7 +2410,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
           if (drawArRoute(ctx, projectedPoints, false)) {
             lockedPathOverlayRef.current = {
               markerId: lockedMarkerId,
-              heading: headingRef.current,
+              orientation: { ...orientationRef.current },
               updatedAt: Date.now(),
               points: projectedPoints.map(point => ({
                 x: point.x / canvas.width,
@@ -2500,7 +2513,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
         {engineState === 'scanning' && (
           <div className="absolute top-4 right-4 z-40 rounded-full border border-cyan-400/30 bg-slate-950/75 px-3 py-2 text-xs font-bold text-cyan-100 shadow-lg backdrop-blur-md">
             {arLockStatus === 'locked' && 'AR 路徑已鎖定'}
-            {arLockStatus === 'holding' && '沿用空間錨點'}
+            {arLockStatus === 'holding' && '陀螺儀空間錨點'}
             {arLockStatus === 'searching' && '搜尋定位標記'}
             {arLockStatus === 'idle' && '準備定位'}
           </div>
