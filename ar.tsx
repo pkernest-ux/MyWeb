@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import * as THREE from 'three';
 import { 
   Map, MapPin, Target, Download, Upload, Plus, 
   Settings, Trash2, Camera, Play, CheckCircle2, AlertTriangle, X,
@@ -60,6 +61,34 @@ const getFloorLevel = (name) => {
 const getFloorBounds = (floor) => floor?.bounds || { blX: 0, blY: 0, trX: 100, trY: 100 };
 
 const cloneData = (value) => JSON.parse(JSON.stringify(value));
+
+const normalizeAngleDelta = (current, base) => (((current - base) + 540) % 360) - 180;
+
+const buildTubeFromPoints = (points, radius, color, opacity = 1) => {
+  if (!points || points.length < 2) return null;
+  const curve = new THREE.CatmullRomCurve3(points);
+  const geometry = new THREE.TubeGeometry(curve, Math.max(8, points.length * 12), radius, 12, false);
+  const material = new THREE.MeshBasicMaterial({
+    color,
+    transparent: opacity < 1,
+    opacity
+  });
+  return new THREE.Mesh(geometry, material);
+};
+
+const createRouteArrow = (from, to) => {
+  const direction = new THREE.Vector3().subVectors(to, from);
+  if (direction.length() < 0.001) return null;
+
+  const cone = new THREE.Mesh(
+    new THREE.ConeGeometry(0.09, 0.24, 24),
+    new THREE.MeshBasicMaterial({ color: 0xffffff })
+  );
+  cone.position.copy(to);
+  cone.position.y += 0.02;
+  cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.normalize());
+  return cone;
+};
 
 const createDefaultConfig = (name = '新導引專案') => ({
   projectName: name,
@@ -2045,9 +2074,18 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   const [isMapExpanded, setIsMapExpanded] = useState(false);
   const [deviceHeading, setDeviceHeading] = useState(0);
   const [arLockStatus, setArLockStatus] = useState('idle');
+  const [xrSupport, setXrSupport] = useState('checking');
+  const [xrStatus, setXrStatus] = useState('idle');
   const [hasGyro, setHasGyro] = useState(false); // 新增：偵測陀螺儀是否成功作動
   
   const videoRef = useRef(null); const canvasRef = useRef(null); const streamRef = useRef(null); const animFrameRef = useRef(null);
+  const xrHostRef = useRef(null);
+  const xrSessionRef = useRef(null);
+  const xrRendererRef = useRef(null);
+  const xrRouteGroupRef = useRef(null);
+  const xrHitTestSourceRef = useRef(null);
+  const xrReferenceSpaceRef = useRef(null);
+  const xrPlacedRef = useRef(false);
   const targetFeaturesRef = useRef([]); const cvPointers = useRef({ matcher: null });
   const headingRef = useRef(0); // 暫存陀螺儀高頻率數值
   const hasGyroRef = useRef(false);
@@ -2088,6 +2126,27 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     arLockStatusRef.current = status;
     setArLockStatus(status);
   };
+
+  useEffect(() => {
+    let mounted = true;
+
+    const checkXrSupport = async () => {
+      if (!navigator.xr || !window.isSecureContext) {
+        if (mounted) setXrSupport('unsupported');
+        return;
+      }
+
+      try {
+        const supported = await navigator.xr.isSessionSupported('immersive-ar');
+        if (mounted) setXrSupport(supported ? 'supported' : 'unsupported');
+      } catch (error) {
+        if (mounted) setXrSupport('unsupported');
+      }
+    };
+
+    checkXrSupport();
+    return () => { mounted = false; };
+  }, []);
 
   const calculateShortestPath = (startId, endId) => {
     const { nodes, edges } = graphData;
@@ -2320,6 +2379,177 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     return drawArRoute(ctx, points, true);
   };
 
+  const getXrRouteNodeIds = () => {
+    if (calculatedPathRef.current.length > 1) return calculatedPathRef.current;
+    const markerIds = Object.values(graphDataRef.current.nodes).filter(n => n.isMarker && n.id !== destinationId).map(n => n.id);
+    const fallbackStartId = currentLocationId || markerIds[0];
+    if (!fallbackStartId || !destinationId || fallbackStartId === destinationId) return [];
+    return calculateShortestPath(fallbackStartId, destinationId);
+  };
+
+  const createXrRouteGroup = () => {
+    const routeIds = getXrRouteNodeIds();
+    const nodes = graphDataRef.current.nodes;
+    const routeNodes = routeIds.map(id => nodes[id]).filter(Boolean);
+    if (routeNodes.length < 2) return null;
+
+    const origin = routeNodes[0];
+    const routeScale = 0.08;
+    const points = routeNodes.map(node => new THREE.Vector3(
+      (node.physX - origin.physX) * routeScale,
+      0.03,
+      -(node.physY - origin.physY) * routeScale
+    ));
+
+    const group = new THREE.Group();
+    const glow = buildTubeFromPoints(points, 0.06, 0x00ffcc, 0.42);
+    const core = buildTubeFromPoints(points, 0.025, 0xffffff, 0.95);
+    if (glow) group.add(glow);
+    if (core) group.add(core);
+
+    for (let i = 1; i < points.length; i += 2) {
+      const arrow = createRouteArrow(points[i - 1], points[i]);
+      if (arrow) group.add(arrow);
+    }
+
+    const startMarker = new THREE.Mesh(
+      new THREE.SphereGeometry(0.1, 24, 24),
+      new THREE.MeshBasicMaterial({ color: 0x22d3ee })
+    );
+    startMarker.position.copy(points[0]);
+    startMarker.position.y += 0.08;
+    group.add(startMarker);
+
+    const endMarker = new THREE.Mesh(
+      new THREE.SphereGeometry(0.12, 24, 24),
+      new THREE.MeshBasicMaterial({ color: 0xff4d4f })
+    );
+    endMarker.position.copy(points[points.length - 1]);
+    endMarker.position.y += 0.1;
+    group.add(endMarker);
+
+    return group;
+  };
+
+  const stopWebXr = async () => {
+    const session = xrSessionRef.current;
+    if (session) {
+      try { await session.end(); } catch (error) {}
+    } else {
+      cleanupWebXr();
+    }
+  };
+
+  const cleanupWebXr = () => {
+    if (xrRouteGroupRef.current) {
+      xrRouteGroupRef.current.traverse(object => {
+        if (object.geometry) object.geometry.dispose();
+        if (object.material) object.material.dispose();
+      });
+    }
+    if (xrRendererRef.current) {
+      xrRendererRef.current.setAnimationLoop(null);
+      xrRendererRef.current.dispose();
+      xrRendererRef.current.domElement.remove();
+    }
+    xrSessionRef.current = null;
+    xrRendererRef.current = null;
+    xrRouteGroupRef.current = null;
+    xrHitTestSourceRef.current = null;
+    xrReferenceSpaceRef.current = null;
+    xrPlacedRef.current = false;
+    setXrStatus('idle');
+  };
+
+  const startWebXr = async () => {
+    if (xrSupport !== 'supported' || !navigator.xr || xrSessionRef.current) return;
+
+    setXrStatus('starting');
+    stopScanning();
+
+    try {
+      const sessionOptions = {
+        requiredFeatures: ['hit-test'],
+        optionalFeatures: xrHostRef.current ? ['local-floor', 'dom-overlay', 'anchors'] : ['local-floor', 'anchors']
+      };
+      if (xrHostRef.current) sessionOptions.domOverlay = { root: xrHostRef.current };
+
+      const session = await navigator.xr.requestSession('immersive-ar', sessionOptions);
+
+      const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+      renderer.xr.enabled = true;
+      renderer.setPixelRatio(window.devicePixelRatio || 1);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.domElement.className = 'absolute inset-0 h-full w-full';
+      xrHostRef.current?.appendChild(renderer.domElement);
+      await renderer.xr.setSession(session);
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera();
+      const reticle = new THREE.Mesh(
+        new THREE.RingGeometry(0.18, 0.22, 32).rotateX(-Math.PI / 2),
+        new THREE.MeshBasicMaterial({ color: 0x00ffcc, transparent: true, opacity: 0.85 })
+      );
+      reticle.matrixAutoUpdate = false;
+      reticle.visible = false;
+      scene.add(reticle);
+
+      const referenceSpace = await session.requestReferenceSpace('local-floor').catch(() => session.requestReferenceSpace('local'));
+      const viewerSpace = await session.requestReferenceSpace('viewer');
+      const hitTestSource = await session.requestHitTestSource({ space: viewerSpace });
+
+      xrSessionRef.current = session;
+      xrRendererRef.current = renderer;
+      xrHitTestSourceRef.current = hitTestSource;
+      xrReferenceSpaceRef.current = referenceSpace;
+      setXrStatus('placing');
+
+      const placeRoute = (matrix) => {
+        if (xrPlacedRef.current) return;
+        const routeGroup = createXrRouteGroup();
+        if (!routeGroup) {
+          setXrStatus('no-route');
+          return;
+        }
+        routeGroup.matrix.fromArray(matrix);
+        routeGroup.matrix.decompose(routeGroup.position, routeGroup.quaternion, routeGroup.scale);
+        scene.add(routeGroup);
+        xrRouteGroupRef.current = routeGroup;
+        xrPlacedRef.current = true;
+        setXrStatus('anchored');
+      };
+
+      session.addEventListener('select', () => {
+        if (reticle.visible) placeRoute(reticle.matrix.elements);
+      });
+
+      session.addEventListener('end', cleanupWebXr);
+
+      renderer.setAnimationLoop((timestamp, frame) => {
+        if (frame && !xrPlacedRef.current) {
+          const hitResults = frame.getHitTestResults(hitTestSource);
+          if (hitResults.length) {
+            const pose = hitResults[0].getPose(referenceSpace);
+            if (pose) {
+              reticle.visible = true;
+              reticle.matrix.fromArray(pose.transform.matrix);
+            }
+          } else {
+            reticle.visible = false;
+          }
+        } else {
+          reticle.visible = false;
+        }
+
+        renderer.render(scene, camera);
+      });
+    } catch (error) {
+      console.warn('Unable to start WebXR AR mode.', error);
+      cleanupWebXr();
+      setXrStatus('failed');
+    }
+  };
+
   const startCameraLoop = () => {
     const cv = window.cv; const video = videoRef.current; const canvas = canvasRef.current; const ctx = canvas.getContext('2d');
     const matcher = cvPointers.current.matcher; let cvThrottle = 0; let homographyMat = null; let lockedMarkerId = null;
@@ -2507,6 +2737,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       </div>
       
       <div className="flex-1 relative flex items-center justify-center">
+        <div ref={xrHostRef} className={`absolute inset-0 z-10 ${xrStatus === 'idle' ? 'pointer-events-none' : ''}`}></div>
         <video ref={videoRef} playsInline muted className="hidden"></video>
         <canvas ref={canvasRef} className={`absolute inset-0 w-full h-full object-cover ${engineState !== 'scanning' && 'hidden'}`}></canvas>
 
@@ -2621,7 +2852,38 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
           </div>
         )}
 
-        {engineState !== 'scanning' && (
+        {engineState !== 'scanning' && xrStatus === 'idle' && (
+          <div className="z-20 w-full max-w-md px-6 text-center">
+            <Scan className="w-20 h-20 text-cyan-500/50 mb-6 mx-auto" />
+            <h2 className="text-2xl font-bold text-white mb-3">開啟 AR 導引</h2>
+            <p className="mb-6 text-sm leading-relaxed text-slate-300">
+              真 AR 模式會把路徑建立成 3D 物件並鎖定在空間；不支援 WebXR 的裝置可使用相機疊圖備援。
+            </p>
+            <div className="space-y-3">
+              <button
+                onClick={startWebXr}
+                disabled={xrSupport !== 'supported'}
+                className="w-full rounded-full bg-cyan-500 px-8 py-4 text-lg font-bold text-slate-950 shadow-[0_0_20px_rgba(6,182,212,0.4)] transition-colors hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                {xrSupport === 'checking' ? '檢查真 AR 支援中...' : xrSupport === 'supported' ? '開啟真 AR 空間模式' : '此裝置不支援真 AR 模式'}
+              </button>
+              <button
+                onClick={startScanning}
+                disabled={engineState === 'loading'}
+                className="w-full rounded-full border border-slate-600 bg-slate-900/80 px-8 py-3 text-sm font-bold text-slate-100 transition-colors hover:bg-slate-800 disabled:opacity-50"
+              >
+                {engineState === 'loading' ? '系統準備中...' : '使用相機疊圖備援'}
+              </button>
+            </div>
+            {xrSupport === 'unsupported' && (
+              <div className="mt-4 rounded-xl border border-yellow-500/30 bg-yellow-500/10 p-3 text-left text-xs leading-relaxed text-yellow-100">
+                iPhone Safari 或未支援 WebXR 的瀏覽器無法做真正空間錨定，只能使用備援模式。Android Chrome 支援時會優先使用真 AR。
+              </div>
+            )}
+          </div>
+        )}
+
+        {false && engineState !== 'scanning' && xrStatus === 'idle' && (
           <div className="text-center z-20 px-6">
             <Scan className="w-20 h-20 text-cyan-500/50 mb-6 mx-auto" />
             <h2 className="text-2xl font-bold text-white mb-4">掃描起點以投影路徑</h2>
@@ -2631,6 +2893,19 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
           </div>
         )}
       </div>
+
+      {xrStatus !== 'idle' && (
+        <div className="absolute inset-x-4 bottom-6 z-40 rounded-2xl border border-cyan-400/30 bg-slate-950/80 p-4 text-center text-sm text-cyan-50 shadow-2xl backdrop-blur-md">
+          {xrStatus === 'starting' && '正在啟動真 AR 空間模式...'}
+          {xrStatus === 'placing' && '請對準地面，點一下畫面放置 AR 路徑。'}
+          {xrStatus === 'anchored' && 'AR 路徑已鎖定在空間中。'}
+          {xrStatus === 'no-route' && '目前找不到可用路徑，請先確認後台路網與目的地。'}
+          {xrStatus === 'failed' && '真 AR 啟動失敗，請改用相機疊圖備援。'}
+          <button onClick={stopWebXr} className="mt-3 rounded-full border border-slate-500 px-4 py-2 text-xs font-bold text-slate-100">
+            關閉真 AR
+          </button>
+        </div>
+      )}
 
       <div className={`absolute bottom-0 left-0 w-full p-4 z-40 transition-transform duration-500 ease-out flex justify-center ${currNode ? 'translate-y-0' : 'translate-y-full'}`}>
         <div className="bg-slate-900/95 backdrop-blur-xl border border-slate-700 w-full max-w-md rounded-2xl p-6 shadow-2xl relative overflow-hidden">
