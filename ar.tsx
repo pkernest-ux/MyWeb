@@ -1899,6 +1899,13 @@ function ARTestIntegration({ marker, onUpdateStatus, showAlert }) {
     }
 
     try {
+      if (window.DeviceOrientationEvent && typeof window.DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+          await window.DeviceOrientationEvent.requestPermission();
+        } catch (permissionError) {
+          console.warn('Device orientation permission was not granted.', permissionError);
+        }
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 640 } }, audio: false });
       streamRef.current = stream; videoRef.current.srcObject = stream; videoRef.current.play();
       videoRef.current.onloadedmetadata = () => { canvasRef.current.width = videoRef.current.videoWidth; canvasRef.current.height = videoRef.current.videoHeight; startProcessingLoop(); };
@@ -2037,12 +2044,17 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   const [calculatedPath, setCalculatedPath] = useState([]); 
   const [isMapExpanded, setIsMapExpanded] = useState(false);
   const [deviceHeading, setDeviceHeading] = useState(0);
+  const [arLockStatus, setArLockStatus] = useState('idle');
   const [hasGyro, setHasGyro] = useState(false); // 新增：偵測陀螺儀是否成功作動
   
   const videoRef = useRef(null); const canvasRef = useRef(null); const streamRef = useRef(null); const animFrameRef = useRef(null);
   const targetFeaturesRef = useRef([]); const cvPointers = useRef({ matcher: null });
   const headingRef = useRef(0); // 暫存陀螺儀高頻率數值
   const hasGyroRef = useRef(false);
+  const calculatedPathRef = useRef([]);
+  const graphDataRef = useRef({ nodes: {}, edges: [] });
+  const lockedPathOverlayRef = useRef(null);
+  const arLockStatusRef = useRef('idle');
 
   const graphData = React.useMemo(() => {
     const nodes = {}; const edges = [];
@@ -2056,6 +2068,25 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     }));
     return { nodes, edges };
   }, [buildings]);
+
+  useEffect(() => {
+    graphDataRef.current = graphData;
+  }, [graphData]);
+
+  useEffect(() => {
+    calculatedPathRef.current = calculatedPath;
+  }, [calculatedPath]);
+
+  useEffect(() => {
+    lockedPathOverlayRef.current = null;
+    updateArLockStatus('idle');
+  }, [destinationId]);
+
+  const updateArLockStatus = (status) => {
+    if (arLockStatusRef.current === status) return;
+    arLockStatusRef.current = status;
+    setArLockStatus(status);
+  };
 
   const calculateShortestPath = (startId, endId) => {
     const { nodes, edges } = graphData;
@@ -2202,6 +2233,13 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     if(engineState!=='idle') return; setEngineState('loading');
     const hasF = await precomputeFeatures(); if(!hasF) { setEngineState('idle'); alert("無法提取特徵"); return; }
     try {
+      if (window.DeviceOrientationEvent && typeof window.DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+          await window.DeviceOrientationEvent.requestPermission();
+        } catch (permissionError) {
+          console.warn('Device orientation permission was not granted.', permissionError);
+        }
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 640 } }, audio: false });
       streamRef.current = stream; videoRef.current.srcObject = stream; videoRef.current.play();
       videoRef.current.onloadedmetadata = () => { canvasRef.current.width = videoRef.current.videoWidth; canvasRef.current.height = videoRef.current.videoHeight; setEngineState('scanning'); startCameraLoop(); };
@@ -2211,7 +2249,62 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   const stopScanning = () => {
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+    lockedPathOverlayRef.current = null;
+    updateArLockStatus('idle');
     setEngineState('idle');
+  };
+
+  const drawArRoute = (ctx, points, isLockedFallback = false) => {
+    if (!points || points.length < 2) return false;
+
+    ctx.save();
+    ctx.beginPath();
+    points.forEach((point, index) => {
+      if (index === 0) ctx.moveTo(point.x, point.y);
+      else ctx.lineTo(point.x, point.y);
+    });
+
+    ctx.strokeStyle = isLockedFallback ? 'rgba(34, 211, 238, 0.68)' : 'rgba(0, 255, 204, 0.86)';
+    ctx.lineWidth = isLockedFallback ? 12 : 15;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.shadowBlur = isLockedFallback ? 14 : 20;
+    ctx.shadowColor = '#00ffcc';
+    ctx.stroke();
+
+    ctx.setLineDash([20, 40]);
+    ctx.lineDashOffset = -(Date.now() % 1000) / 10;
+    ctx.strokeStyle = 'white';
+    ctx.lineWidth = isLockedFallback ? 6 : 8;
+    ctx.stroke();
+    ctx.restore();
+    return true;
+  };
+
+  const drawLockedRouteOverlay = (ctx) => {
+    const overlay = lockedPathOverlayRef.current;
+    if (!overlay || !overlay.points || overlay.points.length < 2) return false;
+    if (Date.now() - overlay.updatedAt > 20000) return false;
+
+    const headingDelta = hasGyroRef.current ? ((((headingRef.current - overlay.heading) + 540) % 360) - 180) : 0;
+    const angle = headingDelta * Math.PI / 180;
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    const cx = ctx.canvas.width / 2;
+    const cy = ctx.canvas.height / 2;
+
+    const points = overlay.points.map(point => {
+      const x = point.x * ctx.canvas.width;
+      const y = point.y * ctx.canvas.height;
+      const dx = x - cx;
+      const dy = y - cy;
+      return {
+        x: cx + dx * cos - dy * sin,
+        y: cy + dx * sin + dy * cos
+      };
+    });
+
+    return drawArRoute(ctx, points, true);
   };
 
   const startCameraLoop = () => {
@@ -2270,19 +2363,20 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       }
       cvThrottle++;
 
-      if (homographyMat && lockedMarkerId && calculatedPath.length > 1) {
-        const currMarker = graphData.nodes[lockedMarkerId];
+      const currentGraphData = graphDataRef.current;
+      const currentCalculatedPath = calculatedPathRef.current;
+
+      if (homographyMat && lockedMarkerId && currentCalculatedPath.length > 1) {
+        const currMarker = currentGraphData.nodes[lockedMarkerId];
         const targetFeature = targetFeaturesRef.current.find(t => t.markerId === lockedMarkerId);
         
         if (currMarker && targetFeature) {
           const pixelsPerMeter = targetFeature.width / 0.3; 
-          
-          ctx.beginPath();
-          let pathStarted = false;
+          const projectedPoints = [];
 
-          for (let i = 0; i < calculatedPath.length; i++) {
-            const nodeId = calculatedPath[i];
-            const node = graphData.nodes[nodeId];
+          for (let i = 0; i < currentCalculatedPath.length; i++) {
+            const nodeId = currentCalculatedPath[i];
+            const node = currentGraphData.nodes[nodeId];
             if (!node || node.fId !== currMarker.fId) break;
 
             const deltaPhysX = node.physX - currMarker.physX;
@@ -2296,27 +2390,32 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
             if (w > 0) {
               const screenX = (H[0]*templateX + H[1]*templateY + H[2]) / w;
               const screenY = (H[3]*templateX + H[4]*templateY + H[5]) / w;
-              
-              if (!pathStarted) { ctx.moveTo(screenX, screenY); pathStarted = true; } 
-              else { ctx.lineTo(screenX, screenY); }
+              projectedPoints.push({ x: screenX, y: screenY });
             }
           }
 
-          if (pathStarted) {
-            ctx.strokeStyle = 'rgba(0, 255, 204, 0.8)'; ctx.lineWidth = 15; 
-            ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-            ctx.shadowBlur = 20; ctx.shadowColor = '#00ffcc';
-            ctx.stroke();
-            
-            ctx.setLineDash([20, 40]); ctx.lineDashOffset = -(Date.now() % 1000) / 10;
-            ctx.strokeStyle = 'white'; ctx.lineWidth = 8; ctx.stroke();
-            ctx.setLineDash([]); ctx.shadowBlur = 0;
+          if (drawArRoute(ctx, projectedPoints, false)) {
+            lockedPathOverlayRef.current = {
+              markerId: lockedMarkerId,
+              heading: headingRef.current,
+              updatedAt: Date.now(),
+              points: projectedPoints.map(point => ({
+                x: point.x / canvas.width,
+                y: point.y / canvas.height
+              }))
+            };
+            updateArLockStatus('locked');
           }
         }
       } else {
-        const scanBox = Math.min(canvas.width, canvas.height) * 0.6;
-        ctx.strokeStyle = 'rgba(0, 255, 204, 0.4)'; ctx.lineWidth = 2; 
-        ctx.strokeRect((canvas.width - scanBox)/2, (canvas.height - scanBox)/2, scanBox, scanBox);
+        const didDrawLockedRoute = currentCalculatedPath.length > 1 && drawLockedRouteOverlay(ctx);
+        updateArLockStatus(didDrawLockedRoute ? 'holding' : 'searching');
+
+        if (!didDrawLockedRoute) {
+          const scanBox = Math.min(canvas.width, canvas.height) * 0.6;
+          ctx.strokeStyle = 'rgba(0, 255, 204, 0.4)'; ctx.lineWidth = 2;
+          ctx.strokeRect((canvas.width - scanBox)/2, (canvas.height - scanBox)/2, scanBox, scanBox);
+        }
       }
       animFrameRef.current = requestAnimationFrame(loop);
     };
@@ -2397,6 +2496,15 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       <div className="flex-1 relative flex items-center justify-center">
         <video ref={videoRef} playsInline muted className="hidden"></video>
         <canvas ref={canvasRef} className={`absolute inset-0 w-full h-full object-cover ${engineState !== 'scanning' && 'hidden'}`}></canvas>
+
+        {engineState === 'scanning' && (
+          <div className="absolute top-4 right-4 z-40 rounded-full border border-cyan-400/30 bg-slate-950/75 px-3 py-2 text-xs font-bold text-cyan-100 shadow-lg backdrop-blur-md">
+            {arLockStatus === 'locked' && 'AR 路徑已鎖定'}
+            {arLockStatus === 'holding' && '沿用空間錨點'}
+            {arLockStatus === 'searching' && '搜尋定位標記'}
+            {arLockStatus === 'idle' && '準備定位'}
+          </div>
+        )}
         
         {engineState === 'scanning' && minimapImage && (
           <div 
