@@ -90,6 +90,87 @@ const createRouteArrow = (from, to) => {
   return cone;
 };
 
+const getPointAtPolylineDistance = (points, distance) => {
+  if (!points || points.length === 0) return null;
+  let remaining = distance;
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const from = points[i];
+    const to = points[i + 1];
+    const segmentLength = Math.hypot(to.x - from.x, to.y - from.y);
+    if (segmentLength <= 0.001) continue;
+
+    if (remaining <= segmentLength) {
+      const ratio = remaining / segmentLength;
+      return {
+        x: from.x + (to.x - from.x) * ratio,
+        y: from.y + (to.y - from.y) * ratio,
+        angle: Math.atan2(to.y - from.y, to.x - from.x)
+      };
+    }
+
+    remaining -= segmentLength;
+  }
+
+  const last = points[points.length - 1];
+  const previous = points[points.length - 2] || last;
+  return {
+    x: last.x,
+    y: last.y,
+    angle: Math.atan2(last.y - previous.y, last.x - previous.x)
+  };
+};
+
+const getPolylineLength = (points) => {
+  if (!points || points.length < 2) return 0;
+  return points.slice(1).reduce((total, point, index) => {
+    const previous = points[index];
+    return total + Math.hypot(point.x - previous.x, point.y - previous.y);
+  }, 0);
+};
+
+const getVectorPathLength = (points) => {
+  if (!points || points.length < 2) return 0;
+  return points.slice(1).reduce((total, point, index) => total + point.distanceTo(points[index]), 0);
+};
+
+const createFlowArrowGroup = (points) => {
+  if (!points || points.length < 2) return null;
+  const curve = new THREE.CatmullRomCurve3(points);
+  const routeLength = Math.max(getVectorPathLength(points), 0.001);
+  const arrowCount = Math.max(3, Math.min(12, Math.ceil(routeLength / 0.45)));
+  const arrows = [];
+  const group = new THREE.Group();
+
+  for (let i = 0; i < arrowCount; i++) {
+    const arrow = new THREE.Mesh(
+      new THREE.ConeGeometry(0.085, 0.26, 24),
+      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.95 })
+    );
+    arrow.userData.flowOffset = i / arrowCount;
+    arrows.push(arrow);
+    group.add(arrow);
+  }
+
+  group.userData.flow = { curve, arrows };
+  return group;
+};
+
+const updateFlowArrowGroup = (group, elapsedMs) => {
+  const flow = group?.userData?.flow;
+  if (!flow) return;
+
+  flow.arrows.forEach((arrow) => {
+    const t = (arrow.userData.flowOffset + elapsedMs * 0.00028) % 1;
+    const point = flow.curve.getPointAt(t);
+    const tangent = flow.curve.getTangentAt(t).normalize();
+    arrow.position.copy(point);
+    arrow.position.y += 0.11;
+    arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), tangent);
+    arrow.material.opacity = 0.55 + 0.45 * Math.sin(t * Math.PI);
+  });
+};
+
 const createDefaultConfig = (name = '新導引專案') => ({
   projectName: name,
   lerpFactor: 15
@@ -2321,6 +2402,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
 
   const drawArRoute = (ctx, points, isLockedFallback = false) => {
     if (!points || points.length < 2) return false;
+    const routeLength = getPolylineLength(points);
 
     ctx.save();
     ctx.beginPath();
@@ -2337,11 +2419,36 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     ctx.shadowColor = '#00ffcc';
     ctx.stroke();
 
-    ctx.setLineDash([20, 40]);
-    ctx.lineDashOffset = -(Date.now() % 1000) / 10;
-    ctx.strokeStyle = 'white';
-    ctx.lineWidth = isLockedFallback ? 6 : 8;
-    ctx.stroke();
+    if (routeLength > 8) {
+      const arrowSpacing = isLockedFallback ? 92 : 78;
+      const arrowSize = isLockedFallback ? 22 : 26;
+      const flowOffset = ((Date.now() / 12) % arrowSpacing);
+
+      ctx.shadowBlur = isLockedFallback ? 10 : 16;
+      ctx.shadowColor = '#ffffff';
+      ctx.fillStyle = 'rgba(255,255,255,0.95)';
+      ctx.strokeStyle = 'rgba(0,0,0,0.28)';
+      ctx.lineWidth = 2;
+
+      for (let distance = flowOffset; distance < routeLength; distance += arrowSpacing) {
+        const sample = getPointAtPolylineDistance(points, distance);
+        if (!sample) continue;
+
+        ctx.save();
+        ctx.translate(sample.x, sample.y);
+        ctx.rotate(sample.angle);
+        ctx.beginPath();
+        ctx.moveTo(arrowSize * 0.55, 0);
+        ctx.lineTo(-arrowSize * 0.35, -arrowSize * 0.32);
+        ctx.lineTo(-arrowSize * 0.15, 0);
+        ctx.lineTo(-arrowSize * 0.35, arrowSize * 0.32);
+        ctx.closePath();
+        ctx.stroke();
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
     ctx.restore();
     return true;
   };
@@ -2407,10 +2514,8 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     if (glow) group.add(glow);
     if (core) group.add(core);
 
-    for (let i = 1; i < points.length; i += 2) {
-      const arrow = createRouteArrow(points[i - 1], points[i]);
-      if (arrow) group.add(arrow);
-    }
+    const flowArrows = createFlowArrowGroup(points);
+    if (flowArrows) group.add(flowArrows);
 
     const startMarker = new THREE.Mesh(
       new THREE.SphereGeometry(0.1, 24, 24),
@@ -2526,6 +2631,10 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       session.addEventListener('end', cleanupWebXr);
 
       renderer.setAnimationLoop((timestamp, frame) => {
+        if (xrRouteGroupRef.current) {
+          xrRouteGroupRef.current.traverse(object => updateFlowArrowGroup(object, timestamp));
+        }
+
         if (frame && !xrPlacedRef.current) {
           const hitResults = frame.getHitTestResults(hitTestSource);
           if (hitResults.length) {
