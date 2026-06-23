@@ -1483,6 +1483,11 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           </div>
 
           <div ref={wrapperRef} className={`flex-1 relative overflow-hidden bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-900 to-slate-950 touch-none select-none ${isPathMode ? 'cursor-crosshair' : (isToggleShaftMode ? 'cursor-pointer' : (isAddMode ? 'cursor-crosshair' : (isMeasuring ? 'cursor-crosshair' : (isNavTestMode ? 'cursor-crosshair' : (isPanning ? 'cursor-grabbing' : 'cursor-grab')))))}`} onPointerDown={handleMapPointerDown} onPointerMove={handleMapPointerMove} onPointerUp={handleMapPointerUp} onPointerCancel={handleMapPointerUp}>
+            {currentFloor && (
+              <div className="absolute left-4 top-4 z-[80] rounded-full border border-cyan-400/30 bg-slate-950/85 px-4 py-2 text-xs font-bold text-white shadow-xl backdrop-blur-md pointer-events-none">
+                {currentBuilding?.name || '目前場域'} / {currentFloor.name || '未命名樓層'}
+              </div>
+            )}
             <div ref={containerRef} className="absolute top-0 left-0 origin-top-left will-change-transform" style={{ transform: `translate(${mapTransform.x}px, ${mapTransform.y}px) scale(${mapTransform.scale})` }}>
               
               {referenceFloorId && (() => {
@@ -2882,7 +2887,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
             <div className="relative w-full h-full">
               {/* 強制延展地圖確保 SVG 路徑百分比精準對齊 */}
               <img src={minimapImage} className="absolute inset-0 w-full h-full opacity-50" style={{ objectFit: 'fill' }} />
-              <div className="absolute left-2 top-2 z-30 rounded-full border border-white/20 bg-black/65 px-2.5 py-1 text-[10px] font-bold text-white shadow-lg backdrop-blur-sm">
+              <div className="absolute left-2 top-2 z-30 rounded-full border border-white/25 bg-black/75 px-3 py-1.5 text-xs font-bold text-white shadow-lg backdrop-blur-sm">
                 {isAutoSwitchingFloor ? `自動切換至 ${minimapFloorName}` : `目前平面圖 ${minimapFloorName}`}
               </div>
               
