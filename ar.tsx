@@ -2490,6 +2490,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   const drawLockedRouteOverlay = (ctx) => {
     const overlay = lockedPathOverlayRef.current;
     if (!overlay || !overlay.points || overlay.points.length < 2) return false;
+    if (Date.now() - overlay.updatedAt > 1000) return false;
 
     const currentOrientation = orientationRef.current;
     const headingDelta = hasGyroRef.current ? ((((currentOrientation.heading - overlay.orientation.heading) + 540) % 360) - 180) : 0;
@@ -2696,6 +2697,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   const startCameraLoop = () => {
     const cv = window.cv; const video = videoRef.current; const canvas = canvasRef.current; const ctx = canvas.getContext('2d');
     const matcher = cvPointers.current.matcher; let cvThrottle = 0; let homographyMat = null; let lockedMarkerId = null;
+    let lastRecognitionAt = 0;
     let graceFrames = 0; // 新增：辨識容錯幀數，避免畫面閃爍或丟失就永久卡死
 
     const loop = () => {
@@ -2738,7 +2740,8 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
 
         // 更新容錯幀數：連續追蹤機制
         if (frameFound) {
-          graceFrames = 8; // 大約維持 1 秒的 AR 顯示
+          graceFrames = 8;
+          lastRecognitionAt = Date.now(); // 大約維持 1 秒的 AR 顯示
         } else {
           if (graceFrames > 0) graceFrames--;
           else {
@@ -2748,6 +2751,12 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
         }
       }
       cvThrottle++;
+
+      if (!lastRecognitionAt || Date.now() - lastRecognitionAt > 1000) {
+        if (homographyMat) { homographyMat.delete(); homographyMat = null; }
+        lockedMarkerId = null;
+        lockedPathOverlayRef.current = null;
+      }
 
       const currentGraphData = graphDataRef.current;
       const currentCalculatedPath = calculatedPathRef.current;
