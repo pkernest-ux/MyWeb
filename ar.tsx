@@ -2200,7 +2200,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       const toPhys = (x, y) => ({ physX: bounds.blX + x * (bounds.trX - bounds.blX), physY: bounds.trY - y * (bounds.trY - bounds.blY) });
       
       f.markers.forEach(m => { if(m.enabled) nodes[m.id] = { ...m, ...toPhys(m.x, m.y), isMarker: true, bId: b.id, fId: f.id, bName: b.name, fName: f.name, bounds }; });
-      f.waypoints?.forEach(w => { nodes[w.id] = { ...w, ...toPhys(w.x, w.y), isMarker: false, fId: f.id, bounds }; });
+      f.waypoints?.forEach(w => { nodes[w.id] = { ...w, ...toPhys(w.x, w.y), isMarker: false, bId: b.id, fId: f.id, bName: b.name, fName: f.name, bounds }; });
       f.edges?.forEach(e => { edges.push({ ...e, fId: f.id }); });
     }));
     return { nodes, edges };
@@ -2871,19 +2871,28 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   const currNode = currentLocationId ? graphData.nodes[currentLocationId] : null;
   const nextNodeId = calculatedPath.length > 1 ? calculatedPath[1] : null;
   const nextNode = nextNodeId ? graphData.nodes[nextNodeId] : null;
+  const getRouteFloorName = (node) => {
+    if (!node) return '';
+    if (node.fName) return node.fName;
+    for (const building of buildings) {
+      const floor = building.floors.find(f => f.id === node.fId);
+      if (floor?.name) return floor.name;
+    }
+    return node.fId || '';
+  };
   const routeNodes = calculatedPath.map(id => graphData.nodes[id]).filter(Boolean);
   const routeSteps = [];
 
   routeNodes.forEach(node => {
     const currentStep = routeSteps[routeSteps.length - 1];
     if (!currentStep || currentStep.floorId !== node.fId) {
-      routeSteps.push({ floorId: node.fId, floorName: node.fName, nodes: [node] });
+      routeSteps.push({ floorId: node.fId, floorName: getRouteFloorName(node), nodes: [node] });
     } else {
       currentStep.nodes.push(node);
     }
   });
 
-  const fallbackStep = currNode || destNode ? { floorId: (currNode || destNode).fId, floorName: (currNode || destNode).fName, nodes: [currNode || destNode] } : null;
+  const fallbackStep = currNode || destNode ? { floorId: (currNode || destNode).fId, floorName: getRouteFloorName(currNode || destNode), nodes: [currNode || destNode] } : null;
   const safeRouteStepIndex = routeSteps.length ? Math.min(activeRouteStepIndex, routeSteps.length - 1) : 0;
   const activeRouteStep = routeSteps[safeRouteStepIndex] || fallbackStep;
   const previousRouteStep = routeSteps[safeRouteStepIndex - 1] || null;
@@ -3164,7 +3173,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
 
             <div className="min-w-0 rounded-xl border border-slate-700 bg-slate-800/80 p-4 shadow-inner">
               <div className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-400">
-                <span>{activeRouteStep?.floorName || currNode?.fName || destNode?.fName} {'\u5e73\u9762\u5716'}</span>
+                <span>{activeRouteStep?.floorName || getRouteFloorName(currNode || destNode)} {'\u5e73\u9762\u5716'}</span>
                 {routeSteps.length > 1 && <span>{safeRouteStepIndex + 1} / {routeSteps.length}</span>}
               </div>
               <div className={`text-sm font-bold leading-relaxed ${currentLocationId === destinationId ? 'text-green-400' : nextRouteStep ? 'text-purple-300' : 'text-yellow-300'}`}>
