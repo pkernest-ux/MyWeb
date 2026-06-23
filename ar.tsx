@@ -2833,11 +2833,13 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   const nextNodeId = calculatedPath.length > 1 ? calculatedPath[1] : null;
   const nextNode = nextNodeId ? graphData.nodes[nextNodeId] : null;
 
-  let minimapFloorId = currNode ? currNode.fId : destNode.fId;
+  const isAutoSwitchingFloor = !!(currNode && nextNode && nextNode.fId !== currNode.fId);
+  let minimapFloorId = isAutoSwitchingFloor ? nextNode.fId : (currNode ? currNode.fId : destNode.fId);
   let minimapImage = null;
+  let minimapFloorName = isAutoSwitchingFloor ? nextNode.fName : (currNode ? currNode.fName : destNode.fName);
   let minimapBounds = { blX: 0, blY: 0, trX: 100, trY: 100 };
   buildings.forEach(b => b.floors.forEach(f => {
-    if (f.id === minimapFloorId) { minimapImage = f.imageUrl; minimapBounds = getFloorBounds(f); }
+    if (f.id === minimapFloorId) { minimapImage = f.imageUrl; minimapBounds = getFloorBounds(f); minimapFloorName = f.name; }
   }));
 
   const toMinimapPct = (physX, physY) => {
@@ -2880,6 +2882,9 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
             <div className="relative w-full h-full">
               {/* 強制延展地圖確保 SVG 路徑百分比精準對齊 */}
               <img src={minimapImage} className="absolute inset-0 w-full h-full opacity-50" style={{ objectFit: 'fill' }} />
+              <div className="absolute left-2 top-2 z-30 rounded-full border border-white/20 bg-black/65 px-2.5 py-1 text-[10px] font-bold text-white shadow-lg backdrop-blur-sm">
+                {isAutoSwitchingFloor ? `自動切換至 ${minimapFloorName}` : `目前平面圖 ${minimapFloorName}`}
+              </div>
               
               <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ overflow: 'visible' }}>
                 <defs>
