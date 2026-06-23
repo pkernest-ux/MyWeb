@@ -2909,7 +2909,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
           <div className="absolute top-4 right-4 z-40 rounded-full border border-cyan-400/30 bg-slate-950/75 px-3 py-2 text-xs font-bold text-cyan-100 shadow-lg backdrop-blur-md">
             {arLockStatus === 'locked' && 'AR 路徑已鎖定'}
             {arLockStatus === 'holding' && '陀螺儀空間錨點'}
-            {arLockStatus === 'searching' && '搜尋定位標記'}
+            {arLockStatus === 'searching' && '請重新對準導引圖'}
             {arLockStatus === 'idle' && '準備定位'}
           </div>
         )}
