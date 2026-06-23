@@ -2171,6 +2171,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   const [arLockStatus, setArLockStatus] = useState('idle');
   const [xrSupport, setXrSupport] = useState('checking');
   const [xrStatus, setXrStatus] = useState('idle');
+  const [mascotProgress, setMascotProgress] = useState(0);
   const [hasGyro, setHasGyro] = useState(false); // 新增：偵測陀螺儀是否成功作動
   
   const videoRef = useRef(null); const canvasRef = useRef(null); const streamRef = useRef(null); const animFrameRef = useRef(null);
@@ -2189,6 +2190,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   const lockedPathOverlayRef = useRef(null);
   const arLockStatusRef = useRef('idle');
   const orientationRef = useRef({ heading: 0, pitch: 0, roll: 0 });
+  const mascotAnimationRef = useRef(null);
 
   const graphData = React.useMemo(() => {
     const nodes = {}; const edges = [];
@@ -2210,6 +2212,24 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   useEffect(() => {
     calculatedPathRef.current = calculatedPath;
   }, [calculatedPath]);
+
+  useEffect(() => {
+    if (!destinationId || calculatedPath.length < 2) {
+      setMascotProgress(0);
+      return;
+    }
+
+    const startedAt = performance.now();
+    const tick = (now) => {
+      setMascotProgress(((now - startedAt) / 5200) % 1);
+      mascotAnimationRef.current = requestAnimationFrame(tick);
+    };
+
+    mascotAnimationRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (mascotAnimationRef.current) cancelAnimationFrame(mascotAnimationRef.current);
+    };
+  }, [destinationId, calculatedPath]);
 
   useEffect(() => {
     lockedPathOverlayRef.current = null;
@@ -2855,6 +2875,16 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     return { x: pctX, y: pctY };
   };
 
+  const minimapRoutePoints = calculatedPath
+    .map(id => graphData.nodes[id])
+    .filter(node => node && node.fId === minimapFloorId)
+    .map(node => toMinimapPct(node.physX, node.physY));
+  const mascotRouteLength = getPolylineLength(minimapRoutePoints);
+  const fallbackMascotNode = currNode && currNode.fId === minimapFloorId ? currNode : (minimapRoutePoints.length ? null : destNode);
+  const mascotMapPoint = mascotRouteLength > 0
+    ? getPointAtPolylineDistance(minimapRoutePoints, mascotProgress * mascotRouteLength)
+    : (fallbackMascotNode ? toMinimapPct(fallbackMascotNode.physX, fallbackMascotNode.physY) : null);
+
   return (
     <div className="flex-1 bg-black flex flex-col relative overflow-hidden">
       <div className="absolute top-4 left-4 z-40">
@@ -2911,7 +2941,33 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
               </svg>
 
               {/* HTML 節點標示 (利用 absolute div 處理陀螺儀旋轉，保持縮放時比例不變) */}
-              {currNode && currNode.fId === minimapFloorId && ( 
+              {mascotMapPoint && (
+                <div
+                  className="absolute z-30 pointer-events-none"
+                  style={{
+                    left: `${mascotMapPoint.x}%`,
+                    top: `${mascotMapPoint.y}%`,
+                    transform: `translate3d(-50%, -82%, 0) rotate(${mascotMapPoint.angle || 0}rad)`,
+                    willChange: 'transform'
+                  }}
+                >
+                  <div className="relative flex h-12 w-12 md:h-16 md:w-16 items-center justify-center">
+                    <div className="absolute inset-1 rounded-full bg-white/35 blur-md"></div>
+                    <img
+                      src="assets/ar/mascot-walking-small.png"
+                      alt="導引吉祥物"
+                      className="relative h-full w-full rounded-full border-2 border-white/80 bg-white object-cover shadow-[0_0_16px_rgba(255,255,255,0.9)]"
+                      style={{
+                        transform: `rotate(${-(mascotMapPoint.angle || 0)}rad)`,
+                        backfaceVisibility: 'hidden',
+                        willChange: 'transform'
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {false && currNode && currNode.fId === minimapFloorId && (
                 <div 
                   className="absolute z-20 pointer-events-none"
                   style={{
