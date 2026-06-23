@@ -2172,6 +2172,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   const [xrSupport, setXrSupport] = useState('checking');
   const [xrStatus, setXrStatus] = useState('idle');
   const [mascotProgress, setMascotProgress] = useState(0);
+  const [activeRouteStepIndex, setActiveRouteStepIndex] = useState(0);
   const [hasGyro, setHasGyro] = useState(false); // 新增：偵測陀螺儀是否成功作動
   
   const videoRef = useRef(null); const canvasRef = useRef(null); const streamRef = useRef(null); const animFrameRef = useRef(null);
@@ -2212,6 +2213,10 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   useEffect(() => {
     calculatedPathRef.current = calculatedPath;
   }, [calculatedPath]);
+
+  useEffect(() => {
+    setActiveRouteStepIndex(0);
+  }, [destinationId, calculatedPath]);
 
   useEffect(() => {
     if (!destinationId || calculatedPath.length < 2) {
@@ -2866,11 +2871,41 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   const currNode = currentLocationId ? graphData.nodes[currentLocationId] : null;
   const nextNodeId = calculatedPath.length > 1 ? calculatedPath[1] : null;
   const nextNode = nextNodeId ? graphData.nodes[nextNodeId] : null;
+  const routeNodes = calculatedPath.map(id => graphData.nodes[id]).filter(Boolean);
+  const routeSteps = [];
 
-  const isAutoSwitchingFloor = !!(currNode && nextNode && nextNode.fId !== currNode.fId);
-  let minimapFloorId = isAutoSwitchingFloor ? nextNode.fId : (currNode ? currNode.fId : destNode.fId);
+  routeNodes.forEach(node => {
+    const currentStep = routeSteps[routeSteps.length - 1];
+    if (!currentStep || currentStep.floorId !== node.fId) {
+      routeSteps.push({ floorId: node.fId, floorName: node.fName, nodes: [node] });
+    } else {
+      currentStep.nodes.push(node);
+    }
+  });
+
+  const fallbackStep = currNode || destNode ? { floorId: (currNode || destNode).fId, floorName: (currNode || destNode).fName, nodes: [currNode || destNode] } : null;
+  const safeRouteStepIndex = routeSteps.length ? Math.min(activeRouteStepIndex, routeSteps.length - 1) : 0;
+  const activeRouteStep = routeSteps[safeRouteStepIndex] || fallbackStep;
+  const previousRouteStep = routeSteps[safeRouteStepIndex - 1] || null;
+  const nextRouteStep = routeSteps[safeRouteStepIndex + 1] || null;
+  const activeStepLastNode = activeRouteStep?.nodes?.[activeRouteStep.nodes.length - 1];
+  const activeStepFirstNode = activeRouteStep?.nodes?.[0];
+  const nextFloorDelta = nextRouteStep ? getFloorLevel(nextRouteStep.floorName) - getFloorLevel(activeRouteStep.floorName) : 0;
+  const nextFloorVerb = nextFloorDelta > 0 ? '上樓' : nextFloorDelta < 0 ? '下樓' : '前往';
+  const previousFloorDelta = previousRouteStep ? getFloorLevel(activeRouteStep.floorName) - getFloorLevel(previousRouteStep.floorName) : 0;
+  const previousFloorVerb = previousFloorDelta > 0 ? '上樓' : previousFloorDelta < 0 ? '下樓' : '前往';
+  const routeStepInstruction = currentLocationId === destinationId
+    ? '已抵達目的地'
+    : nextRouteStep
+      ? `請依照 ${activeRouteStep.floorName} 平面圖前往轉乘點，接著${nextFloorVerb}至 ${nextRouteStep.floorName}`
+      : activeRouteStep
+        ? `請依照 ${activeRouteStep.floorName} 平面圖前往目的地`
+        : '請先掃描導引圖以建立路徑';
+
+  const isAutoSwitchingFloor = !!(nextRouteStep || previousRouteStep);
+  let minimapFloorId = activeRouteStep ? activeRouteStep.floorId : (currNode ? currNode.fId : destNode.fId);
   let minimapImage = null;
-  let minimapFloorName = isAutoSwitchingFloor ? nextNode.fName : (currNode ? currNode.fName : destNode.fName);
+  let minimapFloorName = activeRouteStep ? activeRouteStep.floorName : (currNode ? currNode.fName : destNode.fName);
   let minimapBounds = { blX: 0, blY: 0, trX: 100, trY: 100 };
   buildings.forEach(b => b.floors.forEach(f => {
     if (f.id === minimapFloorId) { minimapImage = f.imageUrl; minimapBounds = getFloorBounds(f); minimapFloorName = f.name; }
@@ -2884,8 +2919,8 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     return { x: pctX, y: pctY };
   };
 
-  const minimapRoutePoints = calculatedPath
-    .map(id => graphData.nodes[id])
+  const activeRouteNodes = activeRouteStep?.nodes || [];
+  const minimapRoutePoints = activeRouteNodes
     .filter(node => node && node.fId === minimapFloorId)
     .map(node => toMinimapPct(node.physX, node.physY));
   const mascotRouteLength = getPolylineLength(minimapRoutePoints);
@@ -2936,10 +2971,9 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
                     <polygon points="0 0, 6 2, 0 4" fill="#00ffcc" />
                   </marker>
                 </defs>
-                {calculatedPath.map((id, index) => {
-                  if (index === calculatedPath.length - 1) return null;
-                  const p1 = graphData.nodes[id];
-                  const p2 = graphData.nodes[calculatedPath[index + 1]];
+                {activeRouteNodes.map((p1, index) => {
+                  if (index === activeRouteNodes.length - 1) return null;
+                  const p2 = activeRouteNodes[index + 1];
                   if (p1.fId === minimapFloorId && p2.fId === minimapFloorId) {
                     const pt1 = toMinimapPct(p1.physX, p1.physY);
                     const pt2 = toMinimapPct(p2.physX, p2.physY);
@@ -2972,6 +3006,21 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
                         willChange: 'transform'
                       }}
                     />
+                  </div>
+                </div>
+              )}
+
+              {nextRouteStep && activeStepLastNode && activeStepLastNode.fId === minimapFloorId && (
+                <div
+                  className="absolute z-30 pointer-events-none"
+                  style={{
+                    left: `${toMinimapPct(activeStepLastNode.physX, activeStepLastNode.physY).x}%`,
+                    top: `${toMinimapPct(activeStepLastNode.physX, activeStepLastNode.physY).y}%`,
+                    transform: 'translate(-50%, -140%)'
+                  }}
+                >
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full border-2 border-white bg-purple-600 text-white shadow-[0_0_18px_rgba(168,85,247,0.85)]">
+                    {nextFloorDelta >= 0 ? <ArrowUp className="h-8 w-8 stroke-[3.5]" /> : <ArrowDown className="h-8 w-8 stroke-[3.5]" />}
                   </div>
                 </div>
               )}
@@ -3103,41 +3152,39 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       <div className={`absolute bottom-0 left-0 w-full p-4 z-40 transition-transform duration-500 ease-out flex justify-center ${currNode ? 'translate-y-0' : 'translate-y-full'}`}>
         <div className="bg-slate-900/95 backdrop-blur-xl border border-slate-700 w-full max-w-md rounded-2xl p-6 shadow-2xl relative overflow-hidden">
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-cyan-400 to-blue-500"></div>
-          <div className="flex items-start">
-            <div className="bg-cyan-500/20 text-cyan-400 p-3 rounded-xl mr-4 shrink-0"><Info className="w-6 h-6" /></div>
-            <div className="flex-1 w-full min-w-0">
-              <div className="text-xs font-bold text-slate-400 mb-1">
-                📍 定位成功：{currNode?.bName} {currNode?.fName} ({currNode?.code})
+          <div className="grid grid-cols-[44px_1fr_44px] items-stretch gap-3">
+            <button
+              onClick={() => setActiveRouteStepIndex(index => Math.max(0, index - 1))}
+              disabled={!previousRouteStep}
+              className="flex h-full min-h-20 items-center justify-center rounded-xl border border-slate-700 bg-slate-800/80 text-slate-200 transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-25"
+              title={'\u4e0a\u4e00\u5f35\u5e73\u9762\u5716'}
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+
+            <div className="min-w-0 rounded-xl border border-slate-700 bg-slate-800/80 p-4 shadow-inner">
+              <div className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-400">
+                <span>{activeRouteStep?.floorName || currNode?.fName || destNode?.fName} {'\u5e73\u9762\u5716'}</span>
+                {routeSteps.length > 1 && <span>{safeRouteStepIndex + 1} / {routeSteps.length}</span>}
               </div>
-              
-              {currentLocationId === destinationId ? (
-                <div className="mt-2 flex items-center bg-green-500/20 p-3 rounded-xl border border-green-500/50 shadow-inner">
-                  <CheckCircle2 className="w-6 h-6 text-green-400 mr-3 shrink-0" />
-                  <span className="text-green-400 font-bold text-sm tracking-wide">🎉 您已抵達目的地！</span>
+              <div className={`text-sm font-bold leading-relaxed ${currentLocationId === destinationId ? 'text-green-400' : nextRouteStep ? 'text-purple-300' : 'text-yellow-300'}`}>
+                {routeStepInstruction}
+              </div>
+              {previousRouteStep && (
+                <div className="mt-2 text-[11px] text-slate-500">
+                  {'\u4e0a\u4e00\u5f35\uff1a'}{previousRouteStep.floorName}{'\uff1b\u672c\u5f35\u662f'}{previousFloorVerb}{'\u5f8c\u7684\u5c0e\u5f15\u6bb5\u3002'}
                 </div>
-              ) : nextNode ? (
-                nextNode.fId !== currNode?.fId ? (
-                  <div className="mt-2 flex items-center bg-purple-500/20 p-3 rounded-xl border border-purple-500/50 shadow-inner">
-                    <ArrowUpDown className="w-6 h-6 text-purple-400 mr-3 shrink-0 animate-bounce" />
-                    <div className="flex flex-col">
-                      <span className="text-purple-400 font-bold text-sm">請換樓層</span>
-                      <span className="text-purple-300/70 text-xs mt-0.5">搭乘至 {nextNode.fName} 後重新掃描</span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="mt-2 flex items-center bg-slate-800/80 p-3 rounded-xl border border-slate-700 shadow-inner">
-                    <div className="bg-yellow-500/20 text-yellow-400 p-2 rounded-lg mr-3 shadow-[0_0_10px_rgba(234,179,8,0.2)] shrink-0">
-                      <Route className="w-6 h-6" />
-                    </div>
-                    <div className="flex flex-col">
-                      <span className="text-yellow-400 font-bold text-sm tracking-wide">請依循 AR 畫面上的發光路徑前往下一站</span>
-                    </div>
-                  </div>
-                )
-              ) : (
-                <div className="text-red-400 text-sm font-bold mt-2">⚠️ 無法計算路線，請確認點位連線設定。</div>
               )}
             </div>
+
+            <button
+              onClick={() => setActiveRouteStepIndex(index => Math.min(routeSteps.length - 1, index + 1))}
+              disabled={!nextRouteStep}
+              className="flex h-full min-h-20 items-center justify-center rounded-xl border border-purple-500/40 bg-purple-500/20 text-purple-200 transition-colors hover:bg-purple-500/30 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800/80 disabled:text-slate-500 disabled:opacity-35"
+              title={'\u4e0b\u4e00\u5f35\u5e73\u9762\u5716'}
+            >
+              <ArrowRight className="h-5 w-5" />
+            </button>
           </div>
         </div>
       </div>
