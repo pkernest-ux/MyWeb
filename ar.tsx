@@ -356,6 +356,27 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
   const [mapTransform, setMapTransform] = useState({ x: 0, y: 0, scale: 1 });
 
+  const applyPublishedProjectData = (data) => {
+    if (!Array.isArray(data?.buildings) || data.buildings.length === 0) {
+      throw new Error('雲端目前沒有可載入的 AR 平面圖資料。');
+    }
+
+    const project = createProjectFromPublishedData(data);
+    setProjects([project]);
+    setActiveProjectId(project.id);
+    setSystemConfig(cloneData(project.systemConfig));
+    setBuildings(cloneData(project.buildings));
+    setActiveBuildingId(project.buildings[0]?.id);
+    setActiveFloorId(project.buildings[0]?.floors[0]?.id);
+    setReferenceFloorId('');
+    setSelectedMarkerId(null);
+    setSelectedWaypointId(null);
+    setPathStartNodeId(null);
+    setMapTransform({ x: 0, y: 0, scale: 1 });
+    localStorage.setItem('arManager_lastCloudSyncAt', project.updatedAt || new Date().toISOString());
+    return project;
+  };
+
   useEffect(() => {
     const handleExternalTabChange = (event) => {
       const nextTab = event?.detail?.tab;
@@ -422,13 +443,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       })
       .then(data => {
         if (cancelled || !Array.isArray(data?.buildings) || data.buildings.length === 0) return;
-        const project = createProjectFromPublishedData(data);
-        setProjects([project]);
-        setActiveProjectId(project.id);
-        setSystemConfig(cloneData(project.systemConfig));
-        setBuildings(cloneData(project.buildings));
-        setActiveBuildingId(project.buildings[0]?.id);
-        setActiveFloorId(project.buildings[0]?.floors[0]?.id);
+        applyPublishedProjectData(data);
       })
       .catch(error => console.warn("Published AR admin seed unavailable", error));
 
@@ -1031,9 +1046,29 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         throw new Error(result.error || `Save failed: ${response.status}`);
       }
 
+      localStorage.setItem('arManager_lastCloudSyncAt', payload.project.updatedAt);
+
       setAlertModal({ isOpen: true, message: `「${payload.project.name}」已儲存到 Web 端。民眾端會透過 /api/ar-content 讀取最新平面圖、AR 點位與路網資料。` });
     } catch (error) {
       setAlertModal({ isOpen: true, message: `已儲存在後台暫存，但發布到網站失敗：${error.message}` });
+    }
+  };
+
+  const loadProjectFromCloud = async () => {
+    try {
+      const response = await fetch(`/api/ar-content?ts=${Date.now()}`, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`Load failed: ${response.status}`);
+      const data = await response.json();
+      const project = applyPublishedProjectData(data);
+      setAlertModal({
+        isOpen: true,
+        message: `已從雲端載入「${project.name}」。桌機與手機現在會使用同一份已上架的平面圖、AR 點位與路網資料。`
+      });
+    } catch (error) {
+      setAlertModal({
+        isOpen: true,
+        message: `無法從雲端載入 AR 資料：${error.message}`
+      });
     }
   };
 
@@ -1203,6 +1238,12 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           </button>
           <button onClick={saveActiveProject} className="inline-flex items-center justify-center gap-2 bg-green-500/10 hover:bg-green-500/20 text-green-400 border border-green-500/30 px-3 py-2 rounded-lg text-xs transition-colors">
             <CheckCircle2 className="w-4 h-4" />儲存
+          </button>
+          <button onClick={saveActiveProject} className="inline-flex items-center justify-center gap-2 bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/30 px-3 py-2 rounded-lg text-xs transition-colors" title="把目前這台裝置的 AR 資料同步到雲端，讓其他裝置可以載入">
+            <Upload className="w-4 h-4" />同步雲端
+          </button>
+          <button onClick={loadProjectFromCloud} className="inline-flex items-center justify-center gap-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 px-3 py-2 rounded-lg text-xs transition-colors" title="從雲端載入已上架的 AR 資料，會覆蓋目前後台顯示的本機暫存">
+            <Download className="w-4 h-4" />從雲端載入
           </button>
           <button onClick={deleteProject} className="inline-flex items-center justify-center gap-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-2 rounded-lg text-xs transition-colors">
             <Trash2 className="w-4 h-4" />刪除
