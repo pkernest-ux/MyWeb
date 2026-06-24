@@ -1030,7 +1030,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     return stats.floorPlans > 0 || stats.markers > 0 || stats.waypoints > 0 || stats.edges > 0;
   };
 
-  const saveActiveProject = async () => {
+  const performCloudSync = async () => {
     if (!canSyncProjectToCloud(buildings)) {
       setAlertModal({
         isOpen: true,
@@ -1077,6 +1077,24 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     } catch (error) {
       setAlertModal({ isOpen: true, message: `已儲存在後台暫存，但發布到網站失敗：${error.message}` });
     }
+  };
+
+  const saveActiveProject = async () => {
+    if (!canSyncProjectToCloud(buildings)) {
+      setAlertModal({
+        isOpen: true,
+        message: '目前專案還是空的，尚未有平面圖、AR 點位或路網資料。為避免覆蓋雲端既有專案，請先載入雲端資料或新增內容後再同步。'
+      });
+      return;
+    }
+
+    const stats = getProjectContentStats(buildings);
+    setConfirmModal({
+      isOpen: true,
+      title: '確認同步到雲端',
+      message: `即將把「${systemConfig.projectName || activeProject?.name || 'AR 專案'}」同步到雲端，並覆蓋目前網站使用的 AR 資料。內容包含 ${stats.floorPlans} 張平面圖、${stats.markers} 個 AR 點位、${stats.waypoints} 個路網節點、${stats.edges} 條路線連線。確定要同步嗎？`,
+      onConfirm: performCloudSync
+    });
   };
 
   const loadProjectFromCloud = async () => {
