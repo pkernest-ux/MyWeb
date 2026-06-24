@@ -2572,10 +2572,59 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     return true;
   };
 
+  const drawArPins = (ctx, pins = []) => {
+    pins.forEach(pin => {
+      if (!pin || typeof pin.x !== 'number' || typeof pin.y !== 'number') return;
+      const isDestination = pin.type === 'destination';
+      const color = isDestination ? '#ef4444' : '#a855f7';
+      const label = pin.label || (isDestination ? '目的地' : '路段末端');
+
+      ctx.save();
+      ctx.translate(pin.x, pin.y);
+      ctx.shadowBlur = 16;
+      ctx.shadowColor = color;
+      ctx.fillStyle = color;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 3;
+
+      ctx.beginPath();
+      ctx.arc(0, -18, isDestination ? 15 : 13, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(-8, -6);
+      ctx.lineTo(0, 12);
+      ctx.lineTo(8, -6);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.shadowBlur = 0;
+      ctx.font = 'bold 18px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(isDestination ? '!' : '↑', 0, -18);
+
+      ctx.font = 'bold 13px sans-serif';
+      const textWidth = ctx.measureText(label).width + 18;
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.86)';
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(-textWidth / 2, 20, textWidth, 26, 13);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(label, 0, 33);
+      ctx.restore();
+    });
+  };
+
   const drawLockedRouteOverlay = (ctx) => {
     const overlay = lockedPathOverlayRef.current;
     if (!overlay || !overlay.points || overlay.points.length < 2) return false;
-    if (Date.now() - overlay.updatedAt > 1000) return false;
 
     const currentOrientation = orientationRef.current;
     const hasHeading = hasGyroRef.current && currentOrientation.heading != null && overlay.orientation.heading != null;
@@ -2593,7 +2642,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     const yawOffset = Math.max(-maxOffsetX, Math.min(maxOffsetX, Math.tan(headingDelta * Math.PI / 180) * focalLength));
     const pitchOffset = Math.max(-maxOffsetY, Math.min(maxOffsetY, Math.tan(pitchDelta * Math.PI / 180) * focalLength * 0.75));
 
-    const points = overlay.points.map(point => {
+    const transformOverlayPoint = (point) => {
       const x = point.x * ctx.canvas.width;
       const y = point.y * ctx.canvas.height;
       const dx = x - cx;
@@ -2602,7 +2651,14 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
         x: cx + dx * cos - dy * sin - yawOffset,
         y: cy + dx * sin + dy * cos + pitchOffset
       };
-    });
+    };
+
+    const points = overlay.points.map(transformOverlayPoint);
+    const pins = (overlay.pins || []).map(transformOverlayPoint).map((point, index) => ({
+      ...point,
+      type: overlay.pins[index]?.type,
+      label: overlay.pins[index]?.label
+    }));
 
     const relativeHeading = getRelativeHeading(currentOrientation.heading, overlay.baseHeading);
     const arrowRotation = overlay.targetBearing != null && relativeHeading != null
@@ -2619,7 +2675,9 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       currentARMode: 'camera-overlay'
     });
 
-    return drawArRoute(ctx, points, true);
+    const didDraw = drawArRoute(ctx, points, true);
+    if (didDraw) drawArPins(ctx, pins);
+    return didDraw;
   };
 
   const getXrRouteNodeIds = () => {
@@ -2853,10 +2911,9 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       }
       cvThrottle++;
 
-      if (!lastRecognitionAt || Date.now() - lastRecognitionAt > 1000) {
+      if (!lastRecognitionAt && !lockedPathOverlayRef.current) {
         if (homographyMat) { homographyMat.delete(); homographyMat = null; }
         lockedMarkerId = null;
-        lockedPathOverlayRef.current = null;
       }
 
       const currentGraphData = graphDataRef.current;
@@ -2869,6 +2926,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
         if (currMarker && targetFeature) {
           const pixelsPerMeter = targetFeature.width / 0.3; 
           const projectedPoints = [];
+          const projectedRoutePoints = [];
           const routeNodeIndex = currentCalculatedPath.indexOf(lockedMarkerId);
           const bearingFromIndex = routeNodeIndex >= 0 ? routeNodeIndex : 0;
           const targetBearing = getBearingFromNodes(
@@ -2893,10 +2951,35 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
               const screenX = (H[0]*templateX + H[1]*templateY + H[2]) / w;
               const screenY = (H[3]*templateX + H[4]*templateY + H[5]) / w;
               projectedPoints.push({ x: screenX, y: screenY });
+              projectedRoutePoints.push({ x: screenX, y: screenY, nodeId });
             }
           }
 
           if (drawArRoute(ctx, projectedPoints, false)) {
+            const endpointPoint = projectedRoutePoints[projectedRoutePoints.length - 1];
+            const destinationPoint = projectedRoutePoints.find(point => point.nodeId === destinationId);
+            const routePins = [];
+
+            if (endpointPoint) {
+              routePins.push({
+                x: endpointPoint.x,
+                y: endpointPoint.y,
+                type: destinationPoint ? 'destination' : 'endpoint',
+                label: destinationPoint ? '目的地' : '路段末端'
+              });
+            }
+
+            if (destinationPoint && destinationPoint !== endpointPoint) {
+              routePins.push({
+                x: destinationPoint.x,
+                y: destinationPoint.y,
+                type: 'destination',
+                label: '目的地'
+              });
+            }
+
+            drawArPins(ctx, routePins);
+
             if (baseHeadingRef.current == null && orientationRef.current.heading != null) {
               baseHeadingRef.current = orientationRef.current.heading;
             }
@@ -2909,6 +2992,12 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
               points: projectedPoints.map(point => ({
                 x: point.x / canvas.width,
                 y: point.y / canvas.height
+              })),
+              pins: routePins.map(pin => ({
+                x: pin.x / canvas.width,
+                y: pin.y / canvas.height,
+                type: pin.type,
+                label: pin.label
               }))
             };
             updateArDebug({
