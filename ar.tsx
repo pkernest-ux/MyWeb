@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import * as THREE from 'three';
-import { 
-  Map, MapPin, Target, Download, Upload, Plus, 
+import {
+  Map, MapPin, Target, Download, Upload, Plus,
   Settings, Trash2, Camera, Play, CheckCircle2, AlertTriangle, X,
   Edit, Image as ImageIcon, Database, HardDrive, Menu,
   ZoomIn, ZoomOut, Maximize, Scan, Info, Smartphone,
@@ -34,7 +34,7 @@ const compressImage = (base64Str, maxWidth, callback) => {
     ctx.drawImage(img, 0, 0, width, height);
     callback(canvas.toDataURL('image/jpeg', 0.7));
   };
-  img.onerror = () => callback(base64Str); 
+  img.onerror = () => callback(base64Str);
   img.src = base64Str;
 };
 
@@ -52,10 +52,10 @@ const getFloorLevel = (name) => {
   const upper = name.toUpperCase().trim();
   if (upper.startsWith('B')) {
     const num = parseInt(upper.substring(1));
-    return isNaN(num) ? -99 : -num; 
+    return isNaN(num) ? -99 : -num;
   }
   const num = parseInt(upper);
-  return isNaN(num) ? 0 : num; 
+  return isNaN(num) ? 0 : num;
 };
 
 const getFloorBounds = (floor) => floor?.bounds || { blX: 0, blY: 0, trX: 100, trY: 100 };
@@ -254,7 +254,7 @@ const createProjectFromPublishedData = (data) => ({
 export default function ARManagerApp({ embedded = false, initialTab = 'map', publicOnly = false }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  
+
   const [promptModal, setPromptModal] = useState({ isOpen: false, title: '', placeholder: '', onSubmit: null, defaultValue: '' });
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', message: '', onConfirm: null });
   const [alertModal, setAlertModal] = useState({ isOpen: false, message: '' });
@@ -300,7 +300,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const [activeBuildingId, setActiveBuildingId] = useState(buildings[0]?.id);
   const [activeFloorId, setActiveFloorId] = useState(buildings[0]?.floors[0]?.id);
   const [referenceFloorId, setReferenceFloorId] = useState('');
-  
+
   const [selectedMarkerId, setSelectedMarkerId] = useState(null);
   const [selectedWaypointId, setSelectedWaypointId] = useState(null);
   const [draggingId, setDraggingId] = useState(null);
@@ -309,7 +309,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   // 路徑與節點編輯模式
   const [isPathMode, setIsPathMode] = useState(false);
   const [isToggleShaftMode, setIsToggleShaftMode] = useState(false);
-  const [pathStartNodeId, setPathStartNodeId] = useState(null); 
+  const [pathStartNodeId, setPathStartNodeId] = useState(null);
   const [hoverPos, setHoverPos] = useState(null);
 
   const [isPanning, setIsPanning] = useState(false);
@@ -321,8 +321,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
   // 路網分析測試功能狀態
   const [isNavTestMode, setIsNavTestMode] = useState(false);
-  const [navTestPoints, setNavTestPoints] = useState([]); 
-  const [navTestPath, setNavTestPath] = useState([]); 
+  const [navTestPoints, setNavTestPoints] = useState([]);
+  const [navTestPath, setNavTestPath] = useState([]);
 
   const wrapperRef = useRef(null);
   const containerRef = useRef(null);
@@ -443,13 +443,13 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
   useEffect(() => {
     if (publicOnly) return;
-    try { localStorage.setItem('arManager_buildings', JSON.stringify(buildings)); } 
+    try { localStorage.setItem('arManager_buildings', JSON.stringify(buildings)); }
     catch (e) { if (e.name === 'QuotaExceededError') setAlertModal({ isOpen: true, message: "⚠️ 瀏覽器本地暫存空間已滿！" }); }
   }, [buildings, publicOnly]);
 
   useEffect(() => {
     if (publicOnly) return;
-    try { localStorage.setItem('arManager_config', JSON.stringify(systemConfig)); } 
+    try { localStorage.setItem('arManager_config', JSON.stringify(systemConfig)); }
     catch (e) { console.error("Config save error:", e); }
   }, [systemConfig, publicOnly]);
 
@@ -479,7 +479,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     try {
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-        stream.getTracks().forEach(track => track.stop()); 
+        stream.getTracks().forEach(track => track.stop());
       }
     } catch (err) {}
     try {
@@ -522,7 +522,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           ...b,
           floors: b.floors.map(f => {
             let list = isMarker ? [...(f.markers || [])] : [...(f.waypoints || [])];
-            
+
             const processNode = (n) => {
               const res = { ...n, ...updates };
               if ((updates.x !== undefined || updates.y !== undefined) && f.id !== sourceFloor.id) {
@@ -562,7 +562,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         return {
           ...b, floors: b.floors.map(f => {
             const updateList = (list) => (list||[]).filter(n => {
-              if (f.id !== activeFloorId && n.shaftId === shaftId) return false; 
+              if (f.id !== activeFloorId && n.shaftId === shaftId) return false;
               return true;
             }).map(n => {
               if (n.id === node.id) return { ...n, isVerticalShaft: false, shaftId: null, linkedFloorIds: [], sourceFloorId: null };
@@ -598,7 +598,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             const globalY = sourceBounds.trY - node.y * (sourceBounds.trY - sourceBounds.blY);
             const newX = targetBounds.trX !== targetBounds.blX ? (globalX - targetBounds.blX) / (targetBounds.trX - targetBounds.blX) : 0.5;
             const newY = targetBounds.trY !== targetBounds.blY ? (targetBounds.trY - globalY) / (targetBounds.trY - targetBounds.blY) : 0.5;
-            
+
             const prefix = isMarker ? 'marker_' : 'wp_';
             updatedList.push({ ...node, id: `${prefix}${Date.now()}_${Math.random().toString(36).substr(2, 5)}_${f.id}`, x: newX, y: newY, linkedFloorIds: newLinkedFloorIds });
           } else if (!isAdding && f.id === targetFloorId) {
@@ -630,13 +630,13 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
     setBuildings(prev => prev.map(b => ({
       ...b, floors: b.floors.map(f => ({
-        ...f, 
+        ...f,
         markers: (f.markers||[]).filter(m => !deletedIds.has(m.id)),
         waypoints: (f.waypoints||[]).filter(w => !deletedIds.has(w.id)),
         edges: (f.edges||[]).filter(e => !deletedIds.has(e.start) && !deletedIds.has(e.end))
       }))
     })));
-    
+
     if (deletedIds.has(selectedMarkerId)) setSelectedMarkerId(null);
     if (deletedIds.has(selectedWaypointId)) setSelectedWaypointId(null);
     if (deletedIds.has(pathStartNodeId)) { setPathStartNodeId(null); setHoverPos(null); }
@@ -674,7 +674,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
   const handleFloorPlanUpload = (e) => {
     const file = e.target.files[0];
-    const target = e.target; 
+    const target = e.target;
     if (file && activeBuildingId && activeFloorId) {
       const currentBId = activeBuildingId; const currentFId = activeFloorId;
       const reader = new FileReader();
@@ -688,11 +688,11 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       };
       reader.readAsDataURL(file);
     }
-    target.value = ''; 
+    target.value = '';
   };
 
   // ==========================================
-  // 連續路徑連線核心功能 
+  // 連續路徑連線核心功能
   // ==========================================
   const addWaypointAndEdge = (x, y) => {
     const wpId = `wp_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
@@ -723,11 +723,11 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         } : b));
       }
     }
-    setPathStartNodeId(nodeId); 
+    setPathStartNodeId(nodeId);
   };
 
   const findNodeNear = (x, y) => {
-    const threshold = 0.03; 
+    const threshold = 0.03;
     for (let m of currentMarkers) { if (Math.hypot(m.x - x, m.y - y) < threshold) return m.id; }
     for (let w of currentWaypoints) { if (Math.hypot(w.x - x, w.y - y) < threshold) return w.id; }
     return null;
@@ -809,9 +809,9 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
     Object.values(nodes).forEach(n => {
       if (!isNetworkNode(n.id)) return;
-      
+
       if (n.fId === startPt.fId) {
-        const dStart = Math.hypot(n.x - startPt.x, n.y - startPt.y); 
+        const dStart = Math.hypot(n.x - startPt.x, n.y - startPt.y);
         if (dStart < minStartD) { minStartD = dStart; startNodeId = n.id; }
       }
       if (n.fId === endPt.fId) {
@@ -858,7 +858,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       ...pathIds.map(id => nodes[id]),
       { x: endPt.x, y: endPt.y, fId: endPt.fId, fName: endPt.fName, isVirtual: true }
     ];
-    
+
     setNavTestPath(finalPathCoords);
   };
 
@@ -930,7 +930,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           const newPt = { x, y, fId: activeFloorId, fName: currentFloor?.name };
           const newPoints = navTestPoints.length >= 2 ? [newPt] : [...navTestPoints, newPt];
           setNavTestPoints(newPoints);
-          if (newPoints.length === 1) setNavTestPath([]); 
+          if (newPoints.length === 1) setNavTestPath([]);
           if (newPoints.length === 2) calculateTestPath(newPoints[0], newPoints[1]);
         } else if (isPathMode) {
           const nearNodeId = findNodeNear(x, y);
@@ -938,7 +938,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         } else if (isAddMode) {
           const totalMarkersCount = buildings.reduce((acc, b) => acc + b.floors.reduce((acc2, f) => acc2 + f.markers.length, 0), 0);
           const newMarker = {
-            id: `marker_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`, code: `N${totalMarkersCount + 1}`, title: '新增辨識點', description: '', arrowDirection: 'none', 
+            id: `marker_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`, code: `N${totalMarkersCount + 1}`, title: '新增辨識點', description: '', arrowDirection: 'none',
             isVerticalShaft: false, shaftId: null, linkedFloorIds: [], x, y, imageUrl: null, enabled: true, recognitionStatus: 'untested'
           };
           setBuildings(prev => prev.map(b => b.id === activeBuildingId ? { ...b, floors: b.floors.map(f => f.id === activeFloorId ? { ...f, markers: [...f.markers, newMarker] } : f) } : b));
@@ -954,7 +954,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   };
 
   const handleMarkerImageUpload = (e) => {
-    const file = e.target.files[0]; const target = e.target; 
+    const file = e.target.files[0]; const target = e.target;
     if (file && selectedMarkerId) {
       const currentMarkerId = selectedMarkerId;
       const reader = new FileReader();
@@ -970,7 +970,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   };
 
   const handleEditFromList = (bId, fId, mId) => {
-    setActiveBuildingId(bId); setActiveFloorId(fId); setSelectedMarkerId(mId); setSelectedWaypointId(null); setActiveTab('map'); 
+    setActiveBuildingId(bId); setActiveFloorId(fId); setSelectedMarkerId(mId); setSelectedWaypointId(null); setActiveTab('map');
   };
 
   const saveActiveProject = async () => {
@@ -1099,7 +1099,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     const downloadAnchorNode = document.createElement('a');
     downloadAnchorNode.setAttribute("href", dataStr);
     downloadAnchorNode.setAttribute("download", `${exportName}_ar_config_v7.json`);
-    document.body.appendChild(downloadAnchorNode); 
+    document.body.appendChild(downloadAnchorNode);
     downloadAnchorNode.click(); downloadAnchorNode.remove();
   };
 
@@ -1115,12 +1115,12 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     setMapTransform({ x: (wrapperWidth - img.naturalWidth * scale) / 2, y: (wrapperHeight - img.naturalHeight * scale) / 2, scale });
   };
 
-  const switchTab = (tab) => { 
-    setActiveTab(tab); setIsMobileMenuOpen(false); 
+  const switchTab = (tab) => {
+    setActiveTab(tab); setIsMobileMenuOpen(false);
     setIsAddMode(false); setIsMeasuring(false); setIsPathMode(false); setIsToggleShaftMode(false); setPathStartNodeId(null); setHoverPos(null);
     setIsNavTestMode(false); setNavTestPoints([]); setNavTestPath([]);
   };
-  
+
   let selectedMarker = null; let selectedWaypoint = null; let selectedMarkerLocation = null;
   buildings.forEach(b => b.floors.forEach(f => {
     f.markers.forEach(m => {
@@ -1139,7 +1139,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       const mapRectWidth = imgEl.offsetWidth * mapTransform.scale;
       if (mapRectWidth > 0) {
           const metersPerPixel = mapWidthMeters / mapRectWidth;
-          const targetMeters = 100 * metersPerPixel; 
+          const targetMeters = 100 * metersPerPixel;
           const niceNumbers = [0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000];
           scaleBarMeters = niceNumbers.slice().reverse().find(n => n <= targetMeters) || 0.5;
           scaleBarWidthPx = scaleBarMeters / metersPerPixel;
@@ -1266,7 +1266,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                   </thead>
                   <tbody className="divide-y divide-slate-800">
                     {allFlatMarkers.map(marker => {
-                      const linkedFloorNames = marker.isVerticalShaft 
+                      const linkedFloorNames = marker.isVerticalShaft
                         ? buildings.find(b => b.id === marker.bId)?.floors.filter(f => marker.linkedFloorIds?.includes(f.id)).sort((a,b) => getFloorLevel(b.name) - getFloorLevel(a.name)).map(f => f.name).join(', ')
                         : marker.floorName;
 
@@ -1337,7 +1337,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           <p className="text-xs md:text-sm text-slate-500 mb-4 md:mb-6">這些操作將會對目前的配置造成不可逆的影響，請謹慎操作。</p>
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 bg-slate-950 rounded-lg border border-red-900/50 gap-4">
             <div><div className="font-bold text-slate-300 text-sm md:text-base">清空所有系統資料</div><div className="text-xs text-slate-500 mt-1">刪除所有建築物、樓層平面圖與點位。</div></div>
-            <button onClick={() => { 
+            <button onClick={() => {
               setConfirmModal({
                 isOpen: true,
                 title: '清空所有資料',
@@ -1401,7 +1401,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   return (
     <div className={`${embedded ? 'flex min-h-[760px] w-full' : 'flex h-[100dvh] w-full'} bg-slate-950 text-slate-200 font-sans overflow-hidden selection:bg-cyan-500/30 relative`}>
       {!embedded && isMobileMenuOpen && ( <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-40 md:hidden" onClick={() => setIsMobileMenuOpen(false)} /> )}
-      
+
       {!embedded && <div className={`fixed inset-y-0 left-0 z-50 w-[82vw] max-w-xs md:w-64 bg-slate-900 border-r border-slate-800 flex flex-col justify-between shrink-0 transition-transform duration-300 shadow-2xl md:relative md:translate-x-0 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         <div>
           <div className="h-16 flex items-center px-6 border-b border-slate-800 bg-slate-950/50 justify-between md:justify-start">
@@ -1435,7 +1435,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
       {activeTab === 'map' && (
         <div className="flex-1 flex flex-col relative overflow-hidden bg-slate-950 w-full">
-          
+
           <div className="absolute top-3 left-2 right-2 md:top-4 md:left-4 md:right-auto z-40 flex items-center gap-2 bg-slate-900/90 backdrop-blur-md border border-slate-700 p-2 rounded-xl shadow-lg overflow-x-auto md:overflow-visible whitespace-nowrap">
             {!embedded && <button className="md:hidden text-slate-400 hover:text-white mr-1" onClick={() => setIsMobileMenuOpen(true)}><Menu className="w-5 h-5" /></button>}
             <div className="flex items-center">
@@ -1519,7 +1519,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               </div>
             )}
             <div ref={containerRef} className="absolute top-0 left-0 origin-top-left will-change-transform" style={{ transform: `translate(${mapTransform.x}px, ${mapTransform.y}px) scale(${mapTransform.scale})` }}>
-              
+
               {referenceFloorId && (() => {
                 let refF = null;
                 buildings.forEach(b => b.floors.forEach(f => { if (f.id === referenceFloorId) refF = f; }));
@@ -1546,7 +1546,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               })()}
 
               {currentFloor?.imageUrl && ( <img id="current-map-image" src={currentFloor.imageUrl} alt="Floor Plan" onLoad={resetMapView} className={`select-none pointer-events-none block max-w-none rounded-lg relative z-10 transition-opacity ${referenceFloorId ? 'opacity-70 mix-blend-screen' : 'opacity-100'}`} /> )}
-              
+
               <svg className="absolute inset-0 w-full h-full z-20 pointer-events-none" style={{ overflow: 'visible' }}>
                 <defs>
                   <marker id="arrowhead-test" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
@@ -1565,7 +1565,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                   if (p1) return <line x1={`${p1.x*100}%`} y1={`${p1.y*100}%`} x2={`${hoverPos.x*100}%`} y2={`${hoverPos.y*100}%`} stroke="#f97316" strokeWidth={3 / Math.max(0.2, mapTransform.scale)} strokeDasharray="6,6" opacity="0.8" className="animate-[dash_0.5s_linear_infinite]" />;
                   return null;
                 })()}
-                
+
                 {isNavTestMode && navTestPath.length > 0 && navTestPath.map((p, i) => {
                   if (i === navTestPath.length - 1) return null;
                   const nextP = navTestPath[i+1];
@@ -1596,7 +1596,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                       </g>
                     );
                   }
-                  
+
                   return <React.Fragment key={`testfrag_${i}`}>{elements}</React.Fragment>;
                 })}
               </svg>
@@ -1606,18 +1606,18 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 const isPathStart = pathStartNodeId === wp.id;
                 const isForeignShaft = wp.isVerticalShaft && wp.sourceFloorId && wp.sourceFloorId !== activeFloorId;
                 let bgColor = 'bg-orange-500'; let borderColor = 'border-white'; let shadow = '';
-                
+
                 if (wp.isVerticalShaft) bgColor = 'bg-green-500';
-                
-                if (isPathStart) { bgColor = 'bg-white'; borderColor = isForeignShaft ? 'border-green-500' : 'border-orange-500'; shadow = isForeignShaft ? 'shadow-[0_0_10px_green]' : 'shadow-[0_0_10px_orange]'; } 
+
+                if (isPathStart) { bgColor = 'bg-white'; borderColor = isForeignShaft ? 'border-green-500' : 'border-orange-500'; shadow = isForeignShaft ? 'shadow-[0_0_10px_green]' : 'shadow-[0_0_10px_orange]'; }
                 else if (isSelected) { borderColor = 'border-cyan-400 border-2'; shadow = 'shadow-[0_0_10px_cyan]'; }
 
                 return (
                   <div key={wp.id} className={`waypoint-pin absolute -translate-x-1/2 -translate-y-1/2 z-30 cursor-pointer ${isSelected ? 'z-40' : ''}`} style={{ left: `${wp.x*100}%`, top: `${wp.y*100}%` }}
-                       onPointerDown={(e) => { 
-                         e.stopPropagation(); 
-                         if (e.button !== 0) return; 
-                         if (isPathMode) connectToNode(wp.id); 
+                       onPointerDown={(e) => {
+                         e.stopPropagation();
+                         if (e.button !== 0) return;
+                         if (isPathMode) connectToNode(wp.id);
                          else if (isToggleShaftMode) {
                            if (!wp.isVerticalShaft) handleToggleVerticalShaft(wp, true, false);
                            setSelectedMarkerId(null); setSelectedWaypointId(wp.id);
@@ -1625,11 +1625,11 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                          else if (!isNavTestMode && !isMeasuring && !isPanning && !isAddMode) {
                            setSelectedMarkerId(null); setSelectedWaypointId(wp.id); setDraggingId(wp.id); e.target.setPointerCapture(e.pointerId);
                          }
-                       }} 
+                       }}
                        onPointerUp={(e) => { e.stopPropagation(); e.target.releasePointerCapture(e.pointerId); }}
-                       onContextMenu={(e) => { 
-                         e.preventDefault(); 
-                         if (isPathMode) { deleteNode(wp.id); } 
+                       onContextMenu={(e) => {
+                         e.preventDefault();
+                         if (isPathMode) { deleteNode(wp.id); }
                          else if (isToggleShaftMode) { if(wp.isVerticalShaft) handleToggleVerticalShaft(wp, false, false); }
                          else if (!isNavTestMode && !isMeasuring && !isAddMode) { setSelectedMarkerId(null); setSelectedWaypointId(wp.id); }
                        }}>
@@ -1667,23 +1667,23 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 const linkedFloorNames = marker.isVerticalShaft ? currentBuilding?.floors.filter(f => marker.linkedFloorIds?.includes(f.id)).sort((a,b) => getFloorLevel(b.name) - getFloorLevel(a.name)).map(f => f.name).join(', ') : '';
 
                 return (
-                <div key={marker.id} className={`marker-pin absolute -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing group z-50 ${selectedMarkerId === marker.id ? 'z-[60]' : ''} ${pathStartNodeId === marker.id ? 'scale-125' : ''}`} style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%` }} 
-                     onPointerDown={(e) => { 
-                       e.stopPropagation(); 
-                       if (e.button !== 0) return; 
-                       if(isPathMode) { connectToNode(marker.id); } 
+                <div key={marker.id} className={`marker-pin absolute -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing group z-50 ${selectedMarkerId === marker.id ? 'z-[60]' : ''} ${pathStartNodeId === marker.id ? 'scale-125' : ''}`} style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%` }}
+                     onPointerDown={(e) => {
+                       e.stopPropagation();
+                       if (e.button !== 0) return;
+                       if(isPathMode) { connectToNode(marker.id); }
                        else if(isToggleShaftMode) {
                          if (!marker.isVerticalShaft) handleToggleVerticalShaft(marker, true, true);
                          setSelectedWaypointId(null); setSelectedMarkerId(marker.id);
                        }
-                       else if(!isNavTestMode && !isAddMode && !isMeasuring && !isPanning) { 
-                         setSelectedWaypointId(null); setDraggingId(marker.id); setSelectedMarkerId(marker.id); e.target.setPointerCapture(e.pointerId); 
-                       } 
-                     }} 
+                       else if(!isNavTestMode && !isAddMode && !isMeasuring && !isPanning) {
+                         setSelectedWaypointId(null); setDraggingId(marker.id); setSelectedMarkerId(marker.id); e.target.setPointerCapture(e.pointerId);
+                       }
+                     }}
                      onPointerUp={(e) => { e.stopPropagation(); e.target.releasePointerCapture(e.pointerId); }}
-                     onContextMenu={(e) => { 
-                       e.preventDefault(); 
-                       if (isPathMode) { deleteNode(marker.id); } 
+                     onContextMenu={(e) => {
+                       e.preventDefault();
+                       if (isPathMode) { deleteNode(marker.id); }
                        else if (isToggleShaftMode) { if(marker.isVerticalShaft) handleToggleVerticalShaft(marker, false, true); }
                        else if (!isNavTestMode && !isMeasuring && !isAddMode) { setSelectedWaypointId(null); setSelectedMarkerId(marker.id); }
                      }}>
@@ -1702,7 +1702,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
             {isToggleShaftMode && (
               <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-green-500/95 text-white px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(34,197,94,0.5)] flex items-center pointer-events-auto z-50">
-                <ArrowUpDown className="w-5 h-5 mr-3 shrink-0" /> 
+                <ArrowUpDown className="w-5 h-5 mr-3 shrink-0" />
                 <div className="flex flex-col">
                   <span>點擊既有節點指定為「跨樓層轉折點」，右鍵取消。</span>
                   <span className="text-green-200 font-normal">指定後將自動開啟右側面板，請勾選要連通的樓層。</span>
@@ -1712,7 +1712,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
             {isPathMode && (
               <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-orange-500/95 text-white px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(249,115,22,0.5)] flex items-center pointer-events-auto z-50">
-                <MousePointer2 className="w-5 h-5 mr-3 shrink-0" /> 
+                <MousePointer2 className="w-5 h-5 mr-3 shrink-0" />
                 <div className="flex flex-col">
                   <span>點擊空處建立轉折點與連線路網 (AR 標籤不須強迫連線)。</span>
                   <span className="text-orange-200 font-normal">點擊「目前發光點」或按 ESC 中斷畫線。右鍵刪除節點。</span>
@@ -1722,7 +1722,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
             {isNavTestMode && (
               <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-blue-500/95 text-white px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(59,130,246,0.5)] flex items-center pointer-events-auto z-50">
-                <Activity className="w-5 h-5 mr-3 shrink-0 animate-pulse" /> 
+                <Activity className="w-5 h-5 mr-3 shrink-0 animate-pulse" />
                 <div className="flex flex-col">
                   <span>路網分析測試模式：已啟用自動吸附演算</span>
                   <span className="text-blue-200 font-normal">請在地圖上任意點擊兩處，系統將模擬導航並畫出藍色最佳路徑。</span>
@@ -1733,7 +1733,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             {!currentFloor?.imageUrl && (
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center text-slate-500 pointer-events-none px-4"><Map className="w-12 h-12 mx-auto mb-3 opacity-50 text-cyan-500/30" /><p className="text-base md:text-lg mb-1">尚未載入 {currentBuilding?.name} - {currentFloor?.name} 的平面圖</p><p className="text-xs">點擊右側工具列「上傳底圖」</p></div>
             )}
-            
+
             {currentFloor?.imageUrl && scaleBarWidthPx > 0 && (
               <div onClick={() => setBoundsModal({ isOpen: true, blX: currentBounds.blX, blY: currentBounds.blY, trX: currentBounds.trX, trY: currentBounds.trY })} className="absolute top-20 right-3 md:top-4 md:right-20 z-40 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2.5 rounded-lg shadow-lg cursor-pointer hover:bg-slate-800 transition-colors" title="點擊校正全域座標">
                 <span className="text-[10px] text-cyan-400 font-bold mb-1.5 flex items-center"><Target className="w-3 h-3 mr-1"/> 比例尺: {scaleBarMeters} m</span>
@@ -1829,7 +1829,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           </div>
         </div>
       )}
-      
+
       <div className={`fixed inset-x-0 bottom-0 z-50 max-h-[86dvh] rounded-t-2xl border-t border-slate-800 bg-slate-900 shadow-2xl md:inset-x-auto md:inset-y-0 md:right-0 md:max-h-none md:w-80 md:rounded-none md:border-t-0 md:border-l lg:w-96 flex flex-col shrink-0 transition-transform duration-300 ${activeTab === 'map' && (selectedMarkerId || selectedWaypointId) ? 'translate-y-0 md:translate-x-0' : 'translate-y-full md:translate-y-0 md:translate-x-full absolute invisible'}`}>
         <div className="h-16 flex items-center justify-between px-4 border-b border-slate-800 bg-slate-950/80 backdrop-blur shrink-0">
           <h2 className="font-bold text-slate-200">
@@ -1837,7 +1837,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           </h2>
           <button onClick={() => { setSelectedMarkerId(null); setSelectedWaypointId(null); }} className="text-slate-400 hover:text-white p-2"><X/></button>
         </div>
-        
+
         {selectedMarker && (
           <>
             <div className="flex-1 overflow-y-auto p-4 space-y-5 pb-8">
@@ -1851,7 +1851,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                   <div className="flex-1"><label className="block text-[11px] text-slate-400 mb-1">相對 X (%)</label><input type="number" step="0.1" value={+(selectedMarker.x * 100).toFixed(1)} onChange={(e) => handleMarkerUpdate(selectedMarker.id, 'x', Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)) / 100)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200" /></div>
                   <div className="flex-1"><label className="block text-[11px] text-slate-400 mb-1">相對 Y (%)</label><input type="number" step="0.1" value={+(selectedMarker.y * 100).toFixed(1)} onChange={(e) => handleMarkerUpdate(selectedMarker.id, 'y', Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)) / 100)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200" /></div>
                 </div>
-                
+
                 <div className="p-3 bg-slate-950/50 border border-slate-800 rounded-xl space-y-3">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-medium text-purple-400 cursor-pointer flex items-center" htmlFor="toggle-shaft-m"><ArrowUpDown className="w-4 h-4 mr-1.5"/> 設為垂直貫通節點</label>
@@ -1883,7 +1883,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                     </div>
                   )}
                 </div>
-                
+
                 <div className="flex items-center justify-between pt-1">
                   <label className="text-xs font-medium text-slate-300 cursor-pointer" htmlFor="toggle-enable-m">啟用此點位辨識</label>
                   <label className="relative inline-flex items-center cursor-pointer">
@@ -1892,9 +1892,9 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                   </label>
                 </div>
               </div>
-              
+
               <hr className="border-slate-800" />
-              
+
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-semibold text-cyan-400">Target Image 辨識圖</h3>
@@ -1907,7 +1907,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               </div>
               <ARTestIntegration marker={selectedMarker} onUpdateStatus={(status) => handleMarkerUpdate(selectedMarker.id, 'recognitionStatus', status)} showAlert={(msg) => setAlertModal({ isOpen: true, message: msg })} />
             </div>
-            
+
             <div className="p-4 border-t border-slate-800 bg-slate-900 shrink-0 pb-safe">
               {isConfirmingDelete ? (
                 <div className="flex space-x-2 animate-in fade-in slide-in-from-bottom-2">
@@ -1932,7 +1932,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                   <div className="flex-1"><label className="block text-[11px] text-slate-400 mb-1">相對 X (%)</label><input type="number" step="0.1" value={+(selectedWaypoint.x * 100).toFixed(1)} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'x', Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)) / 100)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200" /></div>
                   <div className="flex-1"><label className="block text-[11px] text-slate-400 mb-1">相對 Y (%)</label><input type="number" step="0.1" value={+(selectedWaypoint.y * 100).toFixed(1)} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'y', Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)) / 100)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200" /></div>
                 </div>
-                
+
                 <div className="p-3 bg-slate-950/50 border border-slate-800 rounded-xl space-y-3 mt-4">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-medium text-green-400 cursor-pointer flex items-center" htmlFor="toggle-shaft-wp">
@@ -1962,7 +1962,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 </div>
               </div>
             </div>
-            
+
             <div className="p-4 border-t border-slate-800 bg-slate-900 shrink-0 pb-safe">
               {isConfirmingDelete ? (
                 <div className="flex space-x-2 animate-in fade-in slide-in-from-bottom-2">
@@ -1979,7 +1979,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           </>
         )}
       </div>
-      
+
     </div>
   );
 }
@@ -2004,7 +2004,7 @@ function StatusBadge({ status }) {
 }
 
 function ARTestIntegration({ marker, onUpdateStatus, showAlert }) {
-  const [engineState, setEngineState] = useState('idle'); 
+  const [engineState, setEngineState] = useState('idle');
   const [stats, setStats] = useState({ fps: 0, matches: 0, inliers: 0, status: 'OFFLINE' });
   const videoRef = useRef(null); const canvasRef = useRef(null); const refImgRef = useRef(null); const streamRef = useRef(null); const animFrameRef = useRef(null);
   const cvPointers = useRef({ refGray: null, refKeypoints: null, refDescriptors: null, orbDetector: null, matcher: null });
@@ -2112,7 +2112,7 @@ function ARTestIntegration({ marker, onUpdateStatus, showAlert }) {
               const srcPtsMat = cv.matFromArray(srcPts.length / 2, 1, cv.CV_32FC2, srcPts); const dstPtsMat = cv.matFromArray(dstPts.length / 2, 1, cv.CV_32FC2, dstPts); const mask = new cv.Mat();
               const homography = cv.findHomography(srcPtsMat, dstPtsMat, cv.RANSAC, 4.0, mask);
               for (let i = 0; i < mask.rows; i++) { if (mask.data[i] === 1) currentInliers++; }
-              
+
               if (!homography.empty() && currentInliers >= 10 && (currentInliers / goodMatches.length) >= 0.35) {
                 const refW = pointers.refGray.cols, refH = pointers.refGray.rows; const objCorners = [0, 0, 1, refW, 0, 1, refW, refH, 1, 0, refH, 1]; let pts = [];
                 for (let i = 0; i < 4; i++) {
@@ -2129,13 +2129,13 @@ function ARTestIntegration({ marker, onUpdateStatus, showAlert }) {
           srcMat.delete(); grayMat.delete(); frameKp.delete(); frameDes.delete();
         } catch (err) {}
 
-        if (frameTargetFound) { lastCVTargetCorners = frameTargetCorners; detectionGraceCounter = GRACE_MAX; } 
+        if (frameTargetFound) { lastCVTargetCorners = frameTargetCorners; detectionGraceCounter = GRACE_MAX; }
         else { if (detectionGraceCounter > 0) detectionGraceCounter--; else lastCVTargetCorners = null; }
       }
 
       const isLocked = (lastCVTargetCorners !== null);
       if (isLocked) {
-        if (!smoothedCorners) { smoothedCorners = JSON.parse(JSON.stringify(lastCVTargetCorners)); } 
+        if (!smoothedCorners) { smoothedCorners = JSON.parse(JSON.stringify(lastCVTargetCorners)); }
         else {
           for (let i = 0; i < 4; i++) { smoothedCorners[i].x = smoothedCorners[i].x * (1 - lerpFactor) + lastCVTargetCorners[i].x * lerpFactor; smoothedCorners[i].y = smoothedCorners[i].y * (1 - lerpFactor) + lastCVTargetCorners[i].y * lerpFactor; }
         }
@@ -2192,10 +2192,10 @@ function ARTestIntegration({ marker, onUpdateStatus, showAlert }) {
 // 前台導覽引擎 (AR 路徑投影 + Dijkstra)
 // ==========================================
 function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
-  const [engineState, setEngineState] = useState('idle'); 
-  const [destinationId, setDestinationId] = useState(null); 
-  const [currentLocationId, setCurrentLocationId] = useState(null); 
-  const [calculatedPath, setCalculatedPath] = useState([]); 
+  const [engineState, setEngineState] = useState('idle');
+  const [destinationId, setDestinationId] = useState(null);
+  const [currentLocationId, setCurrentLocationId] = useState(null);
+  const [calculatedPath, setCalculatedPath] = useState([]);
   const [isMapExpanded, setIsMapExpanded] = useState(false);
   const [deviceHeading, setDeviceHeading] = useState(0);
   const [arLockStatus, setArLockStatus] = useState('idle');
@@ -2205,7 +2205,8 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   const [activeRouteStepIndex, setActiveRouteStepIndex] = useState(0);
   const [arDebug, setArDebug] = useState({});
   const [hasGyro, setHasGyro] = useState(false); // 新增：偵測陀螺儀是否成功作動
-  
+  const [motionAccessMessage, setMotionAccessMessage] = useState('');
+
   const videoRef = useRef(null); const canvasRef = useRef(null); const streamRef = useRef(null); const animFrameRef = useRef(null);
   const xrHostRef = useRef(null);
   const xrSessionRef = useRef(null);
@@ -2231,7 +2232,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     buildings.forEach(b => b.floors.forEach(f => {
       const bounds = f.bounds || { blX:0, blY:0, trX:100, trY:100 };
       const toPhys = (x, y) => ({ physX: bounds.blX + x * (bounds.trX - bounds.blX), physY: bounds.trY - y * (bounds.trY - bounds.blY) });
-      
+
       f.markers.forEach(m => { if(m.enabled) nodes[m.id] = { ...m, ...toPhys(m.x, m.y), isMarker: true, bId: b.id, fId: f.id, bName: b.name, fName: f.name, bounds }; });
       f.waypoints?.forEach(w => { nodes[w.id] = { ...w, ...toPhys(w.x, w.y), isMarker: false, bId: b.id, fId: f.id, bName: b.name, fName: f.name, bounds }; });
       f.edges?.forEach(e => { edges.push({ ...e, fId: f.id }); });
@@ -2368,13 +2369,13 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
 
     const path = []; let curr = snapEndId;
     while (curr) { path.unshift(curr); curr = prev[curr]; }
-    
+
     if (path.length === 0 || path[0] !== snapStartId) return [];
 
     if (snapStartId !== startId) path.unshift(startId);
     if (snapEndId !== endId) path.push(endId);
 
-    return path; 
+    return path;
   };
 
   useEffect(() => {
@@ -2437,15 +2438,15 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     // 使用計時器每 200 毫秒 (一秒 5 次) 更新方向，確保畫面平滑且不卡死
     const headingInterval = setInterval(() => {
       if (!hasGyroRef.current) return; // 如果沒抓到數據就不做無謂的計算
-      
+
       let targetHeading = headingRef.current;
       if (targetHeading == null) return;
-      
+
       // 處理 360度 <-> 0度 的跨界問題，將差值補回到累積角度上
       let delta = targetHeading - ((currentDisplayHeading % 360 + 360) % 360);
       if (delta > 180) delta -= 360;
       if (delta < -180) delta += 360;
-      
+
       currentDisplayHeading += delta;
       setDeviceHeading(currentDisplayHeading);
     }, 200);
@@ -2512,11 +2513,21 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     return result;
   };
 
+  const enableMotionAccess = async () => {
+    const result = await requestOrientationPermission();
+    if (result.granted) {
+      setMotionAccessMessage('\u5df2\u9001\u51fa\u52d5\u4f5c\u8207\u65b9\u5411\u555f\u7528\u8acb\u6c42\uff0c\u8acb\u8f49\u52d5\u624b\u6a5f\u78ba\u8a8d\u7f85\u76e4\u8cc7\u6599\u662f\u5426\u958b\u59cb\u8b8a\u5316\u3002');
+    } else {
+      setMotionAccessMessage(result.reason || '\u700f\u89bd\u5668\u672a\u5141\u8a31\u52d5\u4f5c\u8207\u65b9\u5411\u5b58\u53d6\uff0c\u8acb\u5728 Safari \u8a2d\u5b9a\u4e2d\u958b\u555f\u300c\u52d5\u4f5c\u8207\u65b9\u5411\u5b58\u53d6\u300d\u3002');
+    }
+    return result;
+  };
+
   const startScanning = async () => {
     if(engineState!=='idle') return; setEngineState('loading');
     const hasF = await precomputeFeatures(); if(!hasF) { setEngineState('idle'); alert("無法提取特徵"); return; }
     try {
-      await requestOrientationPermission();
+      await enableMotionAccess();
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 640 } }, audio: false });
       streamRef.current = stream; videoRef.current.srcObject = stream; videoRef.current.play();
       videoRef.current.onloadedmetadata = () => { canvasRef.current.width = videoRef.current.videoWidth; canvasRef.current.height = videoRef.current.videoHeight; setEngineState('scanning'); startCameraLoop(); };
@@ -2933,7 +2944,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
                 for (let m of good) { srcPts.push(target.kp.get(m.queryIdx).pt.x, target.kp.get(m.queryIdx).pt.y); dstPts.push(frameKp.get(m.trainIdx).pt.x, frameKp.get(m.trainIdx).pt.y); }
                 const srcMatPts = cv.matFromArray(srcPts.length/2, 1, cv.CV_32FC2, srcPts); const dstMatPts = cv.matFromArray(dstPts.length/2, 1, cv.CV_32FC2, dstPts); const mask = new cv.Mat();
                 const H = cv.findHomography(srcMatPts, dstMatPts, cv.RANSAC, 4.0, mask);
-                
+
                 let inliers = 0; for(let i=0; i<mask.rows; i++) if(mask.data[i]===1) inliers++;
                 if (!H.empty() && inliers >= 10) { // 放寬內點容許值以增加移動時的流暢度
                   if (homographyMat) homographyMat.delete();
@@ -2973,9 +2984,9 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       if (homographyMat && lockedMarkerId && currentCalculatedPath.length > 1) {
         const currMarker = currentGraphData.nodes[lockedMarkerId];
         const targetFeature = targetFeaturesRef.current.find(t => t.markerId === lockedMarkerId);
-        
+
         if (currMarker && targetFeature) {
-          const pixelsPerMeter = targetFeature.width / 0.3; 
+          const pixelsPerMeter = targetFeature.width / 0.3;
           const projectedPoints = [];
           const projectedRoutePoints = [];
           const routeNodeIndex = currentCalculatedPath.indexOf(lockedMarkerId);
@@ -2991,8 +3002,8 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
             if (!node || node.fId !== currMarker.fId) break;
 
             const deltaPhysX = node.physX - currMarker.physX;
-            const deltaPhysY = -(node.physY - currMarker.physY); 
-            
+            const deltaPhysY = -(node.physY - currMarker.physY);
+
             const templateX = (targetFeature.width / 2) + (deltaPhysX * pixelsPerMeter);
             const templateY = (targetFeature.height / 2) + (deltaPhysY * pixelsPerMeter);
 
@@ -3098,7 +3109,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
           <h2 className="text-2xl font-bold text-white mb-6 flex items-center md:mt-0 mt-2">
             <MapPin className="mr-3 text-cyan-400"/> 請選擇目的地
           </h2>
-          
+
           {Object.keys(destList).length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 text-center border border-dashed border-slate-800 rounded-2xl bg-slate-900/50 mt-10">
               <Target className="w-16 h-16 text-slate-700 mb-4" />
@@ -3201,7 +3212,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       <div className="absolute top-4 left-4 z-40">
         <button onClick={() => { stopScanning(); setDestinationId(null); setCurrentLocationId(null); }} className="bg-white/20 text-white px-4 py-2 rounded-full backdrop-blur-md hover:bg-white/30 transition-colors">重新選擇目的地</button>
       </div>
-      
+
       <div className="flex-1 relative flex items-center justify-center">
         <div ref={xrHostRef} className={`absolute inset-0 z-10 ${xrStatus === 'idle' ? 'pointer-events-none' : ''}`}></div>
         <video ref={videoRef} playsInline muted className="hidden"></video>
@@ -3215,7 +3226,27 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
             {arLockStatus === 'idle' && '準備定位'}
           </div>
         )}
-        
+
+        {engineState === 'scanning' && !hasGyro && (
+          <div className="absolute left-4 right-4 top-16 z-40 rounded-2xl border border-yellow-400/40 bg-slate-950/88 p-4 text-sm leading-relaxed text-yellow-50 shadow-xl backdrop-blur-md md:left-auto md:max-w-sm">
+            <div className="mb-1 font-bold text-yellow-200">
+              {'\u9700\u8981\u958b\u555f\u52d5\u4f5c\u8207\u65b9\u5411'}
+            </div>
+            <div className="mb-3 text-xs text-yellow-100/85">
+              {'\u82e5\u6c92\u6709\u555f\u7528\uff0cAR \u7bad\u982d\u7121\u6cd5\u96a8\u624b\u6a5f\u8f49\u5411\u5957\u758a\u5728\u5be6\u666f\u4e2d\u3002'}
+            </div>
+            <button
+              onClick={enableMotionAccess}
+              className="w-full rounded-full bg-yellow-300 px-4 py-2.5 text-sm font-bold text-slate-950 transition-colors hover:bg-yellow-200"
+            >
+              {'\u958b\u555f\u52d5\u4f5c\u8207\u65b9\u5411'}
+            </button>
+            {motionAccessMessage && (
+              <div className="mt-2 text-xs text-yellow-100/90">{motionAccessMessage}</div>
+            )}
+          </div>
+        )}
+
         {engineState === 'scanning' && isArDebugEnabled() && (
           <div className="absolute right-4 top-16 z-40 max-w-[260px] rounded-xl border border-slate-600 bg-slate-950/85 p-3 text-[10px] leading-relaxed text-slate-200 shadow-xl backdrop-blur-md">
             <div className="mb-1 font-bold text-cyan-300">AR Debug</div>
@@ -3240,10 +3271,10 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
           </div>
         )}
         {engineState === 'scanning' && minimapImage && (
-          <div 
+          <div
             onClick={() => setIsMapExpanded(!isMapExpanded)}
             className={`absolute transition-all duration-300 z-30 bg-slate-900/80 backdrop-blur-md border border-slate-700 shadow-2xl flex items-center justify-center overflow-hidden cursor-pointer ${
-              isMapExpanded 
+              isMapExpanded
                 ? 'top-16 left-4 right-4 bottom-32 rounded-2xl' // 放大狀態
                 : 'top-20 right-4 w-32 h-32 md:w-48 md:h-48 rounded-xl' // 縮小狀態
             }`}
@@ -3254,7 +3285,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
               <div className="absolute left-2 top-2 z-30 rounded-full border border-white/25 bg-black/75 px-3 py-1.5 text-xs font-bold text-white shadow-lg backdrop-blur-sm">
                 {isAutoSwitchingFloor ? `自動切換至 ${minimapFloorName}` : `目前平面圖 ${minimapFloorName}`}
               </div>
-              
+
               <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ overflow: 'visible' }}>
                 <defs>
                   <marker id="minimap-arrow" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
@@ -3316,7 +3347,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
               )}
 
               {false && currNode && currNode.fId === minimapFloorId && (
-                <div 
+                <div
                   className="absolute z-20 pointer-events-none"
                   style={{
                     left: `${toMinimapPct(currNode.physX, currNode.physY).x}%`,
@@ -3327,9 +3358,9 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
                   <div className="relative w-6 h-6 flex items-center justify-center">
                     {/* 雷達發射動畫 */}
                     <div className="absolute w-full h-full border-2 border-cyan-400 rounded-full animate-ping opacity-75"></div>
-                    
+
                     {/* 視角錐形 (手電筒光束) - 置中旋轉並配合同步 200ms 的過場動畫 */}
-                    <div 
+                    <div
                       className="absolute w-[60px] h-[60px] origin-center transition-transform duration-200 ease-linear flex items-center justify-center"
                       style={{ transform: `rotate(${deviceHeading}deg)` }}
                     >
@@ -3346,7 +3377,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
                     </div>
 
                     {/* 銳利的導航箭頭 (疊加在扇形光束上) */}
-                    <div 
+                    <div
                       className="absolute w-full h-full origin-center transition-transform duration-200 ease-linear flex items-center justify-center"
                       style={{ transform: `rotate(${deviceHeading}deg)` }}
                     >
@@ -3358,8 +3389,8 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
                   </div>
                 </div>
               )}
-              {destNode && destNode.fId === minimapFloorId && ( 
-                <div 
+              {destNode && destNode.fId === minimapFloorId && (
+                <div
                   className="absolute z-20 pointer-events-none"
                   style={{
                     left: `${toMinimapPct(destNode.physX, destNode.physY).x}%`,
@@ -3392,6 +3423,25 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
               真 AR 模式會把路徑建立成 3D 物件並鎖定在空間；不支援 WebXR 的裝置可使用相機疊圖備援。
             </p>
             <div className="space-y-3">
+              {!hasGyro && (
+                <div className="rounded-2xl border border-yellow-400/35 bg-yellow-400/10 p-4 text-left text-sm leading-relaxed text-yellow-50">
+                  <div className="mb-2 font-bold text-yellow-200">
+                    {'\u8acb\u958b\u555f\u300c\u52d5\u4f5c\u8207\u65b9\u5411\u300d\u6b0a\u9650'}
+                  </div>
+                  <div className="mb-3 text-xs text-yellow-100/85">
+                    {'AR \u7bad\u982d\u9700\u8981\u624b\u6a5f\u7f85\u76e4\u8cc7\u6599\u624d\u80fd\u96a8\u8f49\u5411\u6b63\u78ba\u5957\u758a\u3002iPhone \u8acb\u7528 Safari \u958b\u555f\uff0c\u4e26\u5141\u8a31\u52d5\u4f5c\u8207\u65b9\u5411\u5b58\u53d6\u3002'}
+                  </div>
+                  <button
+                    onClick={enableMotionAccess}
+                    className="w-full rounded-full bg-yellow-300 px-5 py-3 text-sm font-bold text-slate-950 transition-colors hover:bg-yellow-200"
+                  >
+                    {'\u958b\u555f\u52d5\u4f5c\u8207\u65b9\u5411\u6b0a\u9650'}
+                  </button>
+                  {motionAccessMessage && (
+                    <div className="mt-3 text-xs text-yellow-100/90">{motionAccessMessage}</div>
+                  )}
+                </div>
+              )}
               <button
                 onClick={startWebXr}
                 disabled={xrSupport !== 'supported'}
