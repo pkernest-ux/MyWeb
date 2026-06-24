@@ -1502,7 +1502,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       {activeTab === 'map' && (
         <div className="flex-1 flex flex-col relative overflow-hidden bg-slate-950 w-full">
 
-          <div className="absolute top-3 left-2 right-2 md:top-4 md:left-4 md:right-auto z-40 flex items-center gap-2 bg-slate-900/90 backdrop-blur-md border border-slate-700 p-2 rounded-xl shadow-lg overflow-x-auto md:overflow-visible whitespace-nowrap">
+          <div className="absolute top-3 left-2 right-2 md:top-4 md:left-4 md:right-56 lg:right-72 z-40 flex flex-wrap items-center gap-2 bg-slate-900/90 backdrop-blur-md border border-slate-700 p-2 rounded-xl shadow-lg overflow-visible">
             {!embedded && <button className="md:hidden text-slate-400 hover:text-white mr-1" onClick={() => setIsMobileMenuOpen(true)}><Menu className="w-5 h-5" /></button>}
             <div className="flex items-center">
               <Target className="w-4 h-4 text-cyan-400 ml-1 mr-2"/>
@@ -1544,6 +1544,22 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
           <div className="absolute left-2 right-2 bottom-3 md:left-auto md:right-4 md:bottom-auto md:top-4 z-40 flex flex-row md:flex-col gap-2 overflow-x-auto md:overflow-visible bg-slate-950/60 md:bg-transparent backdrop-blur md:backdrop-blur-0 p-2 md:p-0 rounded-xl md:rounded-none border border-slate-800/70 md:border-0">
             <button
+              onClick={loadProjectFromCloud}
+              className="flex shrink-0 items-center justify-center gap-2 h-10 px-3 rounded-xl transition-all shadow-lg font-bold text-xs bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30"
+              title="從雲端載入已上架的 AR 資料"
+            >
+              <Download className="w-5 h-5" />
+              <span>載入雲端</span>
+            </button>
+            <button
+              onClick={saveActiveProject}
+              className="flex shrink-0 items-center justify-center gap-2 h-10 px-3 rounded-xl transition-all shadow-lg font-bold text-xs bg-green-500/10 hover:bg-green-500/20 text-green-300 border border-green-500/30"
+              title="把目前這台裝置的 AR 資料同步到雲端"
+            >
+              <HardDrive className="w-5 h-5" />
+              <span>同步雲端</span>
+            </button>
+            <button
               onClick={() => { if (!currentFloor?.imageUrl) return; setIsNavTestMode(!isNavTestMode); setIsPathMode(false); setIsToggleShaftMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setHoverPos(null); setNavTestPoints([]); setNavTestPath([]); }}
               disabled={!currentFloor?.imageUrl}
               className={`flex shrink-0 items-center justify-center gap-2 h-10 px-3 rounded-xl transition-all shadow-lg font-bold text-xs ${isNavTestMode ? 'bg-blue-500 text-white shadow-[0_0_15px_rgba(59,130,246,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-blue-400 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed'}`}
@@ -1580,7 +1596,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
           <div ref={wrapperRef} className={`flex-1 relative overflow-hidden bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-900 to-slate-950 touch-none select-none ${isPathMode ? 'cursor-crosshair' : (isToggleShaftMode ? 'cursor-pointer' : (isAddMode ? 'cursor-crosshair' : (isMeasuring ? 'cursor-crosshair' : (isNavTestMode ? 'cursor-crosshair' : (isPanning ? 'cursor-grabbing' : 'cursor-grab')))))}`} onPointerDown={handleMapPointerDown} onPointerMove={handleMapPointerMove} onPointerUp={handleMapPointerUp} onPointerCancel={handleMapPointerUp}>
             {currentFloor && (
-              <div className="absolute left-4 top-4 z-[80] rounded-full border border-cyan-400/30 bg-slate-950/85 px-4 py-2 text-xs font-bold text-white shadow-xl backdrop-blur-md pointer-events-none">
+              <div className="absolute left-4 top-24 md:top-20 z-30 rounded-full border border-cyan-400/30 bg-slate-950/85 px-4 py-2 text-xs font-bold text-white shadow-xl backdrop-blur-md pointer-events-none">
                 {currentBuilding?.name || '目前場域'} / {currentFloor.name || '未命名樓層'}
               </div>
             )}
