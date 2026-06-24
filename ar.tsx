@@ -64,6 +64,36 @@ const cloneData = (value) => JSON.parse(JSON.stringify(value));
 
 const normalizeAngleDelta = (current, base) => (((current - base) + 540) % 360) - 180;
 
+const normalizeAngle = (angle) => {
+  if (angle == null || Number.isNaN(angle)) return null;
+  return ((angle % 360) + 360) % 360;
+};
+
+const getRelativeHeading = (currentHeading, baseHeading) => {
+  if (currentHeading == null || baseHeading == null) return null;
+  return normalizeAngle(currentHeading - baseHeading);
+};
+
+const getHeadingFromOrientationEvent = (event) => {
+  if (event && typeof event.webkitCompassHeading === 'number') {
+    return normalizeAngle(event.webkitCompassHeading);
+  }
+  if (event && typeof event.alpha === 'number') {
+    return normalizeAngle(360 - event.alpha);
+  }
+  return null;
+};
+
+const getBearingFromNodes = (currentNode, nextNode) => {
+  if (!currentNode || !nextNode) return null;
+  const x1 = currentNode.physX ?? currentNode.x;
+  const y1 = currentNode.physY ?? currentNode.y;
+  const x2 = nextNode.physX ?? nextNode.x;
+  const y2 = nextNode.physY ?? nextNode.y;
+  if ([x1, y1, x2, y2].some(value => typeof value !== 'number')) return null;
+  return normalizeAngle(Math.atan2(x2 - x1, y1 - y2) * 180 / Math.PI);
+};
+
 const buildTubeFromPoints = (points, radius, color, opacity = 1) => {
   if (!points || points.length < 2) return null;
   const curve = new THREE.CatmullRomCurve3(points);
@@ -2173,6 +2203,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   const [xrStatus, setXrStatus] = useState('idle');
   const [mascotProgress, setMascotProgress] = useState(0);
   const [activeRouteStepIndex, setActiveRouteStepIndex] = useState(0);
+  const [arDebug, setArDebug] = useState({});
   const [hasGyro, setHasGyro] = useState(false); // 新增：偵測陀螺儀是否成功作動
   
   const videoRef = useRef(null); const canvasRef = useRef(null); const streamRef = useRef(null); const animFrameRef = useRef(null);
@@ -2184,13 +2215,15 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   const xrReferenceSpaceRef = useRef(null);
   const xrPlacedRef = useRef(false);
   const targetFeaturesRef = useRef([]); const cvPointers = useRef({ matcher: null });
-  const headingRef = useRef(0); // 暫存陀螺儀高頻率數值
+  const headingRef = useRef(null);
+  const baseHeadingRef = useRef(null);
   const hasGyroRef = useRef(false);
+  const arDebugRef = useRef({});
   const calculatedPathRef = useRef([]);
   const graphDataRef = useRef({ nodes: {}, edges: [] });
   const lockedPathOverlayRef = useRef(null);
   const arLockStatusRef = useRef('idle');
-  const orientationRef = useRef({ heading: 0, pitch: 0, roll: 0 });
+  const orientationRef = useRef({ heading: null, pitch: 0, roll: 0 });
   const mascotAnimationRef = useRef(null);
 
   const graphData = React.useMemo(() => {
@@ -2238,6 +2271,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
 
   useEffect(() => {
     lockedPathOverlayRef.current = null;
+    baseHeadingRef.current = null;
     updateArLockStatus('idle');
   }, [destinationId]);
 
@@ -2245,6 +2279,22 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     if (arLockStatusRef.current === status) return;
     arLockStatusRef.current = status;
     setArLockStatus(status);
+  };
+
+  const isArDebugEnabled = () => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('debugAR') === '1' || localStorage.getItem('debugAR') === '1';
+  };
+
+  const updateArDebug = (patch) => {
+    if (!isArDebugEnabled()) return;
+    arDebugRef.current = {
+      ...arDebugRef.current,
+      ...patch,
+      isSecureContext: window.isSecureContext,
+      lastUpdateTime: new Date().toLocaleTimeString()
+    };
+    setArDebug(arDebugRef.current);
   };
 
   useEffect(() => {
@@ -2376,6 +2426,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       if (!hasGyroRef.current) return; // 如果沒抓到數據就不做無謂的計算
       
       let targetHeading = headingRef.current;
+      if (targetHeading == null) return;
       
       // 處理 360度 <-> 0度 的跨界問題，將差值補回到累積角度上
       let delta = targetHeading - ((currentDisplayHeading % 360 + 360) % 360);
@@ -2414,17 +2465,45 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     await Promise.all(promises); return targetFeaturesRef.current.length > 0;
   };
 
+  const requestOrientationPermission = async () => {
+    const result = {
+      orientationPermission: 'not-required',
+      motionPermission: 'not-required',
+      granted: true,
+      reason: null
+    };
+
+    if (!window.isSecureContext && location.hostname !== 'localhost') {
+      result.granted = false;
+      result.reason = 'AR 方向感測需要 HTTPS 或 localhost。';
+      updateArDebug(result);
+      return result;
+    }
+
+    try {
+      if (window.DeviceOrientationEvent && typeof window.DeviceOrientationEvent.requestPermission === 'function') {
+        result.orientationPermission = await window.DeviceOrientationEvent.requestPermission();
+        if (result.orientationPermission !== 'granted') result.granted = false;
+      }
+
+      if (window.DeviceMotionEvent && typeof window.DeviceMotionEvent.requestPermission === 'function') {
+        result.motionPermission = await window.DeviceMotionEvent.requestPermission();
+        if (result.motionPermission !== 'granted') result.granted = false;
+      }
+    } catch (error) {
+      result.granted = false;
+      result.reason = error?.message || '方向感測授權失敗。';
+    }
+
+    updateArDebug(result);
+    return result;
+  };
+
   const startScanning = async () => {
     if(engineState!=='idle') return; setEngineState('loading');
     const hasF = await precomputeFeatures(); if(!hasF) { setEngineState('idle'); alert("無法提取特徵"); return; }
     try {
-      if (window.DeviceOrientationEvent && typeof window.DeviceOrientationEvent.requestPermission === 'function') {
-        try {
-          await window.DeviceOrientationEvent.requestPermission();
-        } catch (permissionError) {
-          console.warn('Device orientation permission was not granted.', permissionError);
-        }
-      }
+      await requestOrientationPermission();
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 640 } }, audio: false });
       streamRef.current = stream; videoRef.current.srcObject = stream; videoRef.current.play();
       videoRef.current.onloadedmetadata = () => { canvasRef.current.width = videoRef.current.videoWidth; canvasRef.current.height = videoRef.current.videoHeight; setEngineState('scanning'); startCameraLoop(); };
@@ -2435,6 +2514,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
     lockedPathOverlayRef.current = null;
+    baseHeadingRef.current = null;
     updateArLockStatus('idle');
     setEngineState('idle');
   };
@@ -2498,12 +2578,13 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     if (Date.now() - overlay.updatedAt > 1000) return false;
 
     const currentOrientation = orientationRef.current;
-    const headingDelta = hasGyroRef.current ? ((((currentOrientation.heading - overlay.orientation.heading) + 540) % 360) - 180) : 0;
-    const pitchDelta = hasGyroRef.current ? (currentOrientation.pitch - overlay.orientation.pitch) : 0;
-    const rollDelta = hasGyroRef.current ? (currentOrientation.roll - overlay.orientation.roll) : 0;
-    const rollAngle = rollDelta * Math.PI / 180;
-    const cos = Math.cos(rollAngle);
-    const sin = Math.sin(rollAngle);
+    const hasHeading = hasGyroRef.current && currentOrientation.heading != null && overlay.orientation.heading != null;
+    const headingDelta = hasHeading ? normalizeAngleDelta(currentOrientation.heading, overlay.orientation.heading) : 0;
+    const pitchDelta = hasHeading ? (currentOrientation.pitch - overlay.orientation.pitch) : 0;
+    const rollDelta = hasHeading ? (currentOrientation.roll - overlay.orientation.roll) : 0;
+    const routeAngle = (rollDelta - headingDelta) * Math.PI / 180;
+    const cos = Math.cos(routeAngle);
+    const sin = Math.sin(routeAngle);
     const cx = ctx.canvas.width / 2;
     const cy = ctx.canvas.height / 2;
     const focalLength = Math.max(ctx.canvas.width, ctx.canvas.height) * 0.95;
@@ -2521,6 +2602,21 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
         x: cx + dx * cos - dy * sin - yawOffset,
         y: cy + dx * sin + dy * cos + pitchOffset
       };
+    });
+
+    const relativeHeading = getRelativeHeading(currentOrientation.heading, overlay.baseHeading);
+    const arrowRotation = overlay.targetBearing != null && relativeHeading != null
+      ? normalizeAngleDelta(overlay.targetBearing, relativeHeading)
+      : null;
+    updateArDebug({
+      currentHeading: currentOrientation.heading,
+      baseHeading: overlay.baseHeading,
+      relativeHeading,
+      targetBearing: overlay.targetBearing,
+      headingDelta,
+      arrowRotation,
+      finalArrowRotation: arrowRotation == null ? null : arrowRotation + rollDelta,
+      currentARMode: 'camera-overlay'
     });
 
     return drawArRoute(ctx, points, true);
@@ -2773,6 +2869,12 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
         if (currMarker && targetFeature) {
           const pixelsPerMeter = targetFeature.width / 0.3; 
           const projectedPoints = [];
+          const routeNodeIndex = currentCalculatedPath.indexOf(lockedMarkerId);
+          const bearingFromIndex = routeNodeIndex >= 0 ? routeNodeIndex : 0;
+          const targetBearing = getBearingFromNodes(
+            currentGraphData.nodes[currentCalculatedPath[bearingFromIndex]],
+            currentGraphData.nodes[currentCalculatedPath[bearingFromIndex + 1]]
+          );
 
           for (let i = 0; i < currentCalculatedPath.length; i++) {
             const nodeId = currentCalculatedPath[i];
@@ -2795,15 +2897,26 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
           }
 
           if (drawArRoute(ctx, projectedPoints, false)) {
+            if (baseHeadingRef.current == null && orientationRef.current.heading != null) {
+              baseHeadingRef.current = orientationRef.current.heading;
+            }
             lockedPathOverlayRef.current = {
               markerId: lockedMarkerId,
               orientation: { ...orientationRef.current },
+              baseHeading: baseHeadingRef.current,
+              targetBearing,
               updatedAt: Date.now(),
               points: projectedPoints.map(point => ({
                 x: point.x / canvas.width,
                 y: point.y / canvas.height
               }))
             };
+            updateArDebug({
+              arrowElementFound: true,
+              targetBearing,
+              baseHeading: baseHeadingRef.current,
+              currentARMode: 'camera-overlay'
+            });
             updateArLockStatus('locked');
           }
         }
@@ -2958,6 +3071,29 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
           </div>
         )}
         
+        {engineState === 'scanning' && isArDebugEnabled() && (
+          <div className="absolute right-4 top-16 z-40 max-w-[260px] rounded-xl border border-slate-600 bg-slate-950/85 p-3 text-[10px] leading-relaxed text-slate-200 shadow-xl backdrop-blur-md">
+            <div className="mb-1 font-bold text-cyan-300">AR Debug</div>
+            {[
+              ['secure', String(arDebug.isSecureContext)],
+              ['permission', `${arDebug.orientationPermission || '-'} / ${arDebug.motionPermission || '-'}`],
+              ['alpha', arDebug.alpha == null ? '-' : Math.round(arDebug.alpha)],
+              ['webkit', arDebug.webkitCompassHeading == null ? '-' : Math.round(arDebug.webkitCompassHeading)],
+              ['heading', arDebug.currentHeading == null ? '-' : Math.round(arDebug.currentHeading)],
+              ['base', arDebug.baseHeading == null ? '-' : Math.round(arDebug.baseHeading)],
+              ['relative', arDebug.relativeHeading == null ? '-' : Math.round(arDebug.relativeHeading)],
+              ['target', arDebug.targetBearing == null ? '-' : Math.round(arDebug.targetBearing)],
+              ['rotate', arDebug.arrowRotation == null ? '-' : Math.round(arDebug.arrowRotation)],
+              ['mode', arDebug.currentARMode || '-'],
+              ['updated', arDebug.lastUpdateTime || '-']
+            ].map(([label, value]) => (
+              <div key={label} className="flex justify-between gap-3 border-t border-white/5 py-0.5">
+                <span className="text-slate-400">{label}</span>
+                <span className="font-mono text-white">{value}</span>
+              </div>
+            ))}
+          </div>
+        )}
         {engineState === 'scanning' && minimapImage && (
           <div 
             onClick={() => setIsMapExpanded(!isMapExpanded)}
