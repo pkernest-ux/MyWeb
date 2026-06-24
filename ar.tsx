@@ -2392,25 +2392,38 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
 
     // 監聽手機陀螺儀方向 (高頻觸發)
     const handleOrientation = (e) => {
-      let heading = null;
-      if (e.webkitCompassHeading !== undefined && e.webkitCompassHeading !== null) { // iOS 專用真實羅盤
-        heading = e.webkitCompassHeading;
-      } else if (e.alpha !== null && e.alpha !== undefined) { // Android / 其他裝置相對陀螺儀
-        heading = 360 - e.alpha;
+      const heading = getHeadingFromOrientationEvent(e);
+      updateArDebug({
+        alpha: e.alpha,
+        beta: e.beta,
+        gamma: e.gamma,
+        webkitCompassHeading: e.webkitCompassHeading,
+        currentHeading: heading
+      });
+
+      if (heading == null) return;
+
+      if (baseHeadingRef.current == null) {
+        baseHeadingRef.current = heading;
       }
-      
-      if (heading !== null) {
-        orientationRef.current = {
-          heading,
-          pitch: e.beta || 0,
-          roll: e.gamma || 0
-        };
-        headingRef.current = heading;
-        if (!hasGyroRef.current) {
-          hasGyroRef.current = true;
-          setHasGyro(true); // 一旦成功抓到第一次數據，就解除等待狀態
-        }
+
+      orientationRef.current = {
+        heading,
+        pitch: e.beta || 0,
+        roll: e.gamma || 0
+      };
+      headingRef.current = heading;
+
+      if (!hasGyroRef.current) {
+        hasGyroRef.current = true;
+        setHasGyro(true);
       }
+
+      updateArDebug({
+        baseHeading: baseHeadingRef.current,
+        relativeHeading: getRelativeHeading(heading, baseHeadingRef.current),
+        orientationEventActive: true
+      });
     };
 
     if (window.DeviceOrientationEvent) {
@@ -2656,23 +2669,35 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     const cos = Math.cos(routeAngle);
     const sin = Math.sin(routeAngle);
     const anchor = overlay.anchor || overlay.points[0];
-    const cx = anchor.x * ctx.canvas.width;
-    const cy = anchor.y * ctx.canvas.height;
+    const viewportCx = ctx.canvas.width / 2;
+    const viewportCy = ctx.canvas.height / 2;
+    const anchorX = anchor.x * ctx.canvas.width;
+    const anchorY = anchor.y * ctx.canvas.height;
     const focalLength = Math.max(ctx.canvas.width, ctx.canvas.height) * 0.95;
     const maxOffsetX = ctx.canvas.width * 1.8;
     const maxOffsetY = ctx.canvas.height * 1.2;
     const yawOffset = Math.max(-maxOffsetX, Math.min(maxOffsetX, Math.tan(headingDelta * Math.PI / 180) * focalLength));
     const pitchOffset = Math.max(-maxOffsetY, Math.min(maxOffsetY, Math.tan(pitchDelta * Math.PI / 180) * focalLength * 0.75));
 
+    const transformWorldPoint = (x, y) => {
+      const dx = x - viewportCx;
+      const dy = y - viewportCy;
+      return {
+        x: viewportCx + dx * cos - dy * sin - yawOffset,
+        y: viewportCy + dx * sin + dy * cos + pitchOffset
+      };
+    };
+
+    const transformedAnchor = transformWorldPoint(anchorX, anchorY);
+
     const transformOverlayPoint = (point) => {
       const x = point.x * ctx.canvas.width;
       const y = point.y * ctx.canvas.height;
-      const dx = x - cx;
-      const dy = y - cy;
-      const isAnchor = Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001;
+      const dx = x - anchorX;
+      const dy = y - anchorY;
       return {
-        x: cx + dx * cos - dy * sin - (isAnchor ? 0 : yawOffset),
-        y: cy + dx * sin + dy * cos + (isAnchor ? 0 : pitchOffset)
+        x: transformedAnchor.x + dx * cos - dy * sin,
+        y: transformedAnchor.y + dx * sin + dy * cos
       };
     };
 
@@ -2700,7 +2725,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
 
     const didDraw = drawArRoute(ctx, points, true);
     if (didDraw) {
-      drawArAnchor(ctx, transformOverlayPoint(anchor));
+      drawArAnchor(ctx, transformedAnchor);
       drawArPins(ctx, pins);
     }
     return didDraw;
