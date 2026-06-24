@@ -2622,6 +2622,27 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     });
   };
 
+  const drawArAnchor = (ctx, point) => {
+    if (!point || typeof point.x !== 'number' || typeof point.y !== 'number') return;
+
+    ctx.save();
+    ctx.translate(point.x, point.y);
+    ctx.shadowBlur = 14;
+    ctx.shadowColor = '#22d3ee';
+    ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+    ctx.fillStyle = 'rgba(34,211,238,0.95)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, 0, 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0, 0, 20, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(34,211,238,0.55)';
+    ctx.stroke();
+    ctx.restore();
+  };
+
   const drawLockedRouteOverlay = (ctx) => {
     const overlay = lockedPathOverlayRef.current;
     if (!overlay || !overlay.points || overlay.points.length < 2) return false;
@@ -2634,8 +2655,9 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     const routeAngle = (rollDelta - headingDelta) * Math.PI / 180;
     const cos = Math.cos(routeAngle);
     const sin = Math.sin(routeAngle);
-    const cx = ctx.canvas.width / 2;
-    const cy = ctx.canvas.height / 2;
+    const anchor = overlay.anchor || overlay.points[0];
+    const cx = anchor.x * ctx.canvas.width;
+    const cy = anchor.y * ctx.canvas.height;
     const focalLength = Math.max(ctx.canvas.width, ctx.canvas.height) * 0.95;
     const maxOffsetX = ctx.canvas.width * 1.8;
     const maxOffsetY = ctx.canvas.height * 1.2;
@@ -2647,9 +2669,10 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       const y = point.y * ctx.canvas.height;
       const dx = x - cx;
       const dy = y - cy;
+      const isAnchor = Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001;
       return {
-        x: cx + dx * cos - dy * sin - yawOffset,
-        y: cy + dx * sin + dy * cos + pitchOffset
+        x: cx + dx * cos - dy * sin - (isAnchor ? 0 : yawOffset),
+        y: cy + dx * sin + dy * cos + (isAnchor ? 0 : pitchOffset)
       };
     };
 
@@ -2676,7 +2699,10 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     });
 
     const didDraw = drawArRoute(ctx, points, true);
-    if (didDraw) drawArPins(ctx, pins);
+    if (didDraw) {
+      drawArAnchor(ctx, transformOverlayPoint(anchor));
+      drawArPins(ctx, pins);
+    }
     return didDraw;
   };
 
@@ -2956,6 +2982,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
           }
 
           if (drawArRoute(ctx, projectedPoints, false)) {
+            const anchorPoint = projectedPoints[0];
             const endpointPoint = projectedRoutePoints[projectedRoutePoints.length - 1];
             const destinationPoint = projectedRoutePoints.find(point => point.nodeId === destinationId);
             const routePins = [];
@@ -2989,6 +3016,10 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
               baseHeading: baseHeadingRef.current,
               targetBearing,
               updatedAt: Date.now(),
+              anchor: anchorPoint ? {
+                x: anchorPoint.x / canvas.width,
+                y: anchorPoint.y / canvas.height
+              } : null,
               points: projectedPoints.map(point => ({
                 x: point.x / canvas.width,
                 y: point.y / canvas.height
