@@ -276,6 +276,16 @@ const createProjectFromPublishedData = (data) => ({
   buildings: Array.isArray(data?.buildings) ? data.buildings : []
 });
 
+const selectPublishedProjectData = (data, projectId = null) => {
+  if (Array.isArray(data?.projects)) {
+    return data.projects.find(item => item?.project?.id === projectId)
+      || data.projects.find(item => item?.project?.id === data.activeProjectId)
+      || data.projects[0]
+      || {};
+  }
+  return data || {};
+};
+
 export default function ARManagerApp({ embedded = false, initialTab = 'map', publicOnly = false }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -283,6 +293,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const [promptModal, setPromptModal] = useState({ isOpen: false, title: '', placeholder: '', onSubmit: null, defaultValue: '' });
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', message: '', onConfirm: null });
   const [alertModal, setAlertModal] = useState({ isOpen: false, message: '' });
+  const [cloudProjectModal, setCloudProjectModal] = useState({ isOpen: false, isLoading: false, projects: [], error: '' });
   const [permissionsModal, setPermissionsModal] = useState(false);
   const [boundsModal, setBoundsModal] = useState({ isOpen: false, blX: 0, blY: 0, trX: 100, trY: 100 });
   const isLoadingProjectRef = useRef(false);
@@ -356,12 +367,13 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
   const [mapTransform, setMapTransform] = useState({ x: 0, y: 0, scale: 1 });
 
-  const applyPublishedProjectData = (data) => {
-    if (!Array.isArray(data?.buildings) || data.buildings.length === 0) {
+  const applyPublishedProjectData = (data, projectId = null) => {
+    const selectedData = selectPublishedProjectData(data, projectId);
+    if (!Array.isArray(selectedData?.buildings) || selectedData.buildings.length === 0) {
       throw new Error('雲端目前沒有可載入的 AR 平面圖資料。');
     }
 
-    const project = createProjectFromPublishedData(data);
+    const project = createProjectFromPublishedData(selectedData);
     setProjects([project]);
     setActiveProjectId(project.id);
     setSystemConfig(cloneData(project.systemConfig));
@@ -411,7 +423,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     loadPublishedData()
       .then(data => {
         if (cancelled) return;
-        const project = createProjectFromPublishedData(data);
+        const project = createProjectFromPublishedData(selectPublishedProjectData(data));
         setProjects([project]);
         setActiveProjectId(project.id);
         setSystemConfig(cloneData(project.systemConfig));
@@ -442,8 +454,9 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         return response.json();
       })
       .then(data => {
-        if (cancelled || !Array.isArray(data?.buildings) || data.buildings.length === 0) return;
-        applyPublishedProjectData(data);
+        const selectedData = selectPublishedProjectData(data);
+        if (cancelled || !Array.isArray(selectedData?.buildings) || selectedData.buildings.length === 0) return;
+        applyPublishedProjectData(selectedData);
       })
       .catch(error => console.warn("Published AR admin seed unavailable", error));
 
@@ -1115,6 +1128,46 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     }
   };
 
+  const openCloudProjectList = async () => {
+    setCloudProjectModal({ isOpen: true, isLoading: true, projects: [], error: '' });
+    try {
+      const response = await fetch(`/api/ar-content?list=1&ts=${Date.now()}`, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`Load failed: ${response.status}`);
+      const data = await response.json();
+      const cloudProjects = Array.isArray(data?.projects) ? data.projects : [];
+      if (cloudProjects.length === 0) throw new Error('雲端目前沒有可載入的 AR 專案。');
+      setCloudProjectModal({ isOpen: true, isLoading: false, projects: cloudProjects, error: '' });
+    } catch (error) {
+      setCloudProjectModal({
+        isOpen: true,
+        isLoading: false,
+        projects: [],
+        error: `無法取得雲端專案列表：${error.message}`
+      });
+    }
+  };
+
+  const loadSelectedProjectFromCloud = async (projectId) => {
+    setCloudProjectModal(prev => ({ ...prev, isLoading: true, error: '' }));
+    try {
+      const response = await fetch(`/api/ar-content?projectId=${encodeURIComponent(projectId)}&ts=${Date.now()}`, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`Load failed: ${response.status}`);
+      const data = await response.json();
+      const project = applyPublishedProjectData(data, projectId);
+      setCloudProjectModal({ isOpen: false, isLoading: false, projects: [], error: '' });
+      setAlertModal({
+        isOpen: true,
+        message: `已從雲端載入「${project.name}」。桌機與手機現在會使用這個專案的平面圖、AR 點位與路網資料。`
+      });
+    } catch (error) {
+      setCloudProjectModal(prev => ({
+        ...prev,
+        isLoading: false,
+        error: `無法載入指定專案：${error.message}`
+      }));
+    }
+  };
+
   const addProject = () => {
     setPromptModal({
       isOpen: true,
@@ -1285,7 +1338,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           <button onClick={saveActiveProject} className="inline-flex items-center justify-center gap-2 bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/30 px-3 py-2 rounded-lg text-xs transition-colors" title="把目前這台裝置的 AR 資料同步到雲端，讓其他裝置可以載入">
             <Upload className="w-4 h-4" />同步雲端
           </button>
-          <button onClick={loadProjectFromCloud} className="inline-flex items-center justify-center gap-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 px-3 py-2 rounded-lg text-xs transition-colors" title="從雲端載入已上架的 AR 資料，會覆蓋目前後台顯示的本機暫存">
+          <button onClick={openCloudProjectList} className="inline-flex items-center justify-center gap-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 px-3 py-2 rounded-lg text-xs transition-colors" title="從雲端載入已上架的 AR 資料，會覆蓋目前後台顯示的本機暫存">
             <Download className="w-4 h-4" />從雲端載入
           </button>
           <button onClick={deleteProject} className="inline-flex items-center justify-center gap-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-2 rounded-lg text-xs transition-colors">
@@ -1587,7 +1640,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
           <div className="absolute left-2 right-2 bottom-3 md:left-auto md:right-4 md:bottom-auto md:top-4 z-40 flex flex-row md:flex-col gap-2 overflow-x-auto md:overflow-visible bg-slate-950/60 md:bg-transparent backdrop-blur md:backdrop-blur-0 p-2 md:p-0 rounded-xl md:rounded-none border border-slate-800/70 md:border-0">
             <button
-              onClick={loadProjectFromCloud}
+              onClick={openCloudProjectList}
               className="flex shrink-0 items-center justify-center gap-2 h-10 px-3 rounded-xl transition-all shadow-lg font-bold text-xs bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30"
               title="從雲端載入已上架的 AR 資料"
             >
@@ -1898,6 +1951,54 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               setBuildings(prev => prev.map(b => b.id === activeBuildingId ? { ...b, floors: b.floors.map(f => f.id === activeFloorId ? { ...f, bounds: { blX: boundsModal.blX, blY: boundsModal.blY, trX: boundsModal.trX, trY: boundsModal.trY } } : f) } : b));
               setBoundsModal({ isOpen: false }); setAlertModal({ isOpen: true, message: '樓層座標已更新！' });
             }} className="w-full py-3 bg-blue-500 text-white font-bold rounded-lg shadow-lg">儲存套用</button>
+          </div>
+        </div>
+      )}
+
+      {cloudProjectModal.isOpen && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-amber-500/40 rounded-xl w-full max-w-2xl p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4 mb-5">
+              <div>
+                <h3 className="text-lg font-bold text-amber-300">選擇要載入的雲端專案</h3>
+                <p className="text-xs text-slate-400 mt-1">載入後會覆蓋目前後台顯示的本機暫存，但不會同步上架，除非你再次按「同步雲端」。</p>
+              </div>
+              <button onClick={() => setCloudProjectModal({ isOpen: false, isLoading: false, projects: [], error: '' })} className="text-slate-400 hover:text-white p-1"><X className="w-5 h-5" /></button>
+            </div>
+
+            {cloudProjectModal.isLoading && (
+              <div className="rounded-xl border border-slate-800 bg-slate-950 p-6 text-center text-sm text-slate-300">正在讀取雲端專案列表...</div>
+            )}
+
+            {!cloudProjectModal.isLoading && cloudProjectModal.error && (
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">{cloudProjectModal.error}</div>
+            )}
+
+            {!cloudProjectModal.isLoading && !cloudProjectModal.error && (
+              <div className="max-h-[60vh] overflow-y-auto space-y-3 pr-1">
+                {cloudProjectModal.projects.map((item) => {
+                  const stats = item.stats || getProjectContentStats(item.buildings || []);
+                  const project = item.project || {};
+                  return (
+                    <button
+                      key={project.id}
+                      onClick={() => loadSelectedProjectFromCloud(project.id)}
+                      className="w-full text-left rounded-xl border border-slate-800 bg-slate-950 hover:border-amber-400/60 hover:bg-slate-900 p-4 transition-colors"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                        <div className="min-w-0">
+                          <div className="font-bold text-slate-100 truncate">{project.name || item.systemConfig?.projectName || '未命名 AR 專案'}</div>
+                          <div className="text-[11px] text-slate-500 mt-1">更新時間：{project.updatedAt ? new Date(project.updatedAt).toLocaleString() : '未知'}</div>
+                        </div>
+                        <div className="text-[11px] text-amber-200 shrink-0">
+                          {stats.floorPlans} 張圖 · {stats.markers} 點位 · {stats.waypoints} 節點 · {stats.edges} 路線
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}

@@ -2,7 +2,45 @@ const repo = process.env.GITHUB_REPO || "pkernest-ux/MyWeb";
 const branch = process.env.GITHUB_BRANCH || "main";
 const path = "ar-data.json";
 
-module.exports = async function (context) {
+const normalizeCollection = (json) => {
+  if (Array.isArray(json?.projects)) {
+    return {
+      version: json.version || "7.1",
+      activeProjectId: json.activeProjectId || json.projects[0]?.project?.id || null,
+      projects: json.projects
+    };
+  }
+
+  if (json?.project || Array.isArray(json?.buildings)) {
+    return {
+      version: "7.1",
+      activeProjectId: json.project?.id || "published",
+      projects: [json]
+    };
+  }
+
+  return { version: "7.1", activeProjectId: null, projects: [] };
+};
+
+const summarizeProject = (item) => {
+  const floorStats = (item.buildings || []).reduce((stats, building) => {
+    (building.floors || []).forEach((floor) => {
+      if (floor.imageUrl) stats.floorPlans += 1;
+      stats.markers += (floor.markers || []).length;
+      stats.waypoints += (floor.waypoints || []).length;
+      stats.edges += (floor.edges || []).length;
+    });
+    return stats;
+  }, { floorPlans: 0, markers: 0, waypoints: 0, edges: 0 });
+
+  return {
+    project: item.project || {},
+    systemConfig: item.systemConfig || {},
+    stats: floorStats
+  };
+};
+
+module.exports = async function (context, req) {
   const token = process.env.GITHUB_CONTENT_TOKEN;
   const apiUrl = `https://api.github.com/repos/${repo}/contents/${path}`;
   const headers = {
@@ -44,6 +82,33 @@ module.exports = async function (context) {
     }
 
     const json = JSON.parse(text);
+    const collection = normalizeCollection(json);
+    const query = req.query || {};
+    let body = json;
+
+    if (query.list === "1") {
+      body = {
+        version: collection.version,
+        activeProjectId: collection.activeProjectId,
+        projects: collection.projects.map(summarizeProject)
+      };
+    } else if (query.projectId) {
+      body = collection.projects.find(item => item?.project?.id === query.projectId);
+      if (!body) {
+        context.res = {
+          status: 404,
+          headers: {
+            "Cache-Control": "no-store, max-age=0"
+          },
+          body: { error: "AR project not found." }
+        };
+        return;
+      }
+    } else if (Array.isArray(json?.projects)) {
+      body = collection.projects.find(item => item?.project?.id === collection.activeProjectId)
+        || collection.projects[0]
+        || json;
+    }
 
     context.res = {
       status: 200,
@@ -51,7 +116,7 @@ module.exports = async function (context) {
         "Content-Type": "application/json",
         "Cache-Control": "no-store, max-age=0"
       },
-      body: json
+      body
     };
   } catch (error) {
     context.log.error(error);
