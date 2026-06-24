@@ -1013,7 +1013,32 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     setActiveBuildingId(bId); setActiveFloorId(fId); setSelectedMarkerId(mId); setSelectedWaypointId(null); setActiveTab('map');
   };
 
+  const getProjectContentStats = (projectBuildings) => {
+    return (projectBuildings || []).reduce((stats, building) => {
+      (building.floors || []).forEach((floor) => {
+        if (floor.imageUrl) stats.floorPlans += 1;
+        stats.markers += (floor.markers || []).length;
+        stats.waypoints += (floor.waypoints || []).length;
+        stats.edges += (floor.edges || []).length;
+      });
+      return stats;
+    }, { floorPlans: 0, markers: 0, waypoints: 0, edges: 0 });
+  };
+
+  const canSyncProjectToCloud = (projectBuildings) => {
+    const stats = getProjectContentStats(projectBuildings);
+    return stats.floorPlans > 0 || stats.markers > 0 || stats.waypoints > 0 || stats.edges > 0;
+  };
+
   const saveActiveProject = async () => {
+    if (!canSyncProjectToCloud(buildings)) {
+      setAlertModal({
+        isOpen: true,
+        message: '目前專案還是空的，尚未有平面圖、AR 點位或路網資料。為避免覆蓋雲端既有專案，請先載入雲端資料或新增內容後再同步。'
+      });
+      return;
+    }
+
     const payload = {
       version: '7.0',
       project: {
