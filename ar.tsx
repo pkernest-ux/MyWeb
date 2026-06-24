@@ -164,6 +164,31 @@ const getVectorPathLength = (points) => {
   return points.slice(1).reduce((total, point, index) => total + point.distanceTo(points[index]), 0);
 };
 
+const getRouteDistanceMeters = (nodes) => {
+  if (!nodes || nodes.length < 2) return 0;
+  return nodes.slice(1).reduce((total, node, index) => {
+    const previous = nodes[index];
+    if (!previous || !node) return total;
+    if (previous.fId !== node.fId) return total + 5;
+    return total + Math.hypot((node.physX || 0) - (previous.physX || 0), (node.physY || 0) - (previous.physY || 0));
+  }, 0);
+};
+
+const lerpValue = (from, to, amount) => from + (to - from) * amount;
+
+const smoothOverlayPoint = (previous, next, amount = 0.36) => {
+  if (!previous) return next;
+  return {
+    ...next,
+    x: lerpValue(previous.x, next.x, amount),
+    y: lerpValue(previous.y, next.y, amount)
+  };
+};
+
+const smoothOverlayList = (previous = [], next = [], amount = 0.36) => (
+  next.map((point, index) => smoothOverlayPoint(previous[index], point, amount))
+);
+
 const createFlowArrowGroup = (points) => {
   if (!points || points.length < 2) return null;
   const curve = new THREE.CatmullRomCurve3(points);
@@ -2563,9 +2588,9 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     ctx.stroke();
 
     if (routeLength > 8) {
-      const arrowSpacing = isLockedFallback ? 74 : 62;
-      const arrowSize = isLockedFallback ? 28 : 32;
-      const flowOffset = ((Date.now() / 10) % arrowSpacing);
+      const arrowSpacing = isLockedFallback ? 86 : 74;
+      const arrowSize = isLockedFallback ? 26 : 30;
+      const flowOffset = ((Date.now() / 18) % arrowSpacing);
 
       ctx.shadowBlur = isLockedFallback ? 10 : 16;
       ctx.shadowColor = '#ffffff';
@@ -3017,8 +3042,13 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
             }
           }
 
-          if (drawArRoute(ctx, projectedPoints, false)) {
-            const anchorPoint = projectedPoints[0];
+          if (projectedPoints.length >= 2) {
+            const previousOverlay = lockedPathOverlayRef.current;
+            const normalizedPoints = projectedPoints.map(point => ({
+              x: point.x / canvas.width,
+              y: point.y / canvas.height
+            }));
+            const anchorPoint = normalizedPoints[0];
             const endpointPoint = projectedRoutePoints[projectedRoutePoints.length - 1];
             const destinationPoint = projectedRoutePoints.find(point => point.nodeId === destinationId);
             const routePins = [];
@@ -3041,32 +3071,31 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
               });
             }
 
-            drawArPins(ctx, routePins);
-
             if (baseHeadingRef.current == null && orientationRef.current.heading != null) {
               baseHeadingRef.current = orientationRef.current.heading;
             }
-            lockedPathOverlayRef.current = {
+            const smoothedPoints = smoothOverlayList(previousOverlay?.points, normalizedPoints, previousOverlay ? 0.45 : 1);
+            if (smoothedPoints.length > 0) smoothedPoints[0] = anchorPoint;
+            const nextPins = routePins.map(pin => ({
+              x: pin.x / canvas.width,
+              y: pin.y / canvas.height,
+              type: pin.type,
+              label: pin.label
+            }));
+            const nextOverlay = {
               markerId: lockedMarkerId,
               orientation: { ...orientationRef.current },
               baseHeading: baseHeadingRef.current,
               targetBearing,
               updatedAt: Date.now(),
-              anchor: anchorPoint ? {
-                x: anchorPoint.x / canvas.width,
-                y: anchorPoint.y / canvas.height
-              } : null,
-              points: projectedPoints.map(point => ({
-                x: point.x / canvas.width,
-                y: point.y / canvas.height
-              })),
-              pins: routePins.map(pin => ({
-                x: pin.x / canvas.width,
-                y: pin.y / canvas.height,
-                type: pin.type,
-                label: pin.label
-              }))
+              anchor: anchorPoint,
+              points: smoothedPoints,
+              pins: smoothOverlayList(previousOverlay?.pins, nextPins, previousOverlay ? 0.45 : 1)
             };
+            lockedPathOverlayRef.current = {
+              ...nextOverlay
+            };
+            drawLockedRouteOverlay(ctx);
             updateArDebug({
               arrowElementFound: true,
               targetBearing,
@@ -3150,6 +3179,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     return node.fId || '';
   };
   const routeNodes = calculatedPath.map(id => graphData.nodes[id]).filter(Boolean);
+  const routeDistanceMeters = getRouteDistanceMeters(routeNodes);
   const routeSteps = [];
 
   routeNodes.forEach(node => {
@@ -3235,12 +3265,6 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
             <div className="mb-3 text-xs text-yellow-100/85">
               {'\u82e5\u6c92\u6709\u555f\u7528\uff0cAR \u7bad\u982d\u7121\u6cd5\u96a8\u624b\u6a5f\u8f49\u5411\u5957\u758a\u5728\u5be6\u666f\u4e2d\u3002'}
             </div>
-            <button
-              onClick={enableMotionAccess}
-              className="w-full rounded-full bg-yellow-300 px-4 py-2.5 text-sm font-bold text-slate-950 transition-colors hover:bg-yellow-200"
-            >
-              {'\u958b\u555f\u52d5\u4f5c\u8207\u65b9\u5411'}
-            </button>
             {motionAccessMessage && (
               <div className="mt-2 text-xs text-yellow-100/90">{motionAccessMessage}</div>
             )}
@@ -3431,12 +3455,6 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
                   <div className="mb-3 text-xs text-yellow-100/85">
                     {'AR \u7bad\u982d\u9700\u8981\u624b\u6a5f\u7f85\u76e4\u8cc7\u6599\u624d\u80fd\u96a8\u8f49\u5411\u6b63\u78ba\u5957\u758a\u3002iPhone \u8acb\u7528 Safari \u958b\u555f\uff0c\u4e26\u5141\u8a31\u52d5\u4f5c\u8207\u65b9\u5411\u5b58\u53d6\u3002'}
                   </div>
-                  <button
-                    onClick={enableMotionAccess}
-                    className="w-full rounded-full bg-yellow-300 px-5 py-3 text-sm font-bold text-slate-950 transition-colors hover:bg-yellow-200"
-                  >
-                    {'\u958b\u555f\u52d5\u4f5c\u8207\u65b9\u5411\u6b0a\u9650'}
-                  </button>
                   {motionAccessMessage && (
                     <div className="mt-3 text-xs text-yellow-100/90">{motionAccessMessage}</div>
                   )}
@@ -3454,7 +3472,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
                 disabled={engineState === 'loading'}
                 className="w-full rounded-full border border-slate-600 bg-slate-900/80 px-8 py-3 text-sm font-bold text-slate-100 transition-colors hover:bg-slate-800 disabled:opacity-50"
               >
-                {engineState === 'loading' ? '系統準備中...' : '使用相機疊圖備援'}
+                {engineState === 'loading' ? '\u7cfb\u7d71\u6e96\u5099\u4e2d...' : '\u958b\u555f\u52d5\u4f5c\u8207\u65b9\u5411\u53ca\u76f8\u6a5f'}
               </button>
             </div>
             {xrSupport === 'unsupported' && (
@@ -3510,6 +3528,11 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
               <div className={`text-sm font-bold leading-relaxed ${currentLocationId === destinationId ? 'text-green-400' : nextRouteStep ? 'text-purple-300' : 'text-yellow-300'}`}>
                 {routeStepInstruction}
               </div>
+              {routeDistanceMeters > 0 && (
+                <div className="mt-2 inline-flex rounded-full border border-cyan-400/25 bg-cyan-400/10 px-3 py-1 text-[11px] font-bold text-cyan-100">
+                  {'\u9810\u4f30\u8def\u5f91\u9577\u5ea6\uff1a'}{routeDistanceMeters < 100 ? routeDistanceMeters.toFixed(1) : Math.round(routeDistanceMeters)} m
+                </div>
+              )}
               {previousRouteStep && (
                 <div className="mt-2 text-[11px] text-slate-500">
                   {'\u4e0a\u4e00\u5f35\uff1a'}{previousRouteStep.floorName}{'\uff1b\u672c\u5f35\u662f'}{previousFloorVerb}{'\u5f8c\u7684\u5c0e\u5f15\u6bb5\u3002'}
