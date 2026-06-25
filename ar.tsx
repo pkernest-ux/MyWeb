@@ -2816,7 +2816,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     ctx.restore();
   };
 
-  const drawArRoute = (ctx, points, isLockedFallback = false, arrowRotationDegrees = null, arrowInfo = null) => {
+  const drawArRoute = (ctx, points, isLockedFallback = false, arrowRotationDegrees = null) => {
     if (!points || points.length < 2) return false;
     const routeLength = getPolylineLength(points);
     const arrowSize = Math.max(66, Math.min(108, Math.min(ctx.canvas.width, ctx.canvas.height) * 0.13));
@@ -2830,13 +2830,6 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       y: Math.max(margin, Math.min(ctx.canvas.height - margin, sampledPoint.y))
     };
     const angle = arrowRotationDegrees == null ? sample.angle + Math.PI / 2 : arrowRotationDegrees * Math.PI / 180;
-    const tipDistance = arrowSize * 0.62;
-    const tip = {
-      x: sample.x + Math.sin(angle) * tipDistance,
-      y: sample.y - Math.cos(angle) * tipDistance
-    };
-    if (arrowInfo) arrowInfo.tip = tip;
-
     ctx.save();
     ctx.translate(sample.x, sample.y);
     ctx.rotate(angle);
@@ -2872,6 +2865,10 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       const isDestination = pin.type === 'destination';
       const color = isDestination ? '#ef4444' : '#a855f7';
       const label = pin.label || (isDestination ? '目的地' : '路段末端');
+      const distanceLabel = typeof pin.distanceMeters === 'number'
+        ? `${pin.distanceMeters < 100 ? pin.distanceMeters.toFixed(1) : Math.round(pin.distanceMeters)} m`
+        : '';
+      const displayLabel = distanceLabel ? `${label} / ${distanceLabel}` : label;
 
       ctx.save();
       ctx.translate(pin.x, pin.y);
@@ -2902,7 +2899,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       ctx.fillText(isDestination ? '!' : '↑', 0, -18);
 
       ctx.font = 'bold 13px sans-serif';
-      const textWidth = ctx.measureText(label).width + 18;
+      const textWidth = ctx.measureText(displayLabel).width + 18;
       ctx.fillStyle = 'rgba(15, 23, 42, 0.86)';
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
       ctx.lineWidth = 1;
@@ -2911,7 +2908,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       ctx.fill();
       ctx.stroke();
       ctx.fillStyle = '#ffffff';
-      ctx.fillText(label, 0, 33);
+      ctx.fillText(displayLabel, 0, 33);
       ctx.restore();
     });
   };
@@ -3005,11 +3002,10 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     });
 
     const finalArrowRotation = arrowRotation == null ? null : arrowRotation + rollDelta;
-    const arrowInfo = {};
-    const didDraw = drawArRoute(ctx, points, true, finalArrowRotation, arrowInfo);
+    const didDraw = drawArRoute(ctx, points, true, finalArrowRotation);
     if (didDraw) {
       drawArAnchor(ctx, transformedAnchor);
-      drawArPins(ctx, arrowInfo.tip ? [{ x: arrowInfo.tip.x, y: arrowInfo.tip.y, type: 'endpoint', label: '末端點' }] : pins);
+      drawArPins(ctx, pins);
     }
     return didDraw;
   };
@@ -3298,6 +3294,11 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
             const anchorPoint = normalizedPoints[0];
             const endpointPoint = projectedRoutePoints[projectedRoutePoints.length - 1];
             const destinationPoint = projectedRoutePoints.find(point => point.nodeId === destinationId);
+            const remainingRouteNodes = currentCalculatedPath
+              .slice(Math.max(0, bearingFromIndex))
+              .map(nodeId => currentGraphData.nodes[nodeId])
+              .filter(Boolean);
+            const remainingDistanceMeters = getRouteDistanceMeters(remainingRouteNodes);
             const routePins = [];
 
             if (endpointPoint) {
@@ -3327,7 +3328,8 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
               x: pin.x / canvas.width,
               y: pin.y / canvas.height,
               type: pin.type,
-              label: pin.label
+              label: pin.label,
+              distanceMeters: pin.distanceMeters
             }));
             const nextOverlay = {
               markerId: lockedMarkerId,
