@@ -2772,9 +2772,16 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   const drawArRoute = (ctx, points, isLockedFallback = false, arrowRotationDegrees = null) => {
     if (!points || points.length < 2) return false;
     const routeLength = getPolylineLength(points);
-    const sample = getPointAtPolylineDistance(points, Math.max(1, routeLength * 0.45));
-    if (!sample) return false;
     const arrowSize = Math.max(66, Math.min(108, Math.min(ctx.canvas.width, ctx.canvas.height) * 0.13));
+    const sampleDistance = Math.min(routeLength * 0.45, Math.max(48, arrowSize * 0.82));
+    const sampledPoint = getPointAtPolylineDistance(points, Math.max(1, sampleDistance));
+    if (!sampledPoint) return false;
+    const margin = arrowSize * 0.65;
+    const sample = {
+      ...sampledPoint,
+      x: Math.max(margin, Math.min(ctx.canvas.width - margin, sampledPoint.x)),
+      y: Math.max(margin, Math.min(ctx.canvas.height - margin, sampledPoint.y))
+    };
     const angle = arrowRotationDegrees == null ? sample.angle + Math.PI / 2 : arrowRotationDegrees * Math.PI / 180;
 
     ctx.save();
