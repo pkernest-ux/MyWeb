@@ -2769,55 +2769,39 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     setEngineState('idle');
   };
 
-  const drawArRoute = (ctx, points, isLockedFallback = false) => {
+  const drawArRoute = (ctx, points, isLockedFallback = false, arrowRotationDegrees = null) => {
     if (!points || points.length < 2) return false;
     const routeLength = getPolylineLength(points);
+    const sample = getPointAtPolylineDistance(points, Math.max(1, routeLength * 0.45));
+    if (!sample) return false;
+    const arrowSize = Math.max(66, Math.min(108, Math.min(ctx.canvas.width, ctx.canvas.height) * 0.13));
+    const angle = arrowRotationDegrees == null ? sample.angle + Math.PI / 2 : arrowRotationDegrees * Math.PI / 180;
 
     ctx.save();
-    ctx.beginPath();
-    points.forEach((point, index) => {
-      if (index === 0) ctx.moveTo(point.x, point.y);
-      else ctx.lineTo(point.x, point.y);
-    });
-
-    ctx.strokeStyle = isLockedFallback ? 'rgba(255, 255, 255, 0.18)' : 'rgba(255, 255, 255, 0.24)';
-    ctx.lineWidth = isLockedFallback ? 8 : 10;
-    ctx.lineCap = 'round';
+    ctx.translate(sample.x, sample.y);
+    ctx.rotate(angle);
+    ctx.shadowBlur = 24;
+    ctx.shadowColor = 'rgba(250, 204, 21, 0.95)';
+    ctx.fillStyle = '#facc15';
+    ctx.strokeStyle = 'rgba(23, 23, 23, 0.72)';
+    ctx.lineWidth = Math.max(4, arrowSize * 0.08);
     ctx.lineJoin = 'round';
-    ctx.shadowBlur = isLockedFallback ? 8 : 12;
-    ctx.shadowColor = '#ffffff';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(0, -arrowSize * 0.62);
+    ctx.lineTo(arrowSize * 0.36, -arrowSize * 0.08);
+    ctx.lineTo(arrowSize * 0.16, -arrowSize * 0.08);
+    ctx.lineTo(arrowSize * 0.16, arrowSize * 0.52);
+    ctx.lineTo(-arrowSize * 0.16, arrowSize * 0.52);
+    ctx.lineTo(-arrowSize * 0.16, -arrowSize * 0.08);
+    ctx.lineTo(-arrowSize * 0.36, -arrowSize * 0.08);
+    ctx.closePath();
     ctx.stroke();
-
-    if (routeLength > 8) {
-      const arrowSpacing = isLockedFallback ? 86 : 74;
-      const arrowSize = isLockedFallback ? 26 : 30;
-      const flowOffset = ((Date.now() / 18) % arrowSpacing);
-
-      ctx.shadowBlur = isLockedFallback ? 10 : 16;
-      ctx.shadowColor = '#ffffff';
-      ctx.fillStyle = 'rgba(255,255,255,0.98)';
-      ctx.strokeStyle = 'rgba(0,0,0,0.34)';
-      ctx.lineWidth = 2.5;
-
-      for (let distance = flowOffset; distance < routeLength; distance += arrowSpacing) {
-        const sample = getPointAtPolylineDistance(points, distance);
-        if (!sample) continue;
-
-        ctx.save();
-        ctx.translate(sample.x, sample.y);
-        ctx.rotate(sample.angle);
-        ctx.beginPath();
-        ctx.moveTo(arrowSize * 0.55, 0);
-        ctx.lineTo(-arrowSize * 0.35, -arrowSize * 0.32);
-        ctx.lineTo(-arrowSize * 0.15, 0);
-        ctx.lineTo(-arrowSize * 0.35, arrowSize * 0.32);
-        ctx.closePath();
-        ctx.stroke();
-        ctx.fill();
-        ctx.restore();
-      }
-    }
-
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.72)';
+    ctx.lineWidth = Math.max(2, arrowSize * 0.025);
+    ctx.stroke();
     ctx.restore();
     return true;
   };
@@ -2960,7 +2944,8 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       currentARMode: 'camera-overlay'
     });
 
-    const didDraw = drawArRoute(ctx, points, true);
+    const finalArrowRotation = arrowRotation == null ? null : arrowRotation + rollDelta;
+    const didDraw = drawArRoute(ctx, points, true, finalArrowRotation);
     if (didDraw) {
       drawArAnchor(ctx, transformedAnchor);
       drawArPins(ctx, pins);
@@ -3449,7 +3434,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
         <video ref={videoRef} playsInline muted className="hidden"></video>
         <canvas ref={canvasRef} className={`absolute inset-0 w-full h-full object-cover ${engineState !== 'scanning' && 'hidden'}`}></canvas>
 
-        {engineState === 'scanning' && (
+        {false && engineState === 'scanning' && (
           <div className="absolute top-4 right-4 z-40 rounded-full border border-cyan-400/30 bg-slate-950/75 px-3 py-2 text-xs font-bold text-cyan-100 shadow-lg backdrop-blur-md">
             {arLockStatus === 'locked' && 'AR 路徑已鎖定'}
             {arLockStatus === 'holding' && '陀螺儀空間錨點'}
@@ -3458,7 +3443,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
           </div>
         )}
 
-        {engineState === 'scanning' && !hasGyro && (
+        {false && engineState === 'scanning' && !hasGyro && (
           <div className="absolute left-4 right-4 top-16 z-40 rounded-2xl border border-yellow-400/40 bg-slate-950/88 p-4 text-sm leading-relaxed text-yellow-50 shadow-xl backdrop-blur-md md:left-auto md:max-w-sm">
             <div className="mb-1 font-bold text-yellow-200">
               {'\u9700\u8981\u958b\u555f\u52d5\u4f5c\u8207\u65b9\u5411'}
@@ -3641,6 +3626,18 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
         )}
 
         {engineState !== 'scanning' && xrStatus === 'idle' && (
+          <div className="z-20 w-full max-w-md px-6 text-center">
+            <button
+              onClick={startScanning}
+              disabled={engineState === 'loading'}
+              className="w-full rounded-full bg-yellow-400 px-8 py-5 text-base font-black text-slate-950 shadow-[0_0_24px_rgba(250,204,21,0.45)] transition-colors hover:bg-yellow-300 disabled:opacity-50"
+            >
+              {engineState === 'loading' ? '系統準備中...' : '開啟動作與方向及相機權限'}
+            </button>
+          </div>
+        )}
+
+        {false && engineState !== 'scanning' && xrStatus === 'idle' && (
           <div className="z-20 w-full max-w-md px-6 text-center">
             <Scan className="w-20 h-20 text-cyan-500/50 mb-6 mx-auto" />
             <h2 className="text-2xl font-bold text-white mb-3">開啟 AR 導引</h2>
