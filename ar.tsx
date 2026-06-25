@@ -2769,7 +2769,54 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     setEngineState('idle');
   };
 
-  const drawArRoute = (ctx, points, isLockedFallback = false, arrowRotationDegrees = null) => {
+  const drawRecognitionGuide = (ctx) => {
+    const boxSize = Math.min(ctx.canvas.width, ctx.canvas.height) * 0.58;
+    const x = (ctx.canvas.width - boxSize) / 2;
+    const y = (ctx.canvas.height - boxSize) / 2;
+    const corner = Math.max(28, boxSize * 0.16);
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(250, 204, 21, 0.92)';
+    ctx.lineWidth = 5;
+    ctx.shadowBlur = 14;
+    ctx.shadowColor = 'rgba(250, 204, 21, 0.75)';
+    ctx.lineCap = 'round';
+
+    [
+      [x, y, x + corner, y],
+      [x, y, x, y + corner],
+      [x + boxSize, y, x + boxSize - corner, y],
+      [x + boxSize, y, x + boxSize, y + corner],
+      [x, y + boxSize, x + corner, y + boxSize],
+      [x, y + boxSize, x, y + boxSize - corner],
+      [x + boxSize, y + boxSize, x + boxSize - corner, y + boxSize],
+      [x + boxSize, y + boxSize, x + boxSize, y + boxSize - corner]
+    ].forEach(([x1, y1, x2, y2]) => {
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+    });
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.72)';
+    ctx.strokeStyle = 'rgba(250, 204, 21, 0.45)';
+    ctx.lineWidth = 1;
+    const label = '請將導引圖對準框內';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const labelWidth = ctx.measureText(label).width + 28;
+    ctx.beginPath();
+    ctx.roundRect(ctx.canvas.width / 2 - labelWidth / 2, y + boxSize + 16, labelWidth, 34, 17);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#fde68a';
+    ctx.fillText(label, ctx.canvas.width / 2, y + boxSize + 33);
+    ctx.restore();
+  };
+
+  const drawArRoute = (ctx, points, isLockedFallback = false, arrowRotationDegrees = null, arrowInfo = null) => {
     if (!points || points.length < 2) return false;
     const routeLength = getPolylineLength(points);
     const arrowSize = Math.max(66, Math.min(108, Math.min(ctx.canvas.width, ctx.canvas.height) * 0.13));
@@ -2783,6 +2830,12 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       y: Math.max(margin, Math.min(ctx.canvas.height - margin, sampledPoint.y))
     };
     const angle = arrowRotationDegrees == null ? sample.angle + Math.PI / 2 : arrowRotationDegrees * Math.PI / 180;
+    const tipDistance = arrowSize * 0.62;
+    const tip = {
+      x: sample.x + Math.sin(angle) * tipDistance,
+      y: sample.y - Math.cos(angle) * tipDistance
+    };
+    if (arrowInfo) arrowInfo.tip = tip;
 
     ctx.save();
     ctx.translate(sample.x, sample.y);
@@ -2952,10 +3005,11 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     });
 
     const finalArrowRotation = arrowRotation == null ? null : arrowRotation + rollDelta;
-    const didDraw = drawArRoute(ctx, points, true, finalArrowRotation);
+    const arrowInfo = {};
+    const didDraw = drawArRoute(ctx, points, true, finalArrowRotation, arrowInfo);
     if (didDraw) {
       drawArAnchor(ctx, transformedAnchor);
-      drawArPins(ctx, pins);
+      drawArPins(ctx, arrowInfo.tip ? [{ x: arrowInfo.tip.x, y: arrowInfo.tip.y, type: 'endpoint', label: '末端點' }] : pins);
     }
     return didDraw;
   };
@@ -3299,14 +3353,9 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
           }
         }
       } else {
-        const didDrawLockedRoute = currentCalculatedPath.length > 1 && drawLockedRouteOverlay(ctx);
-        updateArLockStatus(didDrawLockedRoute ? 'holding' : 'searching');
-
-        if (!didDrawLockedRoute) {
-          const scanBox = Math.min(canvas.width, canvas.height) * 0.6;
-          ctx.strokeStyle = 'rgba(0, 255, 204, 0.4)'; ctx.lineWidth = 2;
-          ctx.strokeRect((canvas.width - scanBox)/2, (canvas.height - scanBox)/2, scanBox, scanBox);
-        }
+        lockedPathOverlayRef.current = null;
+        updateArLockStatus('searching');
+        drawRecognitionGuide(ctx);
       }
       animFrameRef.current = requestAnimationFrame(loop);
     };
