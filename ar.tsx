@@ -2468,6 +2468,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   const [destinationId, setDestinationId] = useState(null);
   const [selectedFloorIdForDestination, setSelectedFloorIdForDestination] = useState(null);
   const [pendingDestinationId, setPendingDestinationId] = useState(null);
+  const [destinationMapTransform, setDestinationMapTransform] = useState({ x: 0, y: 0, scale: 1 });
   const [currentLocationId, setCurrentLocationId] = useState(null);
   const [calculatedPath, setCalculatedPath] = useState([]);
   const [isMapExpanded, setIsMapExpanded] = useState(false);
@@ -2500,6 +2501,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   const arLockStatusRef = useRef('idle');
   const orientationRef = useRef({ heading: null, pitch: 0, roll: 0 });
   const mascotAnimationRef = useRef(null);
+  const destinationMapGestureRef = useRef(null);
 
   const graphData = React.useMemo(() => {
     const nodes = {}; const edges = [];
@@ -2561,6 +2563,11 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   }, [destinationId, calculatedPath]);
 
   useEffect(() => {
+    setDestinationMapTransform({ x: 0, y: 0, scale: 1 });
+    destinationMapGestureRef.current = null;
+  }, [selectedFloorIdForDestination]);
+
+  useEffect(() => {
     lockedPathOverlayRef.current = null;
     baseHeadingRef.current = null;
     updateArLockStatus('idle');
@@ -2586,6 +2593,76 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
       lastUpdateTime: new Date().toLocaleTimeString()
     };
     setArDebug(arDebugRef.current);
+  };
+
+  const clampValue = (value, min, max) => Math.min(max, Math.max(min, value));
+  const getTouchPoint = (touches) => ({ x: touches[0].clientX, y: touches[0].clientY });
+  const getTouchDistance = (touches) => {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.hypot(dx, dy);
+  };
+
+  const handleDestinationMapTouchStart = (event) => {
+    if (event.touches.length === 2) {
+      event.preventDefault();
+      destinationMapGestureRef.current = {
+        mode: 'pinch',
+        startDistance: getTouchDistance(event.touches),
+        startScale: destinationMapTransform.scale,
+        startX: destinationMapTransform.x,
+        startY: destinationMapTransform.y
+      };
+      return;
+    }
+
+    if (event.touches.length === 1 && destinationMapTransform.scale > 1) {
+      destinationMapGestureRef.current = {
+        mode: 'pan',
+        startPoint: getTouchPoint(event.touches),
+        startX: destinationMapTransform.x,
+        startY: destinationMapTransform.y
+      };
+    }
+  };
+
+  const handleDestinationMapTouchMove = (event) => {
+    const gesture = destinationMapGestureRef.current;
+    if (!gesture) return;
+
+    if (gesture.mode === 'pinch' && event.touches.length === 2) {
+      event.preventDefault();
+      const nextScale = clampValue(gesture.startScale * (getTouchDistance(event.touches) / Math.max(gesture.startDistance, 1)), 1, 4);
+      setDestinationMapTransform({
+        x: nextScale === 1 ? 0 : gesture.startX,
+        y: nextScale === 1 ? 0 : gesture.startY,
+        scale: nextScale
+      });
+      return;
+    }
+
+    if (gesture.mode === 'pan' && event.touches.length === 1) {
+      event.preventDefault();
+      const point = getTouchPoint(event.touches);
+      const maxPan = 180 * Math.max(0, destinationMapTransform.scale - 1);
+      setDestinationMapTransform({
+        x: clampValue(gesture.startX + point.x - gesture.startPoint.x, -maxPan, maxPan),
+        y: clampValue(gesture.startY + point.y - gesture.startPoint.y, -maxPan, maxPan),
+        scale: destinationMapTransform.scale
+      });
+    }
+  };
+
+  const handleDestinationMapTouchEnd = () => {
+    destinationMapGestureRef.current = null;
+    setDestinationMapTransform((current) => (
+      current.scale <= 1.02 ? { x: 0, y: 0, scale: 1 } : current
+    ));
+  };
+
+  const resetDestinationMapZoom = () => {
+    destinationMapGestureRef.current = null;
+    setDestinationMapTransform({ x: 0, y: 0, scale: 1 });
   };
 
   useEffect(() => {
@@ -3539,28 +3616,44 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
 
           <section className="relative z-10 mt-5 flex min-h-0 flex-1 flex-col rounded-t-[30px] bg-white/95 px-4 pb-4 pt-4 shadow-[0_-10px_30px_rgba(15,23,42,0.06)]">
             <h3 className="mb-3 pl-2 text-[22px] font-black text-[#1a457b]">{floorName} 樓層平面圖</h3>
-            <div className="relative min-h-0 flex-1 overflow-hidden rounded-[18px] border border-slate-200 bg-slate-100">
+            <div
+              className="relative min-h-0 flex-1 overflow-hidden rounded-[18px] border border-slate-200 bg-slate-100"
+              onTouchStart={handleDestinationMapTouchStart}
+              onTouchMove={handleDestinationMapTouchMove}
+              onTouchEnd={handleDestinationMapTouchEnd}
+              onTouchCancel={handleDestinationMapTouchEnd}
+              onDoubleClick={resetDestinationMapZoom}
+              style={{ touchAction: 'none', overscrollBehavior: 'contain' }}
+            >
               {selectedFloor?.imageUrl ? (
                 <>
-                  <img src={selectedFloor.imageUrl} alt={`${floorName} 樓層平面圖`} className="absolute inset-0 h-full w-full object-contain" />
-                  {floorDestinations.map((node) => {
-                    const left = `${Math.max(0, Math.min(1, Number(node.x) || 0)) * 100}%`;
-                    const top = `${Math.max(0, Math.min(1, Number(node.y) || 0)) * 100}%`;
-                    return (
-                      <button
-                        key={`map-pin-${node.id}`}
-                        onClick={() => setPendingDestinationId(node.id)}
-                        className="absolute z-20 flex -translate-x-1/2 -translate-y-full flex-col items-center gap-1 text-[#ef4444] drop-shadow-[0_4px_10px_rgba(15,23,42,0.35)]"
-                        style={{ left, top }}
-                        aria-label={`選擇 ${getDestinationDisplayName(node)}`}
-                      >
-                        <MapPin className="h-9 w-9 fill-[#ef4444] text-white" />
-                        <span className="max-w-[92px] rounded-full bg-white/95 px-2 py-0.5 text-[10px] font-black leading-tight text-[#1a457b] shadow-md">
-                          {getDestinationDisplayName(node)}
-                        </span>
-                      </button>
-                    );
-                  })}
+                  <div
+                    className="absolute inset-0 will-change-transform"
+                    style={{
+                      transform: `translate3d(${destinationMapTransform.x}px, ${destinationMapTransform.y}px, 0) scale(${destinationMapTransform.scale})`,
+                      transformOrigin: 'center center'
+                    }}
+                  >
+                    <img src={selectedFloor.imageUrl} alt={`${floorName} 樓層平面圖`} className="absolute inset-0 h-full w-full object-contain" />
+                    {floorDestinations.map((node) => {
+                      const left = `${Math.max(0, Math.min(1, Number(node.x) || 0)) * 100}%`;
+                      const top = `${Math.max(0, Math.min(1, Number(node.y) || 0)) * 100}%`;
+                      return (
+                        <button
+                          key={`map-pin-${node.id}`}
+                          onClick={() => setPendingDestinationId(node.id)}
+                          className="absolute z-20 flex -translate-x-1/2 -translate-y-full flex-col items-center gap-1 text-[#ef4444] drop-shadow-[0_4px_10px_rgba(15,23,42,0.35)]"
+                          style={{ left, top }}
+                          aria-label={`選擇 ${getDestinationDisplayName(node)}`}
+                        >
+                          <MapPin className="h-9 w-9 fill-[#ef4444] text-white" />
+                          <span className="max-w-[92px] rounded-full bg-white/95 px-2 py-0.5 text-[10px] font-black leading-tight text-[#1a457b] shadow-md">
+                            {getDestinationDisplayName(node)}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
                   {floorDestinations.length === 0 && (
                     <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/70 text-center backdrop-blur-[1px]">
                       <Target className="mb-2 h-10 w-10 text-blue-300" />
