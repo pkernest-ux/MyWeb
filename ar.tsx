@@ -2571,6 +2571,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     lockedPathOverlayRef.current = null;
     baseHeadingRef.current = null;
     updateArLockStatus('idle');
+    setIsMapExpanded(false);
   }, [destinationId]);
 
   const updateArLockStatus = (status) => {
@@ -2891,7 +2892,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   };
 
   const startScanning = async () => {
-    if(engineState!=='idle') return; setEngineState('loading');
+    if(engineState!=='idle') return; setIsMapExpanded(false); setEngineState('loading');
     const hasF = await precomputeFeatures(); if(!hasF) { setEngineState('idle'); alert("無法提取特徵"); return; }
     try {
       await enableMotionAccess();
@@ -3703,7 +3704,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
                 系統會依照目前路網規劃路徑，並在 AR 掃描畫面提供方向提示。
               </p>
               <button
-                onClick={() => { setDestinationId(pendingDestination.id); setPendingDestinationId(null); setCurrentLocationId(null); }}
+                onClick={() => { setIsMapExpanded(false); setDestinationId(pendingDestination.id); setPendingDestinationId(null); setCurrentLocationId(null); }}
                 className="mt-6 flex w-full items-center justify-center gap-2 rounded-[18px] bg-[#1070d1] py-4 text-lg font-black text-white shadow-lg transition-transform active:scale-[0.98]"
               >
                 開始導覽
@@ -3790,7 +3791,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   return (
     <div className="flex-1 bg-black flex flex-col relative overflow-hidden">
       <button
-        onClick={() => { stopScanning(); setDestinationId(null); setCurrentLocationId(null); }}
+        onClick={() => { stopScanning(); setIsMapExpanded(false); setDestinationId(null); setCurrentLocationId(null); }}
         className="absolute right-4 top-[calc(16px+env(safe-area-inset-top))] z-50 rounded-xl border border-white/20 bg-black/75 px-3 py-2 text-xs font-black text-white shadow-lg backdrop-blur-sm transition-colors hover:bg-black"
       >
         重新選擇
