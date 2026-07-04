@@ -3789,10 +3789,6 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
 
   return (
     <div className="flex-1 bg-black flex flex-col relative overflow-hidden">
-      <div className="absolute top-4 left-4 z-40">
-        <button onClick={() => { stopScanning(); setDestinationId(null); setCurrentLocationId(null); }} className="bg-white/20 text-white px-4 py-2 rounded-full backdrop-blur-md hover:bg-white/30 transition-colors">重新選擇目的地</button>
-      </div>
-
       <div className="flex-1 relative flex items-center justify-center">
         <div ref={xrHostRef} className={`absolute inset-0 z-10 ${xrStatus === 'idle' ? 'pointer-events-none' : ''}`}></div>
         <video ref={videoRef} playsInline muted className="hidden"></video>
@@ -3856,9 +3852,15 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
             <div className="relative w-full h-full">
               {/* 強制延展地圖確保 SVG 路徑百分比精準對齊 */}
               <img src={minimapImage} className="absolute inset-0 w-full h-full opacity-50" style={{ objectFit: 'fill' }} />
-              <div className="absolute left-2 top-2 z-30 rounded-full border border-white/25 bg-black/75 px-3 py-1.5 text-xs font-bold text-white shadow-lg backdrop-blur-sm">
-                {isAutoSwitchingFloor ? `自動切換至 ${minimapFloorName}` : `目前平面圖 ${minimapFloorName}`}
+              <div className="absolute left-2 top-2 z-30 min-w-12 rounded-xl border border-white/20 bg-black px-3 py-2 text-center text-base font-black text-white shadow-lg backdrop-blur-sm md:text-lg">
+                {minimapFloorName}
               </div>
+              <button
+                onClick={(event) => { event.stopPropagation(); stopScanning(); setDestinationId(null); setCurrentLocationId(null); }}
+                className="absolute right-2 top-2 z-40 rounded-xl border border-white/20 bg-black/85 px-3 py-2 text-xs font-black text-white shadow-lg backdrop-blur-sm transition-colors hover:bg-black"
+              >
+                重新選擇
+              </button>
 
               <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ overflow: 'visible' }}>
                 <defs>
