@@ -3436,7 +3436,6 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
           style={{ backgroundImage: "url('./assets/ar/welcome-portal.png')" }}
           aria-hidden="true"
         />
-        <div className="absolute inset-0 bg-gradient-to-b from-white/0 via-white/0 to-white/90" aria-hidden="true" />
 
         <div className="absolute top-4 left-4 z-40 md:hidden">
           <button
@@ -3448,31 +3447,19 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
           </button>
         </div>
 
-        <section className="absolute inset-x-0 bottom-0 z-30 rounded-t-[32px] bg-white px-6 pb-[calc(18px+env(safe-area-inset-bottom))] pt-6 text-center shadow-[0_-10px_40px_rgba(15,23,42,0.10)]">
-          <div className="mx-auto max-w-md">
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
-              <MapPin className="h-3.5 w-3.5" />
-              新竹場域 XR 導覽
-            </div>
-            <h1 className="text-[22px] font-black tracking-wide text-slate-800">
-              跟隨皮卡！XR 數位導航
-            </h1>
-            <p className="mt-2 text-sm leading-relaxed text-slate-500">
-              選擇目的地後，系統會用平面圖、路線提示與 AR 箭頭引導你前往。
-            </p>
-            <button
-              onClick={() => setShowWelcome(false)}
-              className="mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-b from-[#5ba4d8] to-[#4a90e2] px-6 py-4 text-lg font-black text-white shadow-[0_10px_26px_rgba(74,144,226,0.38)] transition-transform active:scale-[0.98]"
-            >
-              開始體驗
-              <ArrowRight className="h-5 w-5" />
-            </button>
-            <div className="mt-5 flex items-center justify-center gap-2 text-[13px] font-medium text-slate-500">
-              <span className="h-2 w-2 rounded-full bg-green-500" />
-              請允許相機權限以啟用 AR 導覽
-            </div>
-          </div>
-        </section>
+        <button
+          onClick={() => setShowWelcome(false)}
+          className="absolute left-1/2 top-[68%] z-30 flex h-24 w-24 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-gradient-to-b from-[#5ba4d8] to-[#1070d1] px-4 text-center text-lg font-black leading-tight text-white shadow-[0_14px_34px_rgba(16,112,209,0.42)] ring-4 ring-white/80 transition-transform active:scale-95 animate-[welcome-bounce_1.7s_ease-in-out_infinite]"
+          aria-label="開始體驗"
+        >
+          開始<br />體驗
+        </button>
+        <style dangerouslySetInnerHTML={{__html: `
+          @keyframes welcome-bounce {
+            0%, 100% { transform: translate(-50%, -50%) scale(1); }
+            50% { transform: translate(-50%, -58%) scale(1.04); }
+          }
+        `}} />
       </div>
     );
   }
