@@ -3788,20 +3788,12 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     : (fallbackMascotNode ? toMinimapPct(fallbackMascotNode.physX, fallbackMascotNode.physY) : null);
 
   return (
-    <div className="flex-1 relative overflow-hidden bg-[#eef8fb] text-[#1a457b]">
-      <div
-        className="absolute inset-x-0 top-0 h-[250px] bg-cover bg-top bg-no-repeat opacity-80"
-        style={{ backgroundImage: "url('./assets/ar/destination-portal.png')" }}
-        aria-hidden="true"
-      />
-      <div className="absolute inset-0 bg-gradient-to-b from-white/0 via-[#eef8fb]/70 to-[#f7fbf7]" aria-hidden="true" />
-
-      <div className="absolute left-4 top-[calc(18px+env(safe-area-inset-top))] z-50">
-        <button onClick={() => { stopScanning(); setDestinationId(null); setCurrentLocationId(null); }} className="rounded-full bg-white/90 px-4 py-2 text-sm font-black text-[#1a457b] shadow-lg backdrop-blur-md transition-colors hover:bg-white">重新選擇</button>
+    <div className="flex-1 bg-black flex flex-col relative overflow-hidden">
+      <div className="absolute top-4 left-4 z-40">
+        <button onClick={() => { stopScanning(); setDestinationId(null); setCurrentLocationId(null); }} className="bg-white/20 text-white px-4 py-2 rounded-full backdrop-blur-md hover:bg-white/30 transition-colors">重新選擇目的地</button>
       </div>
 
-      <div className="absolute inset-x-0 top-0 bottom-[20%] z-10 flex items-center justify-center px-4 pb-3 pt-[calc(72px+env(safe-area-inset-top))]">
-        <div className="relative h-full w-full overflow-hidden rounded-[28px] border border-white/80 bg-white/75 shadow-[0_16px_38px_rgba(15,23,42,0.12)] backdrop-blur-sm">
+      <div className="flex-1 relative flex items-center justify-center">
         <div ref={xrHostRef} className={`absolute inset-0 z-10 ${xrStatus === 'idle' ? 'pointer-events-none' : ''}`}></div>
         <video ref={videoRef} playsInline muted className="hidden"></video>
         <canvas ref={canvasRef} className={`absolute inset-0 w-full h-full object-cover ${engineState !== 'scanning' && 'hidden'}`}></canvas>
@@ -3852,14 +3844,19 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
             ))}
           </div>
         )}
-        {minimapImage && (
+        {engineState === 'scanning' && minimapImage && (
           <div
-            className="absolute inset-3 z-30 flex cursor-default items-center justify-center overflow-hidden rounded-[22px] border border-slate-200 bg-white shadow-inner"
+            onClick={() => setIsMapExpanded(!isMapExpanded)}
+            className={`absolute transition-all duration-300 z-30 bg-slate-900/80 backdrop-blur-md border border-slate-700 shadow-2xl flex items-center justify-center overflow-hidden cursor-pointer ${
+              isMapExpanded
+                ? 'top-0 left-0 right-0 bottom-[20%] rounded-none border-0 bg-slate-950/95' // 放大狀態：平面圖固定 80%
+                : 'top-20 right-4 w-32 h-32 md:w-48 md:h-48 rounded-xl' // 縮小狀態
+            }`}
           >
             <div className="relative w-full h-full">
               {/* 強制延展地圖確保 SVG 路徑百分比精準對齊 */}
-              <img src={minimapImage} className="absolute inset-0 w-full h-full opacity-90" style={{ objectFit: 'fill' }} />
-              <div className="absolute left-3 top-3 z-30 rounded-full border border-blue-100 bg-white/95 px-3 py-1.5 text-xs font-black text-[#1a457b] shadow-lg backdrop-blur-sm">
+              <img src={minimapImage} className="absolute inset-0 w-full h-full opacity-50" style={{ objectFit: 'fill' }} />
+              <div className="absolute left-2 top-2 z-30 rounded-full border border-white/25 bg-black/75 px-3 py-1.5 text-xs font-bold text-white shadow-lg backdrop-blur-sm">
                 {isAutoSwitchingFloor ? `自動切換至 ${minimapFloorName}` : `目前平面圖 ${minimapFloorName}`}
               </div>
 
@@ -3983,18 +3980,21 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
               )}
             </div>
 
-            <div className="absolute bottom-3 right-3 rounded-2xl bg-white/95 px-3 py-2 text-[11px] font-black text-[#1a457b] shadow-lg pointer-events-none">
-              {hasGyro ? `羅盤 ${Math.round(((deviceHeading % 360) + 360) % 360)}°` : '等待羅盤訊號'}
+            <div className="absolute bottom-1.5 right-1.5 bg-black/60 p-1.5 rounded-lg text-white pointer-events-none">
+              {isMapExpanded ? <ZoomOut className="w-4 h-4" /> : <ZoomIn className="w-4 h-4" />}
+            </div>
+            <div className="absolute bottom-0 left-0 w-full text-center bg-black/70 text-[10px] text-white py-1 backdrop-blur-sm pointer-events-none">
+              {isMapExpanded ? '縮小' : '放大'} - {currNode ? currNode.fName : destNode.fName} {hasGyro ? `(${Math.round(((deviceHeading % 360) + 360) % 360)}°)` : '(等待羅盤訊號...)'}
             </div>
           </div>
         )}
 
         {engineState !== 'scanning' && xrStatus === 'idle' && (
-          <div className="absolute inset-x-6 bottom-6 z-40 text-center">
+          <div className="z-20 w-full max-w-md px-6 text-center">
             <button
               onClick={startScanning}
               disabled={engineState === 'loading'}
-              className="w-full rounded-full bg-[#1070d1] px-6 py-4 text-base font-black text-white shadow-[0_12px_28px_rgba(16,112,209,0.32)] transition-colors hover:bg-[#0b63bd] disabled:opacity-50"
+              className="w-full rounded-full bg-yellow-400 px-8 py-5 text-base font-black text-slate-950 shadow-[0_0_24px_rgba(250,204,21,0.45)] transition-colors hover:bg-yellow-300 disabled:opacity-50"
             >
               {engineState === 'loading' ? '系統準備中...' : '開啟動作與方向及相機權限'}
             </button>
@@ -4054,7 +4054,6 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
             </button>
           </div>
         )}
-        </div>
       </div>
 
       {xrStatus !== 'idle' && (
@@ -4070,34 +4069,34 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
         </div>
       )}
 
-      <div className="absolute inset-x-0 bottom-0 z-40 flex h-[20%] justify-center px-4 pb-[calc(10px+env(safe-area-inset-bottom))] pt-2">
-        <div className="relative flex h-full w-full max-w-md flex-col overflow-hidden rounded-[24px] border border-white/80 bg-white/95 p-3 shadow-[0_-10px_30px_rgba(15,23,42,0.08)] backdrop-blur-md">
-          <div className="absolute left-0 top-0 h-1 w-full bg-gradient-to-r from-[#5ba4d8] to-[#1070d1]"></div>
-          <div className="grid min-h-0 flex-1 grid-cols-[42px_1fr_42px] items-stretch gap-2">
+      <div className={`absolute bottom-0 left-0 w-full z-40 transition-transform duration-500 ease-out flex justify-center ${isMapExpanded ? 'h-[20%] items-stretch p-3' : 'p-4'} ${currNode ? 'translate-y-0' : 'translate-y-full'}`}>
+        <div className={`bg-slate-900/95 backdrop-blur-xl border border-slate-700 w-full max-w-md shadow-2xl relative overflow-hidden ${isMapExpanded ? 'h-full rounded-t-2xl rounded-b-none p-3' : 'rounded-2xl p-6'}`}>
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-cyan-400 to-blue-500"></div>
+          <div className={`grid grid-cols-[44px_1fr_44px] items-stretch gap-3 ${isMapExpanded ? 'h-full min-h-0' : ''}`}>
             <button
               onClick={() => setActiveRouteStepIndex(index => Math.max(0, index - 1))}
               disabled={!previousRouteStep}
-              className="flex h-full items-center justify-center rounded-2xl border border-blue-100 bg-blue-50 text-[#1a457b] transition-colors hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-30"
+              className={`flex h-full items-center justify-center rounded-xl border border-slate-700 bg-slate-800/80 text-slate-200 transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-25 ${isMapExpanded ? 'min-h-0' : 'min-h-20'}`}
               title={'\u4e0a\u4e00\u5f35\u5e73\u9762\u5716'}
             >
               <ArrowLeft className="h-5 w-5" />
             </button>
 
-            <div className="min-w-0 overflow-hidden rounded-2xl border border-blue-100 bg-[#f6fbff] p-3 shadow-inner">
-              <div className="mb-1 flex items-center justify-between gap-2 text-[11px] font-black text-slate-500">
+            <div className={`min-w-0 overflow-hidden rounded-xl border border-slate-700 bg-slate-800/80 shadow-inner ${isMapExpanded ? 'p-3' : 'p-4'}`}>
+              <div className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-slate-400">
                 <span>{activeRouteStep?.floorName || getRouteFloorName(currNode || destNode)} {'\u5e73\u9762\u5716'}</span>
                 {routeSteps.length > 1 && <span>{safeRouteStepIndex + 1} / {routeSteps.length}</span>}
               </div>
-              <div className={`line-clamp-2 text-sm font-black leading-snug ${currentLocationId === destinationId ? 'text-green-600' : nextRouteStep ? 'text-purple-700' : 'text-[#1a457b]'}`}>
+              <div className={`${isMapExpanded ? 'line-clamp-2 text-xs leading-snug' : 'text-sm leading-relaxed'} font-bold ${currentLocationId === destinationId ? 'text-green-400' : nextRouteStep ? 'text-purple-300' : 'text-yellow-300'}`}>
                 {routeStepInstruction}
               </div>
               {routeDistanceMeters > 0 && (
-                <div className="mt-1 inline-flex rounded-full border border-blue-100 bg-white px-3 py-1 text-[11px] font-black text-[#1070d1]">
+                <div className={`${isMapExpanded ? 'mt-1' : 'mt-2'} inline-flex rounded-full border border-cyan-400/25 bg-cyan-400/10 px-3 py-1 text-[11px] font-bold text-cyan-100`}>
                   {'\u9810\u4f30\u8def\u5f91\u9577\u5ea6\uff1a'}{routeDistanceMeters < 100 ? routeDistanceMeters.toFixed(1) : Math.round(routeDistanceMeters)} m
                 </div>
               )}
-              {previousRouteStep && (
-                <div className="mt-1 truncate text-[10px] text-slate-500">
+              {previousRouteStep && !isMapExpanded && (
+                <div className="mt-2 text-[11px] text-slate-500">
                   {'\u4e0a\u4e00\u5f35\uff1a'}{previousRouteStep.floorName}{'\uff1b\u672c\u5f35\u662f'}{previousFloorVerb}{'\u5f8c\u7684\u5c0e\u5f15\u6bb5\u3002'}
                 </div>
               )}
@@ -4106,7 +4105,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
             <button
               onClick={() => setActiveRouteStepIndex(index => Math.min(routeSteps.length - 1, index + 1))}
               disabled={!nextRouteStep}
-              className="flex h-full items-center justify-center rounded-2xl border border-blue-100 bg-[#1070d1] text-white transition-colors hover:bg-[#0b63bd] disabled:cursor-not-allowed disabled:bg-blue-50 disabled:text-slate-400 disabled:opacity-40"
+              className={`flex h-full items-center justify-center rounded-xl border border-purple-500/40 bg-purple-500/20 text-purple-200 transition-colors hover:bg-purple-500/30 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800/80 disabled:text-slate-500 disabled:opacity-35 ${isMapExpanded ? 'min-h-0' : 'min-h-20'}`}
               title={'\u4e0b\u4e00\u5f35\u5e73\u9762\u5716'}
             >
               <ArrowRight className="h-5 w-5" />
@@ -4121,3 +4120,4 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     </div>
   );
 }
+
