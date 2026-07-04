@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+﻿import React, { useState, useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import {
   Map, MapPin, Target, Download, Upload, Plus,
@@ -276,6 +276,17 @@ const createProjectFromPublishedData = (data) => ({
   buildings: Array.isArray(data?.buildings) ? data.buildings : []
 });
 
+const getDestinationDisplayName = (node) => {
+  const placeholderTitles = new Set(['新增辨識點', '未命名', '未命名點位', '未命名目的地']);
+  const candidates = [node?.title, node?.name, node?.label, node?.roomName, node?.description]
+    .map(value => typeof value === 'string' ? value.trim() : '')
+    .filter(Boolean);
+  const meaningfulName = candidates.find(value => !placeholderTitles.has(value));
+  if (meaningfulName) return meaningfulName;
+  if (node?.code) return node.code;
+  return '未命名';
+};
+
 const selectPublishedProjectData = (data, projectId = null) => {
   if (Array.isArray(data?.projects)) {
     return data.projects.find(item => item?.project?.id === projectId)
@@ -412,12 +423,30 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
     let cancelled = false;
     const loadPublishedData = async () => {
-      const apiResponse = await fetch(`/api/ar-content?ts=${Date.now()}`, { cache: 'no-store' });
-      if (apiResponse.ok) return apiResponse.json();
+      const loadJsonIfValid = async (url) => {
+        const response = await fetch(url, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`Unable to load AR data: ${response.status}`);
 
-      const staticResponse = await fetch(`/ar-data.json?ts=${Date.now()}`, { cache: 'no-store' });
-      if (!staticResponse.ok) throw new Error(`Unable to load AR data: ${staticResponse.status}`);
-      return staticResponse.json();
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          throw new Error(`AR data endpoint returned ${contentType || 'unknown content type'}.`);
+        }
+
+        const data = await response.json();
+        const selectedData = selectPublishedProjectData(data);
+        if (!Array.isArray(selectedData?.buildings) || selectedData.buildings.length === 0) {
+          throw new Error('AR data endpoint did not include usable buildings.');
+        }
+        return data;
+      };
+
+      try {
+        return await loadJsonIfValid(`/api/ar-content?ts=${Date.now()}`);
+      } catch (apiError) {
+        console.warn("AR API data unavailable; falling back to static JSON.", apiError);
+      }
+
+      return loadJsonIfValid(`/ar-data.json?ts=${Date.now()}`);
     };
 
     loadPublishedData()
@@ -448,15 +477,31 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     if (localStorage.getItem('arManager_projects')) return;
 
     let cancelled = false;
-    fetch(`/api/ar-content?ts=${Date.now()}`, { cache: 'no-store' })
-      .then(response => {
+    const loadAdminSeedData = async () => {
+      const loadJsonIfValid = async (url) => {
+        const response = await fetch(url, { cache: 'no-store' });
         if (!response.ok) throw new Error(`Unable to load AR data: ${response.status}`);
-        return response.json();
-      })
-      .then(data => {
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) throw new Error(`AR data endpoint returned ${contentType || 'unknown content type'}.`);
+        const data = await response.json();
         const selectedData = selectPublishedProjectData(data);
-        if (cancelled || !Array.isArray(selectedData?.buildings) || selectedData.buildings.length === 0) return;
-        applyPublishedProjectData(selectedData);
+        if (!Array.isArray(selectedData?.buildings) || selectedData.buildings.length === 0) throw new Error('AR data endpoint did not include usable buildings.');
+        return data;
+      };
+
+      try {
+        return await loadJsonIfValid(`/api/ar-content?ts=${Date.now()}`);
+      } catch (apiError) {
+        console.warn("AR admin API seed unavailable; falling back to static JSON.", apiError);
+      }
+
+      return loadJsonIfValid(`/ar-data.json?ts=${Date.now()}`);
+    };
+
+    loadAdminSeedData()
+      .then(data => {
+        if (cancelled) return;
+        applyPublishedProjectData(data);
       })
       .catch(error => console.warn("Published AR admin seed unavailable", error));
 
@@ -2418,8 +2463,11 @@ function ARTestIntegration({ marker, onUpdateStatus, showAlert }) {
 // 前台導覽引擎 (AR 路徑投影 + Dijkstra)
 // ==========================================
 function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
+  const [showWelcome, setShowWelcome] = useState(true);
   const [engineState, setEngineState] = useState('idle');
   const [destinationId, setDestinationId] = useState(null);
+  const [selectedFloorIdForDestination, setSelectedFloorIdForDestination] = useState(null);
+  const [pendingDestinationId, setPendingDestinationId] = useState(null);
   const [currentLocationId, setCurrentLocationId] = useState(null);
   const [calculatedPath, setCalculatedPath] = useState([]);
   const [isMapExpanded, setIsMapExpanded] = useState(false);
@@ -2469,6 +2517,22 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
   useEffect(() => {
     graphDataRef.current = graphData;
   }, [graphData]);
+
+  useEffect(() => {
+    if (destinationId) return;
+    const availableFloors = buildings.flatMap((building) =>
+      (building.floors || [])
+        .filter((floor) => (floor.markers || []).some((marker) => marker.enabled !== false))
+        .map((floor) => ({ ...floor, buildingId: building.id }))
+    );
+    if (availableFloors.length === 0) {
+      setSelectedFloorIdForDestination(null);
+      return;
+    }
+    if (!selectedFloorIdForDestination || !availableFloors.some((floor) => floor.id === selectedFloorIdForDestination)) {
+      setSelectedFloorIdForDestination(availableFloors[0].id);
+    }
+  }, [buildings, destinationId, selectedFloorIdForDestination]);
 
   useEffect(() => {
     calculatedPathRef.current = calculatedPath;
@@ -3189,7 +3253,7 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     let lastRecognitionAt = 0;
     let graceFrames = 0; // 新增：辨識容錯幀數，避免畫面閃爍或丟失就永久卡死
 
-    const loop = () => {
+  const loop = () => {
       if (!video || !video.srcObject) return;
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
@@ -3364,51 +3428,213 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     loop();
   };
 
-  if (!destinationId) {
-    const destList = Object.values(graphData.nodes).filter(n => n.isMarker).reduce((acc, n) => {
-      const group = `${n.bName} - ${n.fName}`; if(!acc[group]) acc[group] = []; acc[group].push(n); return acc;
-    }, {});
-
+  if (showWelcome) {
     return (
-      <div className="flex-1 flex flex-col relative overflow-hidden bg-slate-950">
-        {/* 行動版防卡死選單按鈕 */}
+      <div className="flex-1 relative overflow-hidden bg-[#f8f9fa] text-slate-900">
+        <div
+          className="absolute inset-0 bg-cover bg-top bg-no-repeat"
+          style={{ backgroundImage: "url('./assets/ar/welcome-portal.png')" }}
+          aria-hidden="true"
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-white/0 via-white/0 to-white/90" aria-hidden="true" />
+
         <div className="absolute top-4 left-4 z-40 md:hidden">
-          <button onClick={onMenuClick} className="bg-slate-800 text-slate-300 p-2.5 rounded-lg border border-slate-700 hover:text-white shadow-lg transition-colors">
-            <Menu className="w-5 h-5" />
+          <button
+            onClick={onMenuClick}
+            className="rounded-full border border-white/70 bg-white/75 p-2.5 text-slate-700 shadow-lg backdrop-blur-md transition-colors hover:bg-white"
+            aria-label="開啟選單"
+          >
+            <Menu className="h-5 w-5" />
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-6 pt-20">
-          <h2 className="text-2xl font-bold text-white mb-6 flex items-center md:mt-0 mt-2">
-            <MapPin className="mr-3 text-cyan-400"/> 請選擇目的地
-          </h2>
-
-          {Object.keys(destList).length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-20 text-center border border-dashed border-slate-800 rounded-2xl bg-slate-900/50 mt-10">
-              <Target className="w-16 h-16 text-slate-700 mb-4" />
-              <h3 className="text-lg font-bold text-slate-400 mb-2">目前尚無可用目的地</h3>
-              <p className="text-sm text-slate-500 max-w-sm">系統中尚未建立任何啟用中的 AR 點位。<br/>請點擊左上角選單，切換至「平面圖管理」進行新增。</p>
+        <section className="absolute inset-x-0 bottom-0 z-30 rounded-t-[32px] bg-white px-6 pb-[calc(18px+env(safe-area-inset-bottom))] pt-6 text-center shadow-[0_-10px_40px_rgba(15,23,42,0.10)]">
+          <div className="mx-auto max-w-md">
+            <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700">
+              <MapPin className="h-3.5 w-3.5" />
+              新竹場域 XR 導覽
             </div>
-          ) : (
-            Object.entries(destList).map(([group, nodes]) => (
-              <div key={group} className="mb-6">
-                <h3 className="text-slate-400 font-bold mb-3">{group}</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {nodes.map(m => (
-                    <button key={m.id} onClick={() => setDestinationId(m.id)} className="p-4 bg-slate-900 border border-slate-800 rounded-xl flex text-left hover:border-cyan-500 hover:bg-slate-800 transition-colors group">
-                      <span className="font-mono text-cyan-400 font-bold mr-3 group-hover:scale-110 transition-transform">{m.code}</span>
-                      <div className="flex-1"><div className="text-white font-bold">{m.title}</div></div>
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))
-          )}
-        </div>
+            <h1 className="text-[22px] font-black tracking-wide text-slate-800">
+              跟隨皮卡！XR 數位導航
+            </h1>
+            <p className="mt-2 text-sm leading-relaxed text-slate-500">
+              選擇目的地後，系統會用平面圖、路線提示與 AR 箭頭引導你前往。
+            </p>
+            <button
+              onClick={() => setShowWelcome(false)}
+              className="mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-gradient-to-b from-[#5ba4d8] to-[#4a90e2] px-6 py-4 text-lg font-black text-white shadow-[0_10px_26px_rgba(74,144,226,0.38)] transition-transform active:scale-[0.98]"
+            >
+              開始體驗
+              <ArrowRight className="h-5 w-5" />
+            </button>
+            <div className="mt-5 flex items-center justify-center gap-2 text-[13px] font-medium text-slate-500">
+              <span className="h-2 w-2 rounded-full bg-green-500" />
+              請允許相機權限以啟用 AR 導覽
+            </div>
+          </div>
+        </section>
       </div>
     );
   }
 
+  if (!destinationId) {
+    const floorsForDestination = buildings.flatMap((building) =>
+      (building.floors || []).map((floor) => ({ ...floor, buildingName: building.name, buildingId: building.id }))
+    );
+    const floorsWithDestinations = floorsForDestination.filter((floor) =>
+      Object.values(graphData.nodes).some((node) => node.isMarker && node.fId === floor.id)
+    );
+    const visibleFloors = floorsWithDestinations.length > 0 ? floorsWithDestinations : floorsForDestination;
+    const selectedFloor = visibleFloors.find((floor) => floor.id === selectedFloorIdForDestination) || visibleFloors[0];
+    const floorDestinations = selectedFloor
+      ? Object.values(graphData.nodes)
+          .filter((node) => node.isMarker && node.fId === selectedFloor.id)
+          .sort((a, b) => (a.code || '').localeCompare(b.code || '', 'zh-Hant'))
+      : [];
+    const pendingDestination = pendingDestinationId ? graphData.nodes[pendingDestinationId] : null;
+    const floorName = selectedFloor?.name || floorDestinations[0]?.fName || '1F';
+
+    return (
+      <div className="flex-1 relative overflow-hidden bg-[#eef8fb] text-[#1a457b]">
+        <div
+          className="absolute inset-x-0 top-0 h-[250px] bg-cover bg-top bg-no-repeat"
+          style={{ backgroundImage: "url('./assets/ar/destination-portal.png')" }}
+          aria-hidden="true"
+        />
+        <div className="absolute inset-0 bg-gradient-to-b from-white/0 via-[#eef8fb]/70 to-[#f7fbf7]" aria-hidden="true" />
+
+        <div className="relative z-10 flex h-full min-h-0 flex-col overflow-hidden pb-[calc(12px+env(safe-area-inset-bottom))]">
+          <div className="px-5 pt-[calc(24px+env(safe-area-inset-top))]">
+            <button
+              onClick={() => setShowWelcome(true)}
+              className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-slate-500 shadow-lg transition-colors hover:text-[#1070d1]"
+              aria-label="回到歡迎頁"
+            >
+              <ArrowLeft className="h-6 w-6" />
+            </button>
+          </div>
+
+          <div className="h-[94px] shrink-0" />
+
+          <div className="space-y-4 px-5">
+            <section>
+              <div className="mb-3 flex items-center gap-3">
+                <Layers className="h-6 w-6 text-[#2f80ed]" />
+                <h2 className="text-[24px] font-black tracking-wide">選擇樓層</h2>
+              </div>
+
+              {visibleFloors.length === 0 ? (
+                <div className="rounded-[22px] bg-white/90 p-4 text-center text-sm font-bold text-slate-500 shadow-md">
+                  後台尚未建立樓層資料
+                </div>
+              ) : (
+                <div className="flex gap-3 overflow-x-auto pb-1">
+                  {visibleFloors.map((floor) => {
+                    const isActive = floor.id === selectedFloor?.id;
+                    return (
+                      <button
+                        key={floor.id}
+                        onClick={() => { setSelectedFloorIdForDestination(floor.id); setPendingDestinationId(null); }}
+                        className={`min-w-[104px] flex-1 rounded-full px-5 py-3 text-xl font-black tracking-wide shadow-md transition-all ${
+                          isActive
+                            ? 'bg-[#1070d1] text-white shadow-[0_12px_28px_rgba(16,112,209,0.28)]'
+                            : 'bg-white text-slate-600 shadow-black/5'
+                        }`}
+                      >
+                        {floor.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          </div>
+
+          <section className="relative z-10 mt-5 flex min-h-0 flex-1 flex-col rounded-t-[30px] bg-white/95 px-4 pb-4 pt-4 shadow-[0_-10px_30px_rgba(15,23,42,0.06)]">
+            <h3 className="mb-3 pl-2 text-[22px] font-black text-[#1a457b]">{floorName} 樓層平面圖</h3>
+            <div className="relative min-h-0 flex-1 overflow-hidden rounded-[18px] border border-slate-200 bg-slate-100">
+              {selectedFloor?.imageUrl ? (
+                <>
+                  <img src={selectedFloor.imageUrl} alt={`${floorName} 樓層平面圖`} className="absolute inset-0 h-full w-full object-contain" />
+                  {floorDestinations.map((node) => {
+                    const left = `${Math.max(0, Math.min(1, Number(node.x) || 0)) * 100}%`;
+                    const top = `${Math.max(0, Math.min(1, Number(node.y) || 0)) * 100}%`;
+                    return (
+                      <button
+                        key={`map-pin-${node.id}`}
+                        onClick={() => setPendingDestinationId(node.id)}
+                        className="absolute z-20 flex -translate-x-1/2 -translate-y-full flex-col items-center gap-1 text-[#ef4444] drop-shadow-[0_4px_10px_rgba(15,23,42,0.35)]"
+                        style={{ left, top }}
+                        aria-label={`選擇 ${getDestinationDisplayName(node)}`}
+                      >
+                        <MapPin className="h-9 w-9 fill-[#ef4444] text-white" />
+                        <span className="max-w-[92px] rounded-full bg-white/95 px-2 py-0.5 text-[10px] font-black leading-tight text-[#1a457b] shadow-md">
+                          {getDestinationDisplayName(node)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {floorDestinations.length === 0 && (
+                    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-white/70 text-center backdrop-blur-[1px]">
+                      <Target className="mb-2 h-10 w-10 text-blue-300" />
+                      <h3 className="text-base font-black text-[#1a457b]">此樓層尚無房間點位</h3>
+                      <p className="mt-1 text-xs font-medium text-slate-500">請到後台新增 AR 點位，或切換其他樓層。</p>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-slate-100 via-white to-blue-100 text-center">
+                  <Map className="mb-3 h-12 w-12 text-slate-300" />
+                  <p className="text-sm font-bold text-slate-500">此樓層尚未上傳平面圖</p>
+                </div>
+              )}
+              <div className="absolute bottom-4 right-4 flex max-w-[150px] items-center gap-2 rounded-2xl bg-white/95 px-3 py-2 text-[#1a457b] shadow-xl">
+                <ZoomIn className="h-5 w-5 shrink-0 text-[#2f80ed]" />
+                <span className="text-[11px] font-black leading-snug">雙指向外放大，往內縮小</span>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        {pendingDestination && (
+          <div className="absolute inset-0 z-50 flex flex-col justify-end bg-black/30 backdrop-blur-[2px]">
+            <button className="absolute inset-0 cursor-default" aria-label="關閉目的地確認" onClick={() => setPendingDestinationId(null)} />
+            <div className="relative rounded-t-[32px] bg-white p-6 pb-[calc(24px+env(safe-area-inset-bottom))] shadow-[0_-20px_40px_rgba(15,23,42,0.18)]">
+              <button
+                onClick={() => setPendingDestinationId(null)}
+                className="absolute right-5 top-5 flex h-9 w-9 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100"
+                aria-label="關閉"
+              >
+                <X className="h-6 w-6" />
+              </button>
+              <div className="mb-2 flex items-center gap-2 text-sm font-black text-[#2f80ed]">
+                <MapPin className="h-5 w-5" />
+                房間
+              </div>
+              <h2 className="pr-10 text-3xl font-black leading-tight text-[#1a457b]">
+                {getDestinationDisplayName(pendingDestination)}
+              </h2>
+              <div className="mt-4 flex items-center gap-3 text-lg font-black text-[#1070d1]">
+                <span>{pendingDestination.fName || floorName}</span>
+                <span className="h-5 w-px bg-blue-200" />
+                <span>約 3 分鐘</span>
+              </div>
+              <p className="mt-4 text-sm font-medium leading-relaxed text-slate-500">
+                系統會依照目前路網規劃路徑，並在 AR 掃描畫面提供方向提示。
+              </p>
+              <button
+                onClick={() => { setDestinationId(pendingDestination.id); setPendingDestinationId(null); setCurrentLocationId(null); }}
+                className="mt-6 flex w-full items-center justify-center gap-2 rounded-[18px] bg-[#1070d1] py-4 text-lg font-black text-white shadow-lg transition-transform active:scale-[0.98]"
+              >
+                開始導覽
+                <ArrowRight className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
   const destNode = graphData.nodes[destinationId];
   const currNode = currentLocationId ? graphData.nodes[currentLocationId] : null;
   const nextNodeId = calculatedPath.length > 1 ? calculatedPath[1] : null;
