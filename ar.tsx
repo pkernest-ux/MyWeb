@@ -3789,6 +3789,12 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
 
   return (
     <div className="flex-1 bg-black flex flex-col relative overflow-hidden">
+      <button
+        onClick={() => { stopScanning(); setDestinationId(null); setCurrentLocationId(null); }}
+        className="absolute right-4 top-[calc(16px+env(safe-area-inset-top))] z-50 rounded-xl border border-white/20 bg-black/75 px-3 py-2 text-xs font-black text-white shadow-lg backdrop-blur-sm transition-colors hover:bg-black"
+      >
+        重新選擇
+      </button>
       <div className="flex-1 relative flex items-center justify-center">
         <div ref={xrHostRef} className={`absolute inset-0 z-10 ${xrStatus === 'idle' ? 'pointer-events-none' : ''}`}></div>
         <video ref={videoRef} playsInline muted className="hidden"></video>
@@ -3855,12 +3861,6 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
               <div className="absolute left-2 top-2 z-30 min-w-12 rounded-xl border border-white/20 bg-black px-3 py-2 text-center text-base font-black text-white shadow-lg backdrop-blur-sm md:text-lg">
                 {minimapFloorName}
               </div>
-              <button
-                onClick={(event) => { event.stopPropagation(); stopScanning(); setDestinationId(null); setCurrentLocationId(null); }}
-                className="absolute right-2 top-2 z-40 rounded-xl border border-white/20 bg-black/85 px-3 py-2 text-xs font-black text-white shadow-lg backdrop-blur-sm transition-colors hover:bg-black"
-              >
-                重新選擇
-              </button>
 
               <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ overflow: 'visible' }}>
                 <defs>
