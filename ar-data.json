@@ -8,7 +8,7 @@
         "id": "project_1783262670309_v8ykg",
         "name": "新竹市政府",
         "description": "",
-        "updatedAt": "2026-07-05T15:10:23.890Z"
+        "updatedAt": "2026-07-05T15:11:40.227Z"
       },
       "systemConfig": {
         "projectName": "新竹市政府",
@@ -297,6 +297,54 @@
                   "shaftId": null,
                   "linkedFloorIds": [],
                   "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1783264246647_b0jly",
+                  "x": 0.8384865923456694,
+                  "y": 0.6812638480202026,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1783264247999_2rahf",
+                  "x": 0.8336499414902222,
+                  "y": 0.5608849743876203,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1783264249885_2q6ao",
+                  "x": 0.8272010736829593,
+                  "y": 0.3201272271224556,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1783264254137_k35ro",
+                  "x": 0.8191399889238806,
+                  "y": 0.2577881675627255,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1783264259154_pgqnw",
+                  "x": 0.756263527803067,
+                  "y": 0.25133929933240856,
+                  "isVerticalShaft": true,
+                  "shaftId": "shaft_wp_1783264272490",
+                  "linkedFloorIds": [
+                    "f_1783262670309",
+                    "f_1783263158990"
+                  ],
+                  "sourceFloorId": "f_1783262670309"
                 }
               ],
               "edges": [
@@ -449,6 +497,31 @@
                   "id": "edge_1783264215630_i4a5r",
                   "start": "wp_1783264214529_0igzk",
                   "end": "wp_1783264215630_k1p7j"
+                },
+                {
+                  "id": "edge_1783264246647_um470",
+                  "start": "wp_1783263725380_19olo",
+                  "end": "wp_1783264246647_b0jly"
+                },
+                {
+                  "id": "edge_1783264247999_7zk7j",
+                  "start": "wp_1783264246647_b0jly",
+                  "end": "wp_1783264247999_2rahf"
+                },
+                {
+                  "id": "edge_1783264249885_8zba4",
+                  "start": "wp_1783264247999_2rahf",
+                  "end": "wp_1783264249885_2q6ao"
+                },
+                {
+                  "id": "edge_1783264254137_nk8dk",
+                  "start": "wp_1783264249885_2q6ao",
+                  "end": "wp_1783264254137_k35ro"
+                },
+                {
+                  "id": "edge_1783264259154_sbf5g",
+                  "start": "wp_1783264254137_k35ro",
+                  "end": "wp_1783264259154_pgqnw"
                 }
               ],
               "bounds": {
@@ -709,6 +782,18 @@
                     "f_1783262670309"
                   ],
                   "sourceFloorId": "f_1783263158990"
+                },
+                {
+                  "id": "wp_1783264274002_t2ct1_f_1783263158990",
+                  "x": 0.756263527803067,
+                  "y": 0.2513392993324086,
+                  "isVerticalShaft": true,
+                  "shaftId": "shaft_wp_1783264272490",
+                  "linkedFloorIds": [
+                    "f_1783262670309",
+                    "f_1783263158990"
+                  ],
+                  "sourceFloorId": "f_1783262670309"
                 }
               ],
               "edges": [
@@ -846,6 +931,11 @@
                   "id": "edge_1783264123189_ln7d6",
                   "start": "wp_1783264045628_zxnj0",
                   "end": "wp_1783264123189_0bxxh"
+                },
+                {
+                  "id": "edge_1783264293844_yin4j",
+                  "start": "wp_1783264077913_5e0ih",
+                  "end": "wp_1783264274002_t2ct1_f_1783263158990"
                 }
               ],
               "bounds": {
