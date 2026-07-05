@@ -8,7 +8,7 @@
         "id": "project_1783262670309_v8ykg",
         "name": "新竹市政府",
         "description": "",
-        "updatedAt": "2026-07-05T16:00:58.175Z"
+        "updatedAt": "2026-07-05T16:04:09.982Z"
       },
       "systemConfig": {
         "projectName": "新竹市政府",
@@ -74,15 +74,6 @@
                   "id": "wp_1783263633846_xw5ok",
                   "x": 0.27124899740740455,
                   "y": 0.6283875270974287,
-                  "isVerticalShaft": false,
-                  "shaftId": null,
-                  "linkedFloorIds": [],
-                  "sourceFloorId": "f_1783262670309"
-                },
-                {
-                  "id": "wp_1783263686205_ut6r5",
-                  "x": 0.4647150506627222,
-                  "y": 0.4456695939051163,
                   "isVerticalShaft": false,
                   "shaftId": null,
                   "linkedFloorIds": [],
@@ -345,6 +336,63 @@
                     "f_1783263158990"
                   ],
                   "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1783267354032_jy6ea_f_1783262670309",
+                  "x": 0.1917040406901048,
+                  "y": 0.12119561702480511,
+                  "isVerticalShaft": true,
+                  "shaftId": "shaft_wp_1783267352364",
+                  "linkedFloorIds": [
+                    "f_1783263158990",
+                    "f_1783262670309"
+                  ],
+                  "sourceFloorId": "f_1783263158990"
+                },
+                {
+                  "id": "wp_1783267367820_bzsyu",
+                  "x": 0.26768809765016927,
+                  "y": 0.11953476327866965,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1783267385622_b1osg",
+                  "x": 0.34118087405416603,
+                  "y": 0.1045870795634501,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1783267396873_vxesx",
+                  "x": 0.3349526726639968,
+                  "y": 0.5214613698434617,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1783267418863_eg1kw",
+                  "x": 0.46325362130148273,
+                  "y": 0.443401243775093,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1783267424686_m60qd",
+                  "x": 0.4644992615795166,
+                  "y": 0.5131571011127841,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
                 }
               ],
               "edges": [
@@ -377,11 +425,6 @@
                   "id": "edge_1783263726490_24pb0",
                   "start": "wp_1783263725380_19olo",
                   "end": "wp_1783263621114_8cqz7"
-                },
-                {
-                  "id": "edge_1783263766218_hlb00",
-                  "start": "wp_1783263686205_ut6r5",
-                  "end": "wp_1783263766217_h944p"
                 },
                 {
                   "id": "edge_1783263785717_j98kq",
@@ -444,11 +487,6 @@
                   "end": "wp_1783263849435_f2nmc"
                 },
                 {
-                  "id": "edge_1783263855802_qfbix",
-                  "start": "wp_1783263686205_ut6r5",
-                  "end": "wp_1783263855802_2r9jx"
-                },
-                {
                   "id": "edge_1783263859756_jakme",
                   "start": "wp_1783263855802_2r9jx",
                   "end": "wp_1783263859756_lvbwg"
@@ -467,11 +505,6 @@
                   "id": "edge_1783264153588_u9hwu",
                   "start": "wp_1783264132196_dm6s6_f_1783262670309",
                   "end": "wp_1783263616427_njjxi"
-                },
-                {
-                  "id": "edge_1783264165450_5bjik",
-                  "start": "wp_1783264132196_dm6s6_f_1783262670309",
-                  "end": "wp_1783263686205_ut6r5"
                 },
                 {
                   "id": "edge_1783264180568_o22bm",
@@ -522,6 +555,61 @@
                   "id": "edge_1783264259154_sbf5g",
                   "start": "wp_1783264254137_k35ro",
                   "end": "wp_1783264259154_pgqnw"
+                },
+                {
+                  "id": "edge_1783267367820_xcedq",
+                  "start": "wp_1783267354032_jy6ea_f_1783262670309",
+                  "end": "wp_1783267367820_bzsyu"
+                },
+                {
+                  "id": "edge_1783267369220_srvns",
+                  "start": "wp_1783267367820_bzsyu",
+                  "end": "wp_1783263799453_giwfb"
+                },
+                {
+                  "id": "edge_1783267385622_0tnmo",
+                  "start": "wp_1783263791906_ml8mv",
+                  "end": "wp_1783267385622_b1osg"
+                },
+                {
+                  "id": "edge_1783267396873_95fv1",
+                  "start": "wp_1783263630825_hjsvv",
+                  "end": "wp_1783267396873_vxesx"
+                },
+                {
+                  "id": "edge_1783267397918_pt8kx",
+                  "start": "wp_1783267396873_vxesx",
+                  "end": "wp_1783263766217_h944p"
+                },
+                {
+                  "id": "edge_1783267401789_qtf9u",
+                  "start": "wp_1783267396873_vxesx",
+                  "end": "wp_1783263693747_rv1g6"
+                },
+                {
+                  "id": "edge_1783267418863_esuwj",
+                  "start": "wp_1783263766217_h944p",
+                  "end": "wp_1783267418863_eg1kw"
+                },
+                {
+                  "id": "edge_1783267419927_20wr7",
+                  "start": "wp_1783267418863_eg1kw",
+                  "end": "wp_1783263855802_2r9jx"
+                },
+                {
+                  "id": "edge_1783267424686_4tnyn",
+                  "start": "wp_1783267396873_vxesx",
+                  "end": "wp_1783267424686_m60qd"
+                },
+                {
+                  "id": "edge_1783267427793_yyqam",
+                  "start": "wp_1783267424686_m60qd",
+                  "end": "wp_1783267418863_eg1kw"
+                },
+                {
+                  "id": "edge_1783267440308_ypubp",
+                  "start": "wp_1783267424686_m60qd",
+                  "end": "wp_1783263717518_y2rr0"
                 }
               ],
               "bounds": {
@@ -541,15 +629,6 @@
                   "id": "wp_1783264026714_2wt1a",
                   "x": 0.3200049893275907,
                   "y": 0.36035855646831777,
-                  "isVerticalShaft": false,
-                  "shaftId": null,
-                  "linkedFloorIds": [],
-                  "sourceFloorId": "f_1783263158990"
-                },
-                {
-                  "id": "wp_1783264028326_i16c7",
-                  "x": 0.46076234074541506,
-                  "y": 0.35869770272218227,
                   "isVerticalShaft": false,
                   "shaftId": null,
                   "linkedFloorIds": [],
@@ -745,15 +824,6 @@
                   "sourceFloorId": "f_1783263158990"
                 },
                 {
-                  "id": "wp_1783264069846_ynkfu",
-                  "x": 0.38726956434141824,
-                  "y": 0.17102122940887027,
-                  "isVerticalShaft": false,
-                  "shaftId": null,
-                  "linkedFloorIds": [],
-                  "sourceFloorId": "f_1783263158990"
-                },
-                {
                   "id": "wp_1783264071577_5jbtk",
                   "x": 0.636397619948187,
                   "y": 0.16769952191659926,
@@ -794,19 +864,66 @@
                     "f_1783263158990"
                   ],
                   "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1783267286229_xg9d2",
+                  "x": 0.1917040406901048,
+                  "y": 0.12119561702480515,
+                  "isVerticalShaft": true,
+                  "shaftId": "shaft_wp_1783267352364",
+                  "linkedFloorIds": [
+                    "f_1783263158990",
+                    "f_1783262670309"
+                  ],
+                  "sourceFloorId": "f_1783263158990"
+                },
+                {
+                  "id": "wp_1783267289810_jqd2o",
+                  "x": 0.26768809765016927,
+                  "y": 0.12285647077094065,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783263158990"
+                },
+                {
+                  "id": "wp_1783267291751_upzb6",
+                  "x": 0.2726706587623046,
+                  "y": 0.21254257306225788,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783263158990"
+                },
+                {
+                  "id": "wp_1783267296308_wlpfn",
+                  "x": 0.38353264350731675,
+                  "y": 0.21420342680839338,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783263158990"
+                },
+                {
+                  "id": "wp_1783267297630_tby1r",
+                  "x": 0.38477828378535056,
+                  "y": 0.16271696067819275,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783263158990"
+                },
+                {
+                  "id": "wp_1783267318398_gm9ur",
+                  "x": 0.45453413935524584,
+                  "y": 0.3636802639605888,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783263158990"
                 }
               ],
               "edges": [
-                {
-                  "id": "edge_1783264028326_2aenj",
-                  "start": "wp_1783264026714_2wt1a",
-                  "end": "wp_1783264028326_i16c7"
-                },
-                {
-                  "id": "edge_1783264030040_fn4zh",
-                  "start": "wp_1783264028326_i16c7",
-                  "end": "wp_1783264030040_uz3iq"
-                },
                 {
                   "id": "edge_1783264031713_88mtj",
                   "start": "wp_1783264030040_uz3iq",
@@ -913,16 +1030,6 @@
                   "end": "wp_1783264067774_hdpgn"
                 },
                 {
-                  "id": "edge_1783264069846_ilqtd",
-                  "start": "wp_1783264067774_hdpgn",
-                  "end": "wp_1783264069846_ynkfu"
-                },
-                {
-                  "id": "edge_1783264071577_qy3f5",
-                  "start": "wp_1783264069846_ynkfu",
-                  "end": "wp_1783264071577_5jbtk"
-                },
-                {
                   "id": "edge_1783264077913_hz0jd",
                   "start": "wp_1783264071577_5jbtk",
                   "end": "wp_1783264077913_5e0ih"
@@ -936,6 +1043,51 @@
                   "id": "edge_1783264293844_yin4j",
                   "start": "wp_1783264077913_5e0ih",
                   "end": "wp_1783264274002_t2ct1_f_1783263158990"
+                },
+                {
+                  "id": "edge_1783267289810_o3ma1",
+                  "start": "wp_1783267286229_xg9d2",
+                  "end": "wp_1783267289810_jqd2o"
+                },
+                {
+                  "id": "edge_1783267291751_m4x4c",
+                  "start": "wp_1783267289810_jqd2o",
+                  "end": "wp_1783267291751_upzb6"
+                },
+                {
+                  "id": "edge_1783267296308_0irro",
+                  "start": "wp_1783267291751_upzb6",
+                  "end": "wp_1783267296308_wlpfn"
+                },
+                {
+                  "id": "edge_1783267297630_5dujm",
+                  "start": "wp_1783267296308_wlpfn",
+                  "end": "wp_1783267297630_tby1r"
+                },
+                {
+                  "id": "edge_1783267299111_4niif",
+                  "start": "wp_1783267297630_tby1r",
+                  "end": "wp_1783264071577_5jbtk"
+                },
+                {
+                  "id": "edge_1783267307284_s3cha",
+                  "start": "wp_1783267296308_wlpfn",
+                  "end": "wp_1783264067774_hdpgn"
+                },
+                {
+                  "id": "edge_1783267318398_by3dr",
+                  "start": "wp_1783264026714_2wt1a",
+                  "end": "wp_1783267318398_gm9ur"
+                },
+                {
+                  "id": "edge_1783267319972_1d67p",
+                  "start": "wp_1783267318398_gm9ur",
+                  "end": "wp_1783264030040_uz3iq"
+                },
+                {
+                  "id": "edge_1783267330838_2g7j2",
+                  "start": "wp_1783264274002_t2ct1_f_1783263158990",
+                  "end": "wp_1783264031713_y2gf0"
                 }
               ],
               "bounds": {
