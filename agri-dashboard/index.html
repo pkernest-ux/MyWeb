@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>有機農業推廣成效儀表板</title>
+<link rel="stylesheet" href="./static/style.css">
+<script src="./static/echarts.min.js"></script>
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap" style="display:flex;flex-wrap:wrap;gap:16px;">
+    <div>
+      <div class="site-kicker">行政院農業部農糧署　·　有機農業推動中心</div>
+      <h1 class="site-title">有機農業推廣成效儀表板</h1>
+      <div class="site-sub">線上平臺營運績效　×　民眾認知與消費態度問卷　交叉檢視</div>
+      <div class="badges" id="badges"></div>
+    </div>
+    <span class="admin-link static-note">?????</span>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs">
+  <div class="wrap tabs-inner">
+    <button class="tab-btn on" data-tab="ops">📈 平臺營運</button>
+    <button class="tab-btn" data-tab="survey">📋 民眾問卷</button>
+    <button class="tab-btn" data-tab="policy">🎯 政策對應</button>
+  </div>
+</nav>
+
+<div class="wrap">
+
+  <!-- ═══ 壹、平臺營運成效 ═══ -->
+  <section class="tab-panel on" id="panel-ops">
+  <div class="section-head">
+    <div><div class="section-rule"></div><h2>壹、平臺營運成效</h2></div>
+    <span class="note" id="ops-period"></span>
+  </div>
+
+  <div class="kpi-row" id="kpi-ops"></div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">每日網站操作人次與新增會員數</span>
+        <span class="card-sub">標記點為四場推廣活動日</span>
+      </div>
+      <div id="chart-daily" class="chart h-420"></div>
+    </div>
+  </div>
+
+  <div class="grid cols-2">
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">四場推廣活動成效比較</span>
+        <span class="card-sub">操作人次／新增會員／問卷回收</span>
+      </div>
+      <div id="chart-activity" class="chart h-320"></div>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">逐時互動分布</span>
+        <span class="card-sub">藍色為 13–15 時午後尖峰</span>
+      </div>
+      <div id="chart-hourly" class="chart h-320"></div>
+    </div>
+  </div>
+
+  <div class="grid cols-2">
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">會員與訪客互動占比</span>
+        <span class="card-sub" id="identity-sub"></span>
+      </div>
+      <div id="chart-identity" class="chart" style="height:96px;"></div>
+      <div class="mini-stats" id="member-depth"></div>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">頁面瀏覽次數（前十）</span>
+        <span class="card-sub">互動類型＝頁面</span>
+      </div>
+      <div id="chart-pages" class="chart h-320"></div>
+    </div>
+  </div>
+
+  </section>
+
+  <!-- ═══ 貳、民眾觀察指標 ═══ -->
+  <section class="tab-panel" id="panel-survey">
+  <div class="section-head">
+    <div><div class="section-rule"></div><h2>貳、民眾認知與消費態度（問卷）</h2></div>
+    <span class="note" id="survey-period"></span>
+  </div>
+
+  <div class="kpi-row" id="kpi-survey"></div>
+
+  <div class="grid cols-3-2">
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">受訪民眾地區分布</span>
+        <span class="card-sub">以居住縣市分級著色</span>
+        <div class="seg" id="map-metric">
+          <button data-m="n" class="on">受訪樣本數</button>
+          <button data-m="trust_pct">信任度 %</button>
+          <button data-m="willing_pct">願付溢價 %</button>
+        </div>
+      </div>
+      <div id="chart-map" class="chart h-500"></div>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">縣市別排行</span>
+        <span class="card-sub" id="county-rank-sub">受訪樣本數（前十）</span>
+      </div>
+      <div id="chart-county-rank" class="chart h-500"></div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">有機認知與信任程度</span>
+        <span class="card-sub">各題以有效回答數為分母</span>
+      </div>
+      <div id="chart-knowledge" class="chart h-320"></div>
+    </div>
+  </div>
+
+  <div class="grid cols-2">
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">有機標章辨識正確率 × 教育程度</span>
+        <span class="card-sub" id="badge-sub"></span>
+      </div>
+      <div id="chart-badge" class="chart h-320"></div>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">有機資訊獲取管道（前十）</span>
+        <span class="card-sub">複選題，至多三項</span>
+      </div>
+      <div id="chart-channels" class="chart h-320"></div>
+    </div>
+  </div>
+
+  <div class="grid cols-2">
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">各場活動願付有機溢價（平均加成率）</span>
+        <span class="card-sub">自己煮 vs 外食</span>
+      </div>
+      <div id="chart-premium" class="chart h-320"></div>
+    </div>
+    <div class="card">
+      <div class="card-head">
+        <span class="card-title">受訪者輪廓</span>
+        <span class="card-sub">年齡分布；性別、飲食習慣</span>
+      </div>
+      <div id="chart-profile" class="chart h-320"></div>
+    </div>
+  </div>
+
+  </section>
+
+  <!-- ═══ 參、政策對應 ═══ -->
+  <section class="tab-panel" id="panel-policy">
+  <div class="section-head">
+    <div><div class="section-rule"></div><h2>參、有機農業促進方案　績效面向對應</h2></div>
+  </div>
+  <div class="policy-grid" id="policy"></div>
+  </section>
+
+  <ol class="footnote" id="footnote">
+    <li>「網站操作人次」為每日彙總值（人次）；「互動會員」為逐時紀錄去重後之人數（人），兩者基礎不同。</li>
+    <li>問卷為線上自願填答樣本（填答致贈優惠券），非隨機抽樣，推論至全體國民宜審慎。</li>
+    <li>系統測試期間（5 月）之問卷資料已排除；各題容許跳答，百分比以該題有效回答數為分母。</li>
+    <li>每張圖表右上角工具鈕可切換「資料檢視」（表格）與下載圖檔。</li>
+  </ol>
+
+</div>
+
+<script src="./static/dashboard.js"></script>
+</body>
+</html>
