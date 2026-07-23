@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev:ar": "vite --host 127.0.0.1 --port 5173 ar-dev.html",
+    "dev:ar-v2": "vite --host 127.0.0.1 --port 5174 ar-v2-dev.html",
     "build": "vite build",
-    "build:ar": "vite build"
+    "build:ar": "vite build",
+    "build:ar-v2": "vite build --config vite.config.v2.ts"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
