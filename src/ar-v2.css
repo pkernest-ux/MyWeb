@@ -1250,6 +1250,10 @@ button:disabled {
   .v2-map-card {
     min-height: 280px;
   }
+
+  .v2-map-frame {
+    min-height: 210px;
+  }
 }
 
 @media (max-height: 690px) {
@@ -1268,6 +1272,10 @@ button:disabled {
 
   .v2-map-card {
     min-height: 250px;
+  }
+
+  .v2-map-frame {
+    min-height: 180px;
   }
 
   .v2-calibration-reticle {
