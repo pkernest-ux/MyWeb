@@ -1242,9 +1242,19 @@ button:disabled {
   }
 }
 
-@media (max-height: 690px) {
+@media (max-height: 760px) {
   .v2-map-screen .v2-intro {
     padding-top: 32px;
+  }
+
+  .v2-map-card {
+    min-height: 280px;
+  }
+}
+
+@media (max-height: 690px) {
+  .v2-map-screen .v2-intro {
+    padding-top: 24px;
   }
 
   .v2-intro h1 {
@@ -1257,7 +1267,7 @@ button:disabled {
   }
 
   .v2-map-card {
-    min-height: 260px;
+    min-height: 250px;
   }
 
   .v2-calibration-reticle {
