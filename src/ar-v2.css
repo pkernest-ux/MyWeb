@@ -185,7 +185,7 @@ button:disabled {
 }
 
 .v2-map-screen .v2-intro {
-  padding-top: clamp(72px, 20vw, 96px);
+  padding-top: clamp(48px, 13vw, 64px);
 }
 
 .v2-step-label {
@@ -1243,8 +1243,8 @@ button:disabled {
 }
 
 @media (max-height: 690px) {
-  .v2-intro {
-    padding-top: 6px;
+  .v2-map-screen .v2-intro {
+    padding-top: 32px;
   }
 
   .v2-intro h1 {
