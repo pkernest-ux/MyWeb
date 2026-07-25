@@ -184,7 +184,7 @@ button:disabled {
   padding: 14px 22px 8px;
 }
 
-.v2-map-screen.is-destination .v2-intro {
+.v2-map-screen .v2-intro {
   padding-top: clamp(72px, 20vw, 96px);
 }
 
