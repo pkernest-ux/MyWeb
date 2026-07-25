@@ -779,7 +779,7 @@ export default function ARNavigationV2() {
         : "確認後面向第一段路徑進行方向校正";
 
   return (
-    <main className="v2-map-screen">
+    <main className={`v2-map-screen is-${screen}`}>
       <header className="v2-page-header">
         <button
           type="button"
