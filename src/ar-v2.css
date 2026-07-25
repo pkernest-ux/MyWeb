@@ -1242,6 +1242,19 @@ button:disabled {
   }
 }
 
+@media (max-width: 699px) {
+  .v2-map-screen {
+    padding-bottom: calc(76px + env(safe-area-inset-bottom));
+  }
+
+  .v2-action-bar {
+    position: fixed;
+    right: 0;
+    left: 0;
+    width: 100%;
+  }
+}
+
 @media (max-height: 760px) {
   .v2-map-screen .v2-intro {
     padding-top: 32px;
