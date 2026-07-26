@@ -1343,11 +1343,24 @@ button:disabled {
     padding-bottom: calc(76px + env(safe-area-inset-bottom));
   }
 
+  .v2-map-screen.is-review {
+    padding-bottom: calc(250px + env(safe-area-inset-bottom));
+  }
+
   .v2-action-bar {
     position: fixed;
     right: 0;
     left: 0;
     width: 100%;
+  }
+
+  .v2-map-screen.is-review .v2-route-stepper {
+    position: fixed;
+    z-index: 19;
+    right: 16px;
+    bottom: calc(88px + env(safe-area-inset-bottom));
+    left: 16px;
+    margin: 0;
   }
 }
 
