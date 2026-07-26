@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
-  ArrowRight,
   Building2,
   Camera,
   Check,
@@ -913,6 +912,98 @@ export default function ARNavigationV2() {
     );
   }
 
+  if (screen === "review") {
+    const goToReviewStep = (index: number) => {
+      const nextIndex = clamp(index, 0, Math.max(0, routeSteps.length - 1));
+      setReviewStepIndex(nextIndex);
+      setSelectedFloorId(routeSteps[nextIndex]?.floorId || selectedFloorId);
+    };
+
+    return (
+      <main className="v2-review-app">
+        <header className="v2-review-header">
+          <button type="button" onClick={() => setScreen("origin")} aria-label="返回目前位置">
+            <ArrowLeft />
+          </button>
+          <div>
+            <img src="./assets/ar/mascot-walking-small.png" alt="皮卡" />
+            <strong>室內導引</strong>
+          </div>
+          <span>V2</span>
+        </header>
+
+        <section className="v2-review-map-area">
+          <div className="v2-review-toolbar">
+            <strong className="v2-review-floor-badge">
+              {activeReviewStep?.floorName || selectedFloor?.name || "樓層"}
+            </strong>
+            <span>{selectedFloor?.buildingName || "導引平面圖"}</span>
+            <button type="button" onClick={() => setScreen("origin")}>
+              <Crosshair />
+              重選位置
+            </button>
+          </div>
+
+          <div className="v2-review-map-stage">
+            <MapPanel
+              floor={selectedFloor}
+              graph={graph}
+              mode="route"
+              destinationId={destinationId}
+              origin={origin}
+              routePoints={navigationPoints}
+              compact
+            />
+            <button
+              type="button"
+              className="v2-review-ar-button"
+              onClick={() => setScreen("calibrate")}
+              aria-label="進行方向導引"
+            >
+              <span>
+                <ScanLine />
+                <b>AR</b>
+              </span>
+              方向導引
+            </button>
+          </div>
+        </section>
+
+        <section className="v2-review-dock" aria-label="樓層路徑資訊">
+          <button
+            type="button"
+            onClick={() => goToReviewStep(safeReviewStepIndex - 1)}
+            disabled={!previousReviewStep}
+            aria-label="上一個樓層位置"
+          >
+            <ChevronLeft />
+          </button>
+          <div className="v2-review-dock-info">
+            <div>
+              <span>{activeReviewStep?.floorName || selectedFloor?.name} 平面圖</span>
+              <span>
+                {safeReviewStepIndex + 1}/{Math.max(1, routeSteps.length)}
+              </span>
+            </div>
+            <strong>{reviewInstruction}</strong>
+            <div className="v2-review-dock-meta">
+              <span>本層約 {reviewStepDistance.toFixed(1)} 公尺</span>
+              <span>全程 {totalDistance.toFixed(1)} 公尺</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => goToReviewStep(safeReviewStepIndex + 1)}
+            disabled={!nextReviewStep}
+            aria-label="下一個樓層位置"
+          >
+            <ChevronRight />
+          </button>
+        </section>
+      </main>
+    );
+  }
+
   const pageTitle =
     screen === "destination" ? "選擇目的地" : screen === "origin" ? "標示目前位置" : "確認導航路徑";
   const pageDescription =
@@ -1014,52 +1105,6 @@ export default function ARNavigationV2() {
         </section>
       )}
 
-      {screen === "review" && (
-        <section className="v2-route-stepper" aria-label="樓層路徑資訊">
-          <button
-            type="button"
-            onClick={() => {
-              const nextIndex = Math.max(0, safeReviewStepIndex - 1);
-              setReviewStepIndex(nextIndex);
-              setSelectedFloorId(routeSteps[nextIndex]?.floorId || selectedFloorId);
-            }}
-            disabled={!previousReviewStep}
-            aria-label="上一個樓層位置"
-          >
-            <ChevronLeft />
-          </button>
-          <div className="v2-route-step-info">
-            <div>
-              <span>{activeReviewStep?.floorName || selectedFloor?.name} 平面圖</span>
-              <span>
-                {safeReviewStepIndex + 1}/{Math.max(1, routeSteps.length)}
-              </span>
-            </div>
-            <strong>{reviewInstruction}</strong>
-            <div className="v2-route-step-meta">
-              <span>本層約 {reviewStepDistance.toFixed(1)} 公尺</span>
-              <span>全程 {totalDistance.toFixed(1)} 公尺</span>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              const nextIndex = Math.min(routeSteps.length - 1, safeReviewStepIndex + 1);
-              setReviewStepIndex(nextIndex);
-              setSelectedFloorId(routeSteps[nextIndex]?.floorId || selectedFloorId);
-            }}
-            disabled={!nextReviewStep}
-            aria-label="下一個樓層位置"
-          >
-            <ChevronRight />
-          </button>
-          <div className="v2-route-neighbor-info">
-            <span>{previousReviewStep ? `上一個：${previousReviewStep.floorName}` : "已是第一個位置"}</span>
-            <span>{nextReviewStep ? `下一個：${nextReviewStep.floorName}` : "此層前往目的地"}</span>
-          </div>
-        </section>
-      )}
-
       <footer className="v2-action-bar">
         {screen === "origin" && (
           <button
@@ -1075,19 +1120,6 @@ export default function ARNavigationV2() {
             <Navigation />
             {origin ? (routeIds.length ? "確認位置並規劃路徑" : "目前位置找不到可用路徑") : "請先點選目前位置"}
           </button>
-        )}
-        {screen === "review" && (
-          <>
-            <button type="button" className="v2-quiet-button" onClick={() => setScreen("origin")}>
-              <Crosshair />
-              重選位置
-            </button>
-            <button type="button" className="v2-primary-button" onClick={() => setScreen("calibrate")}>
-              <Compass />
-              進行方向校正
-              <ArrowRight />
-            </button>
-          </>
         )}
         {screen === "destination" && (
           <div className="v2-footer-tip">
