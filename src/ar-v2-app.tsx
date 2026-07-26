@@ -371,9 +371,10 @@ export default function ARNavigationV2() {
   const [loadError, setLoadError] = useState("");
   const [project, setProject] = useState<any>(null);
   const [screen, setScreen] = useState<"destination" | "origin" | "review" | "calibrate" | "navigate">(
-    "destination",
+    "origin",
   );
   const [destinationId, setDestinationId] = useState<string | null>(null);
+  const [destinationError, setDestinationError] = useState("");
   const [selectedFloorId, setSelectedFloorId] = useState<string | null>(null);
   const [origin, setOrigin] = useState<ManualOrigin | null>(null);
   const [heading, setHeading] = useState<number | null>(null);
@@ -510,12 +511,16 @@ export default function ARNavigationV2() {
   }, [currentSegment, segmentStart?.fId]);
 
   const selectDestination = (id: string) => {
+    if (!origin?.snapId) return;
+    const nextRoute = shortestPath(graph, origin.snapId, id);
     setDestinationId(id);
-    setOrigin(null);
-    const node = graph.nodes[id];
-    const currentFloor = graph.floors.find((floor) => floor.id === node?.fId) || graph.floors[0];
-    setSelectedFloorId(currentFloor?.id || node?.fId || null);
-    setScreen("origin");
+    if (nextRoute.length === 0) {
+      setDestinationError("目前位置到此目的地找不到可用路徑");
+      return;
+    }
+    setDestinationError("");
+    setSelectedFloorId(origin.floorId);
+    setScreen("review");
   };
 
   const selectOrigin = ({ x, y }: { x: number; y: number }) => {
@@ -578,12 +583,13 @@ export default function ARNavigationV2() {
 
   const restart = () => {
     setDestinationId(null);
+    setDestinationError("");
     setOrigin(null);
     setCalibrationHeading(null);
     setSegmentIndex(0);
     setMapExpanded(false);
     setShowAssistMenu(false);
-    setScreen("destination");
+    setScreen("origin");
   };
 
   if (loading) {
@@ -784,12 +790,14 @@ export default function ARNavigationV2() {
         <button
           type="button"
           onClick={() => {
-            if (screen === "origin") {
+            if (screen === "destination") {
               setDestinationId(null);
-              setOrigin(null);
-              setScreen("destination");
-            } else if (screen === "review") {
+              setDestinationError("");
+              setSelectedFloorId(origin?.floorId || selectedFloorId);
               setScreen("origin");
+            } else if (screen === "review") {
+              setSelectedFloorId(destination?.fId || selectedFloorId);
+              setScreen("destination");
             } else {
               window.location.href = "./ar-v2.html";
             }
@@ -804,7 +812,7 @@ export default function ARNavigationV2() {
 
       <section className="v2-intro">
         <div className="v2-step-label">
-          {screen === "destination" ? "STEP 1" : screen === "origin" ? "STEP 2" : "STEP 3"}
+          {screen === "origin" ? "STEP 1" : screen === "destination" ? "STEP 2" : "STEP 3"}
         </div>
         <h1>{pageTitle}</h1>
         <p>{pageDescription}</p>
@@ -818,6 +826,10 @@ export default function ARNavigationV2() {
         <FloorTabs floors={visibleFloors} selectedId={selectedFloor?.id || null} onSelect={(id) => {
           setSelectedFloorId(id);
           if (screen === "origin") setOrigin(null);
+          if (screen === "destination") {
+            setDestinationId(null);
+            setDestinationError("");
+          }
         }} />
       </section>
 
@@ -841,16 +853,16 @@ export default function ARNavigationV2() {
         />
       </section>
 
-      {screen === "origin" && destination && (
+      {screen === "destination" && origin && (
         <section className="v2-selection-summary">
-          <MapPin />
+          <LocateFixed />
           <div>
-            <span>目的地</span>
+            <span>目前位置</span>
             <strong>
-              {nodeLabel(destination)} · {destination.fName}
+              {graph.floors.find((floor) => floor.id === origin.floorId)?.name || "已選取"} · 已定位
             </strong>
           </div>
-          {origin && <Check />}
+          <Check />
         </section>
       )}
 
@@ -874,21 +886,29 @@ export default function ARNavigationV2() {
           <button
             type="button"
             className="v2-primary-button"
-            disabled={!origin?.snapId || routeIds.length === 0}
+            disabled={!origin?.snapId}
             onClick={() => {
-              setScreen("review");
-              setSelectedFloorId(origin?.floorId || selectedFloorId);
+              setDestinationId(null);
+              setDestinationError("");
+              setScreen("destination");
             }}
           >
-            <Navigation />
-            {origin ? (routeIds.length ? "確認位置並規劃路徑" : "目前位置找不到可用路徑") : "請先點選目前位置"}
+            <ArrowRight />
+            {origin?.snapId ? "下一步：選擇目的地" : "請先點選目前位置"}
           </button>
         )}
         {screen === "review" && (
           <>
-            <button type="button" className="v2-quiet-button" onClick={() => setScreen("origin")}>
-              <Crosshair />
-              重選位置
+            <button
+              type="button"
+              className="v2-quiet-button"
+              onClick={() => {
+                setSelectedFloorId(destination?.fId || selectedFloorId);
+                setScreen("destination");
+              }}
+            >
+              <MapPin />
+              重選目的地
             </button>
             <button type="button" className="v2-primary-button" onClick={() => setScreen("calibrate")}>
               <Compass />
@@ -900,7 +920,7 @@ export default function ARNavigationV2() {
         {screen === "destination" && (
           <div className="v2-footer-tip">
             <MapPin />
-            點選紅色大頭針後，系統會帶你設定目前位置
+            {destinationError || "點選紅色大頭針作為目的地"}
           </div>
         )}
       </footer>
