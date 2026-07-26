@@ -570,6 +570,31 @@ export default function ARNavigationV2() {
     heading !== null && calibrationHeading !== null ? normalizeAngle(heading - calibrationHeading) : 0;
   const arrowRotation = normalizeAngle(currentBearing - firstBearing - headingDelta);
   const remainingDistance = routeLength(navigationPoints.slice(currentSegment));
+  const arProjectedPoints = [{ x: 50, y: 94 }];
+  for (
+    let index = currentSegment;
+    index < Math.min(navigationPoints.length - 1, currentSegment + 6);
+    index += 1
+  ) {
+    const start = navigationPoints[index];
+    const end = navigationPoints[index + 1];
+    if (!start || !end || start.fId !== segmentStart?.fId || end.fId !== segmentStart?.fId) break;
+    const relativeBearing = normalizeAngle(segmentBearing(start, end) - currentBearing);
+    const segmentDistance = Math.hypot(end.physX - start.physX, end.physY - start.physY);
+    const projectedDistance = clamp(segmentDistance * 4.5, 13, 24);
+    const previous = arProjectedPoints[arProjectedPoints.length - 1];
+    const radians = (relativeBearing * Math.PI) / 180;
+    arProjectedPoints.push({
+      x: clamp(previous.x + Math.sin(radians) * projectedDistance * 0.82, 8, 92),
+      y: clamp(previous.y - Math.cos(radians) * projectedDistance, 7, 94),
+    });
+  }
+  if (arProjectedPoints.length === 1) arProjectedPoints.push({ x: 50, y: 16 });
+  const arRoutePath = arProjectedPoints
+    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
+    .join(" ");
+  const arDirectionLabel =
+    Math.abs(arrowRotation) < 18 ? "沿路線直行" : arrowRotation > 0 ? "路線在右側" : "路線在左側";
   const mapFloor = graph.floors.find((floor) => floor.id === mapFloorId) ||
     graph.floors.find((floor) => floor.id === segmentStart?.fId) ||
     selectedFloor;
@@ -685,7 +710,7 @@ export default function ARNavigationV2() {
       ? `請前往 ${segmentEnd.fName}，到達後按「下一段」`
       : isLastSegment
         ? `沿箭頭前進，即將抵達 ${nodeLabel(destination)}`
-        : "沿黃色箭頭前進，到達轉折處後按下一段";
+        : "沿 AR 路線前進，到達轉折處後按下一段";
 
     return (
       <main className="v2-ar-screen">
@@ -710,15 +735,64 @@ export default function ARNavigationV2() {
           {heading === null ? "等待方向感測" : `${Math.round(heading)}°`}
         </div>
 
-        <div className="v2-ar-arrow-zone" aria-live="polite">
-          <div className="v2-ar-anchor" />
-          <Navigation
-            className="v2-main-arrow"
-            style={{ transform: `rotate(${arrowRotation}deg)` }}
-            aria-label={`導引方向 ${Math.round(arrowRotation)} 度`}
-          />
-          <span>{Math.abs(arrowRotation) < 18 ? "直行" : arrowRotation > 0 ? "向右轉" : "向左轉"}</span>
+        <div className="v2-ar-route-zone" aria-live="polite">
+          <svg
+            className="v2-ar-route-projection"
+            style={{ "--v2-route-rotation": `${arrowRotation}deg` } as React.CSSProperties}
+            viewBox="0 0 100 100"
+            preserveAspectRatio="xMidYMid meet"
+            aria-label={`AR 導引路線，方向 ${Math.round(arrowRotation)} 度`}
+          >
+            <defs>
+              <filter id="v2-ar-route-glow" x="-80%" y="-80%" width="260%" height="260%">
+                <feGaussianBlur stdDeviation="1.4" result="blur" />
+                <feMerge>
+                  <feMergeNode in="blur" />
+                  <feMergeNode in="SourceGraphic" />
+                </feMerge>
+              </filter>
+            </defs>
+            <path className="v2-ar-route-shadow" d={arRoutePath} />
+            <path id="v2-ar-camera-route" className="v2-ar-route-line" d={arRoutePath} />
+            {Array.from({ length: 7 }, (_, index) => (
+              <g className="v2-ar-flow-arrow" key={`ar-flow-arrow-${index}`}>
+                <path d="M -2.4 -2 L 0 0 L -2.4 2" />
+                <animateMotion
+                  dur="4.2s"
+                  begin={`${(-index * 0.6).toFixed(1)}s`}
+                  repeatCount="indefinite"
+                  rotate="auto"
+                >
+                  <mpath href="#v2-ar-camera-route" />
+                </animateMotion>
+              </g>
+            ))}
+            <image
+              className="v2-ar-route-mascot"
+              href="./assets/ar/mascot-walking-small.png"
+              x="-6.5"
+              y="-12"
+              width="13"
+              height="13"
+              preserveAspectRatio="xMidYMid meet"
+            >
+              <animateMotion dur="6.4s" repeatCount="indefinite" rotate="0">
+                <mpath href="#v2-ar-camera-route" />
+              </animateMotion>
+            </image>
+          </svg>
+          <span className="v2-ar-route-direction">{arDirectionLabel}</span>
         </div>
+
+        <button
+          type="button"
+          className="v2-realign-button"
+          onClick={() => setCalibrationHeading(heading ?? calibrationHeading ?? 0)}
+          aria-label="重新校正 AR 路線"
+        >
+          <LocateFixed />
+          <span>校正路線</span>
+        </button>
 
         <div className={`v2-nav-map ${mapExpanded ? "is-expanded" : ""}`}>
           <MapPanel
