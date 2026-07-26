@@ -604,6 +604,96 @@ button:disabled {
   font-size: 14px;
 }
 
+.v2-route-stepper {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr) 46px;
+  gap: 9px;
+  margin: 10px 16px 0;
+  padding: 10px;
+  border: 1px solid rgba(25, 66, 99, 0.24);
+  border-radius: 8px;
+  background: rgba(15, 31, 47, 0.96);
+  box-shadow: 0 12px 28px rgba(20, 48, 72, 0.24);
+}
+
+.v2-route-stepper > button {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+}
+
+.v2-route-stepper > button:last-of-type {
+  border-color: rgba(247, 201, 72, 0.45);
+  background: rgba(247, 201, 72, 0.15);
+  color: #f7c948;
+}
+
+.v2-route-stepper > button:disabled {
+  opacity: 0.28;
+}
+
+.v2-route-stepper > button svg {
+  width: 24px;
+  height: 24px;
+}
+
+.v2-route-step-info {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.v2-route-step-info > div:first-child,
+.v2-route-step-meta,
+.v2-route-neighbor-info {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.v2-route-step-info > div:first-child {
+  color: #aab9c6;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.v2-route-step-info > strong {
+  display: block;
+  margin-top: 6px;
+  color: #fff1a8;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.v2-route-step-meta {
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.v2-route-step-meta span {
+  padding: 4px 7px;
+  border: 1px solid rgba(92, 197, 255, 0.2);
+  border-radius: 999px;
+  background: rgba(92, 197, 255, 0.1);
+  color: #c6eaff;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.v2-route-neighbor-info {
+  grid-column: 1 / -1;
+  color: #95a8b8;
+  font-size: 9px;
+  font-weight: 700;
+}
+
 .v2-action-bar {
   position: sticky;
   z-index: 20;

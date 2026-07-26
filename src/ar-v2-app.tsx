@@ -73,6 +73,13 @@ const normalizeAngle = (value: number) => {
   return angle;
 };
 
+const floorLevel = (name = "") => {
+  const basement = name.match(/B\s*(\d+)/i);
+  if (basement) return -Number(basement[1]);
+  const level = name.match(/-?\d+/);
+  return level ? Number(level[0]) : 0;
+};
+
 const nodeLabel = (node?: NodeData | null) =>
   node?.title && node.title !== "新增辨識點"
     ? node.title
@@ -414,6 +421,7 @@ export default function ARNavigationV2() {
   const [cameraState, setCameraState] = useState<"idle" | "loading" | "ready" | "denied">("idle");
   const [cameraMessage, setCameraMessage] = useState("");
   const [segmentIndex, setSegmentIndex] = useState(0);
+  const [reviewStepIndex, setReviewStepIndex] = useState(0);
   const [mapExpanded, setMapExpanded] = useState(false);
   const [mapFloorId, setMapFloorId] = useState<string | null>(null);
   const [showAssistMenu, setShowAssistMenu] = useState(false);
@@ -524,6 +532,34 @@ export default function ARNavigationV2() {
     : null;
   const navigationPoints = originPoint ? [originPoint, ...routeNodes] : routeNodes;
   const totalDistance = routeLength(navigationPoints);
+  const routeSteps: Array<{ floorId: string; floorName: string; points: Array<any> }> = [];
+  navigationPoints.forEach((point) => {
+    const currentStep = routeSteps[routeSteps.length - 1];
+    if (!currentStep || currentStep.floorId !== point.fId) {
+      routeSteps.push({
+        floorId: point.fId,
+        floorName: point.fName || graph.floors.find((floor) => floor.id === point.fId)?.name || point.fId,
+        points: [point],
+      });
+    } else {
+      currentStep.points.push(point);
+    }
+  });
+  const safeReviewStepIndex = Math.min(reviewStepIndex, Math.max(0, routeSteps.length - 1));
+  const activeReviewStep = routeSteps[safeReviewStepIndex];
+  const previousReviewStep = routeSteps[safeReviewStepIndex - 1];
+  const nextReviewStep = routeSteps[safeReviewStepIndex + 1];
+  const reviewStepDistance = activeReviewStep ? routeLength(activeReviewStep.points) : 0;
+  const nextFloorDelta =
+    activeReviewStep && nextReviewStep
+      ? floorLevel(nextReviewStep.floorName) - floorLevel(activeReviewStep.floorName)
+      : 0;
+  const nextFloorVerb = nextFloorDelta > 0 ? "上樓" : nextFloorDelta < 0 ? "下樓" : "前往";
+  const reviewInstruction = nextReviewStep
+    ? `請依照 ${activeReviewStep.floorName} 平面圖前往轉乘點，接著${nextFloorVerb}至 ${nextReviewStep.floorName}`
+    : activeReviewStep
+      ? `請依照 ${activeReviewStep.floorName} 平面圖前往 ${nodeLabel(destination)}`
+      : "目前沒有可顯示的路徑資訊";
   const currentSegment = Math.min(segmentIndex, Math.max(0, navigationPoints.length - 2));
   const segmentStart = navigationPoints[currentSegment];
   const segmentEnd = navigationPoints[currentSegment + 1];
@@ -614,6 +650,7 @@ export default function ARNavigationV2() {
     setOrigin(null);
     setCalibrationHeading(null);
     setSegmentIndex(0);
+    setReviewStepIndex(0);
     setMapExpanded(false);
     setShowAssistMenu(false);
     setScreen("destination");
@@ -846,12 +883,28 @@ export default function ARNavigationV2() {
       <section className="v2-floor-section">
         <div className="v2-section-heading">
           <Layers3 />
-          <strong>{screen === "destination" ? "目的地樓層" : "目前所在樓層"}</strong>
+          <strong>
+            {screen === "destination" ? "目的地樓層" : screen === "review" ? "導引樓層" : "目前所在樓層"}
+          </strong>
         </div>
-        <FloorTabs floors={visibleFloors} selectedId={selectedFloor?.id || null} onSelect={(id) => {
-          setSelectedFloorId(id);
-          if (screen === "origin") setOrigin(null);
-        }} />
+        <FloorTabs
+          floors={
+            screen === "review"
+              ? (routeSteps
+                  .map((step) => graph.floors.find((floor) => floor.id === step.floorId))
+                  .filter(Boolean) as FloorData[])
+              : visibleFloors
+          }
+          selectedId={selectedFloor?.id || null}
+          onSelect={(id) => {
+            setSelectedFloorId(id);
+            if (screen === "origin") setOrigin(null);
+            if (screen === "review") {
+              const stepIndex = routeSteps.findIndex((step) => step.floorId === id);
+              if (stepIndex >= 0) setReviewStepIndex(stepIndex);
+            }
+          }}
+        />
       </section>
 
       <section className="v2-map-card">
@@ -888,16 +941,47 @@ export default function ARNavigationV2() {
       )}
 
       {screen === "review" && (
-        <section className="v2-route-summary">
-          <div>
-            <Navigation />
-            <span>預估路徑</span>
-            <strong>{totalDistance.toFixed(1)} 公尺</strong>
+        <section className="v2-route-stepper" aria-label="樓層路徑資訊">
+          <button
+            type="button"
+            onClick={() => {
+              const nextIndex = Math.max(0, safeReviewStepIndex - 1);
+              setReviewStepIndex(nextIndex);
+              setSelectedFloorId(routeSteps[nextIndex]?.floorId || selectedFloorId);
+            }}
+            disabled={!previousReviewStep}
+            aria-label="上一個樓層位置"
+          >
+            <ChevronLeft />
+          </button>
+          <div className="v2-route-step-info">
+            <div>
+              <span>{activeReviewStep?.floorName || selectedFloor?.name} 平面圖</span>
+              <span>
+                {safeReviewStepIndex + 1}/{Math.max(1, routeSteps.length)}
+              </span>
+            </div>
+            <strong>{reviewInstruction}</strong>
+            <div className="v2-route-step-meta">
+              <span>本層約 {reviewStepDistance.toFixed(1)} 公尺</span>
+              <span>全程 {totalDistance.toFixed(1)} 公尺</span>
+            </div>
           </div>
-          <div>
-            <Layers3 />
-            <span>樓層路段</span>
-            <strong>{new Set(navigationPoints.map((point) => point.fId)).size} 個</strong>
+          <button
+            type="button"
+            onClick={() => {
+              const nextIndex = Math.min(routeSteps.length - 1, safeReviewStepIndex + 1);
+              setReviewStepIndex(nextIndex);
+              setSelectedFloorId(routeSteps[nextIndex]?.floorId || selectedFloorId);
+            }}
+            disabled={!nextReviewStep}
+            aria-label="下一個樓層位置"
+          >
+            <ChevronRight />
+          </button>
+          <div className="v2-route-neighbor-info">
+            <span>{previousReviewStep ? `上一個：${previousReviewStep.floorName}` : "已是第一個位置"}</span>
+            <span>{nextReviewStep ? `下一個：${nextReviewStep.floorName}` : "此層前往目的地"}</span>
           </div>
         </section>
       )}
@@ -909,6 +993,7 @@ export default function ARNavigationV2() {
             className="v2-primary-button"
             disabled={!origin?.snapId || routeIds.length === 0}
             onClick={() => {
+              setReviewStepIndex(0);
               setScreen("review");
               setSelectedFloorId(origin?.floorId || selectedFloorId);
             }}
