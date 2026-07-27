@@ -554,28 +554,43 @@ button:disabled {
   pointer-events: none;
 }
 
+.v2-map-route-outline,
 .v2-route-base {
   fill: none;
-  stroke: #157bd2;
-  stroke-width: 2.2;
   stroke-linecap: round;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
-  filter: drop-shadow(0 1px 2px rgba(255, 255, 255, 0.9));
+}
+
+.v2-map-route-outline {
+  stroke: rgba(3, 61, 172, 0.9);
+  stroke-width: 7.5;
+  filter:
+    drop-shadow(0 1px 1px rgba(255, 255, 255, 0.92))
+    drop-shadow(0 2px 3px rgba(6, 34, 91, 0.44));
+}
+
+.v2-route-base {
+  stroke: #087cff;
+  stroke-width: 5;
 }
 
 .v2-flow-arrow {
-  fill: none;
+  fill: #ffffff;
   stroke: #ffffff;
-  stroke-width: 1.7;
+  stroke-width: 0.45;
   stroke-linecap: round;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
-  filter: drop-shadow(0 1px 2px rgba(17, 59, 94, 0.9));
+  filter:
+    drop-shadow(0 1px 1px rgba(1, 35, 105, 0.95))
+    drop-shadow(0 0 2px rgba(255, 255, 255, 0.95));
 }
 
 .v2-route-mascot {
-  filter: drop-shadow(0 2px 2px rgba(20, 52, 74, 0.55));
+  filter:
+    drop-shadow(0 2px 2px rgba(20, 52, 74, 0.7))
+    drop-shadow(0 0 3px rgba(255, 255, 255, 0.9));
 }
 
 .v2-destination-pin {
@@ -642,8 +657,10 @@ button:disabled {
 }
 
 .v2-static-pin.is-origin {
-  background: #f7c948;
-  color: #17384f;
+  border-width: 4px;
+  border-color: #ffbd00;
+  background: #ffffff;
+  color: #ffbd00;
   animation: v2-origin-pulse 1.8s ease-in-out infinite;
 }
 
@@ -656,7 +673,7 @@ button:disabled {
   50% {
     box-shadow:
       0 5px 14px rgba(20, 48, 72, 0.3),
-      0 0 0 10px rgba(247, 201, 72, 0.22);
+      0 0 0 11px rgba(255, 189, 0, 0.25);
   }
 }
 
@@ -1378,6 +1395,76 @@ button:disabled {
   width: 19px;
   height: 19px;
   color: #f7c948;
+}
+
+.v2-stride-setting {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 5px 10px;
+  margin: -3px 0 12px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.v2-stride-setting > span:first-child {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #e1e9ef;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.v2-stride-setting > span:first-child svg {
+  width: 18px;
+  height: 18px;
+  color: #f7c948;
+}
+
+.v2-stride-input {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 7px;
+  background: rgba(4, 12, 20, 0.56);
+}
+
+.v2-stride-input input {
+  width: 62px;
+  height: 34px;
+  padding: 0 4px 0 10px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #ffffff;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 900;
+  text-align: right;
+}
+
+.v2-stride-input input::placeholder {
+  color: #ffffff;
+  opacity: 0.76;
+}
+
+.v2-stride-input b {
+  padding: 0 9px 0 4px;
+  color: #b9c7d3;
+  font-size: 11px;
+}
+
+.v2-stride-setting small {
+  grid-column: 1 / -1;
+  color: #b9c7d3;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
 }
 
 .v2-message {

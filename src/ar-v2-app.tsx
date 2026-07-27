@@ -74,10 +74,13 @@ type ProjectOption = {
 };
 
 const clamp = (value: number, min = 0, max = 1) => Math.min(max, Math.max(min, value));
-const ESTIMATED_STRIDE_METERS = 0.72;
-const STEP_ACCELERATION_THRESHOLD = 0.62;
-const STEP_RELEASE_THRESHOLD = 0.28;
-const STEP_COOLDOWN_MS = 300;
+const DEFAULT_STRIDE_CENTIMETERS = 60;
+const MIN_STRIDE_CENTIMETERS = 30;
+const MAX_STRIDE_CENTIMETERS = 120;
+const STRIDE_STORAGE_KEY = "ar-v2-stride-centimeters";
+const STEP_ACCELERATION_THRESHOLD = 0.9;
+const STEP_RELEASE_THRESHOLD = 0.34;
+const STEP_COOLDOWN_MS = 420;
 const WALKING_FORWARD_LIMIT = 78;
 const WALKING_REVERSE_LIMIT = 112;
 
@@ -298,6 +301,7 @@ function MapPanel({
   onDestination,
   onOrigin,
   compact = false,
+  reverseFlow = false,
 }: {
   floor?: FloorData;
   graph: GraphData;
@@ -308,6 +312,7 @@ function MapPanel({
   onDestination?: (id: string) => void;
   onOrigin?: (point: { x: number; y: number }) => void;
   compact?: boolean;
+  reverseFlow?: boolean;
 }) {
   const [ratio, setRatio] = useState(1.25);
   const destinations = (Object.values(graph.nodes) as NodeData[]).filter(
@@ -357,14 +362,21 @@ function MapPanel({
         )}
 
         {polyline && routePath && (
-          <svg className="v2-route-layer" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+          <svg
+            key={`${routePathId}-${reverseFlow ? "reverse" : "forward"}`}
+            className={`v2-route-layer ${reverseFlow ? "is-reversed" : ""}`}
+            viewBox="0 0 100 100"
+            preserveAspectRatio="none"
+            aria-hidden="true"
+          >
+            <path className="v2-map-route-outline" d={routePath} />
             <path id={routePathId} className="v2-route-base" d={routePath} />
-            {Array.from({ length: 7 }, (_, index) => (
+            {Array.from({ length: 5 }, (_, index) => (
               <g className="v2-flow-arrow" key={`flow-arrow-${index}`}>
-                <path d="M -2.2 -1.8 L 0 0 L -2.2 1.8" />
+                <path d="M -1.6 -1.35 L 1.25 0 L -1.6 1.35 Z" />
                 <animateMotion
-                  dur="4.2s"
-                  begin={`${(-index * 0.6).toFixed(1)}s`}
+                  dur="4.5s"
+                  begin={`${(-index * 0.9).toFixed(1)}s`}
                   repeatCount="indefinite"
                   rotate="auto"
                 >
@@ -522,6 +534,13 @@ export default function ARNavigationV2() {
   const [stepCount, setStepCount] = useState(0);
   const [motionDetected, setMotionDetected] = useState(false);
   const [walkingDirection, setWalkingDirection] = useState<"idle" | "forward" | "reverse" | "paused">("idle");
+  const [strideInput, setStrideInput] = useState(() => {
+    try {
+      return window.localStorage.getItem(STRIDE_STORAGE_KEY) || "";
+    } catch {
+      return "";
+    }
+  });
   const [reviewStepIndex, setReviewStepIndex] = useState(0);
   const [mapExpanded, setMapExpanded] = useState(false);
   const [mapFloorId, setMapFloorId] = useState<string | null>(null);
@@ -534,6 +553,24 @@ export default function ARNavigationV2() {
   const headingRef = useRef<number | null>(null);
   const calibrationHeadingRef = useRef<number | null>(null);
   const motionSampleRef = useRef({ filtered: 0, lastStepAt: 0, hasSample: false, armed: true });
+  const strideCentimeters = clamp(
+    Number.parseFloat(strideInput) || DEFAULT_STRIDE_CENTIMETERS,
+    MIN_STRIDE_CENTIMETERS,
+    MAX_STRIDE_CENTIMETERS,
+  );
+  const strideMeters = strideCentimeters / 100;
+
+  useEffect(() => {
+    try {
+      if (strideInput.trim() === "") {
+        window.localStorage.removeItem(STRIDE_STORAGE_KEY);
+        return;
+      }
+      window.localStorage.setItem(STRIDE_STORAGE_KEY, String(strideCentimeters));
+    } catch {
+      // Navigation still works with the in-memory value when storage is unavailable.
+    }
+  }, [strideCentimeters, strideInput]);
 
   useEffect(() => {
     let active = true;
@@ -903,12 +940,14 @@ export default function ARNavigationV2() {
       const magnitude = Math.sqrt(x * x + y * y + z * z);
       const dynamicMagnitude = values === gravityAcceleration ? Math.abs(magnitude - 9.81) : magnitude;
       const previousFiltered = motionSampleRef.current.filtered;
-      const filtered = previousFiltered * 0.45 + dynamicMagnitude * 0.55;
+      const filtered = previousFiltered * 0.6 + dynamicMagnitude * 0.4;
       motionSampleRef.current.filtered = filtered;
 
       if (!motionSampleRef.current.hasSample) {
         motionSampleRef.current.hasSample = true;
+        motionSampleRef.current.armed = filtered <= STEP_RELEASE_THRESHOLD;
         setMotionDetected(true);
+        return;
       }
 
       if (filtered <= STEP_RELEASE_THRESHOLD) {
@@ -923,7 +962,6 @@ export default function ARNavigationV2() {
       if (!isStep) return;
 
       motionSampleRef.current.armed = false;
-      const previousStepAt = motionSampleRef.current.lastStepAt;
       motionSampleRef.current.lastStepAt = now;
 
       const points = navigationPointsRef.current;
@@ -962,13 +1000,6 @@ export default function ARNavigationV2() {
         }
       }
 
-      const stepInterval = previousStepAt > 0 ? now - previousStepAt : 0;
-      const strideMeters =
-        stepInterval > 0 && stepInterval < 430
-          ? 0.78
-          : stepInterval > 780
-            ? 0.64
-            : ESTIMATED_STRIDE_METERS;
       let nextProgress = segmentProgressRef.current + strideMeters * movementSign;
       setStepCount((count) => count + 1);
       setWalkingDirection(movementSign > 0 ? "forward" : "reverse");
@@ -1022,7 +1053,7 @@ export default function ARNavigationV2() {
 
     window.addEventListener("devicemotion", onMotion, true);
     return () => window.removeEventListener("devicemotion", onMotion, true);
-  }, [cameraState, screen]);
+  }, [cameraState, screen, strideMeters]);
 
   const goToRouteFloor = (stepIndex: number) => {
     const targetStep = routeSteps[stepIndex];
@@ -1227,7 +1258,7 @@ export default function ARNavigationV2() {
           ? "方向偏離路線，已暫停距離計算"
           : motionDetected
             ? `步行輔助 · ${stepCount} 步`
-            : "等待加速器步行感測";
+            : "等待步行感測 · 請用正常步伐行走";
     const instruction = changedFloor
       ? `已抵達轉乘點，請切換至 ${segmentEnd.fName}`
       : isArrived
@@ -1265,6 +1296,7 @@ export default function ARNavigationV2() {
 
         <div className="v2-ar-route-zone" aria-live="polite">
           <svg
+            key={isFacingBackward ? "ar-route-reverse" : "ar-route-forward"}
             className="v2-ar-route-projection"
             style={{ "--v2-route-rotation": `${arProjectionRotation}deg` } as React.CSSProperties}
             viewBox="0 0 100 100"
@@ -1333,8 +1365,9 @@ export default function ARNavigationV2() {
             mode="route"
             destinationId={destinationId}
             origin={origin}
-            routePoints={isFacingBackward ? navigationPoints : activeNavigationPoints}
+            routePoints={isFacingBackward ? passedNavigationPoints : activeNavigationPoints}
             compact={!mapExpanded}
+            reverseFlow={isFacingBackward}
           />
           <span className="v2-map-floor-label">{mapFloor?.name}</span>
           <span className="v2-map-toggle-label">{mapExpanded ? "縮小" : "地圖"}</span>
@@ -1467,6 +1500,31 @@ export default function ARNavigationV2() {
             <Compass />
             <span>{heading === null ? "等待方向感測" : `${Math.round(heading)}°`}</span>
           </div>
+          <label className="v2-stride-setting">
+            <span>
+              <Footprints aria-hidden="true" />
+              步距設定
+            </span>
+            <span className="v2-stride-input">
+              <input
+                type="number"
+                inputMode="decimal"
+                min={MIN_STRIDE_CENTIMETERS}
+                max={MAX_STRIDE_CENTIMETERS}
+                step="1"
+                value={strideInput}
+                placeholder={String(DEFAULT_STRIDE_CENTIMETERS)}
+                onChange={(event) => setStrideInput(event.target.value)}
+                onBlur={() => {
+                  if (strideInput.trim() === "") return;
+                  setStrideInput(String(strideCentimeters));
+                }}
+                aria-label="步距公分"
+              />
+              <b>公分</b>
+            </span>
+            <small>請用正常步伐行走；未設定時採用 60 公分。</small>
+          </label>
           {cameraMessage && <div className={`v2-message ${cameraState === "denied" ? "is-error" : ""}`}>{cameraMessage}</div>}
           {cameraState !== "ready" ? (
             <button type="button" className="v2-primary-button" onClick={requestCameraAndMotion}>
