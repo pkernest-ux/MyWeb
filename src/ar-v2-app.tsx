@@ -1169,7 +1169,11 @@ export default function ARNavigationV2() {
   };
 
   const beginNavigation = () => {
-    const nextCalibrationHeading = heading ?? 0;
+    const nextCalibrationHeading = headingRef.current ?? heading;
+    if (nextCalibrationHeading === null) {
+      setCameraMessage("正在取得手機方向，請保持面向道路並稍候");
+      return;
+    }
     calibrationHeadingRef.current = nextCalibrationHeading;
     setCalibrationHeading(nextCalibrationHeading);
     setSegmentIndex(0);
@@ -1182,6 +1186,13 @@ export default function ARNavigationV2() {
     setWalkingDirection("idle");
     setMapExpanded(false);
     setScreen("navigate");
+  };
+
+  const realignRoute = () => {
+    const nextCalibrationHeading = headingRef.current ?? heading;
+    if (nextCalibrationHeading === null) return;
+    calibrationHeadingRef.current = nextCalibrationHeading;
+    setCalibrationHeading(nextCalibrationHeading);
   };
 
   const restart = () => {
@@ -1351,7 +1362,8 @@ export default function ARNavigationV2() {
         <button
           type="button"
           className="v2-realign-button"
-          onClick={() => setCalibrationHeading(heading ?? calibrationHeading ?? 0)}
+          onClick={realignRoute}
+          disabled={heading === null}
           aria-label="重新校正 AR 路線"
         >
           <LocateFixed />
@@ -1532,9 +1544,14 @@ export default function ARNavigationV2() {
               {cameraState === "loading" ? "正在開啟..." : "開啟相機、方向與步行感測"}
             </button>
           ) : (
-            <button type="button" className="v2-primary-button" onClick={beginNavigation}>
+            <button
+              type="button"
+              className="v2-primary-button"
+              onClick={beginNavigation}
+              disabled={heading === null}
+            >
               <LocateFixed />
-              定位並開始導引
+              {heading === null ? "等待方向感測..." : "定位並開始導引"}
             </button>
           )}
           <a className="v2-secondary-link" href="./ar.html">
