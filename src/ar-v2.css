@@ -84,6 +84,163 @@ button:disabled {
   color: #df5d54;
 }
 
+.v2-project-picker {
+  width: 100%;
+  min-height: 100dvh;
+  padding: calc(34px + env(safe-area-inset-top)) 18px calc(28px + env(safe-area-inset-bottom));
+  background:
+    linear-gradient(180deg, rgba(226, 246, 252, 0.94), rgba(248, 252, 253, 0.98) 42%),
+    #eaf6fa;
+  color: #173f70;
+}
+
+.v2-project-picker > header {
+  max-width: 720px;
+  margin: 0 auto 22px;
+}
+
+.v2-project-picker > header span {
+  color: #1875c8;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.v2-project-picker > header h1 {
+  margin: 8px 0 6px;
+  font-size: clamp(28px, 8vw, 38px);
+  line-height: 1.15;
+}
+
+.v2-project-picker > header p {
+  margin: 0;
+  color: #60758d;
+  font-size: 14px;
+}
+
+.v2-project-error {
+  max-width: 720px;
+  margin: 0 auto 14px;
+  padding: 11px 13px;
+  border: 1px solid rgba(211, 80, 68, 0.24);
+  border-radius: 8px;
+  background: #fff1ef;
+  color: #a83c33;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.v2-project-grid {
+  display: grid;
+  max-width: 720px;
+  margin: 0 auto;
+  gap: 14px;
+}
+
+.v2-project-card {
+  position: relative;
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: 116px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: 14px;
+  overflow: hidden;
+  padding: 10px 13px 10px 10px;
+  border: 1px solid rgba(35, 89, 137, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #173f70;
+  text-align: left;
+  box-shadow: 0 12px 28px rgba(45, 85, 111, 0.12);
+  cursor: pointer;
+}
+
+.v2-project-card:active {
+  transform: translateY(1px);
+}
+
+.v2-project-card:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.v2-project-preview {
+  position: relative;
+  display: flex;
+  width: 116px;
+  height: 104px;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border: 1px solid #d7e4ed;
+  border-radius: 6px;
+  background: #edf4f8;
+}
+
+.v2-project-preview > img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.v2-project-preview > svg {
+  width: 36px;
+  height: 36px;
+  color: #8aa8bf;
+}
+
+.v2-project-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 5px;
+  background: rgba(13, 43, 68, 0.82);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.v2-project-loading svg {
+  width: 23px;
+  height: 23px;
+}
+
+.v2-project-card-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.v2-project-card-body > span {
+  color: #1875c8;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.v2-project-card-body > strong {
+  overflow: hidden;
+  margin-top: 3px;
+  font-size: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v2-project-card-body > small {
+  margin-top: 7px;
+  color: #6b8195;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.v2-project-card > svg {
+  width: 22px;
+  height: 22px;
+  color: #1875c8;
+}
+
 .is-spinning {
   animation: v2-spin 1s linear infinite;
 }
@@ -100,11 +257,15 @@ button:disabled {
   width: 100%;
   min-height: 100dvh;
   flex-direction: column;
+  background: linear-gradient(180deg, #e3f3f8 0, #f7fbfc 340px, #eaf6fa 100%);
+  overflow-x: hidden;
+}
+
+.v2-map-screen.is-hsinchu-project {
   background:
     linear-gradient(rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.42)),
     url("../assets/ar/destination-portal.png") top center / 100% auto no-repeat,
     #eaf6fa;
-  overflow-x: hidden;
 }
 
 .v2-page-header {
@@ -1674,7 +1835,8 @@ button:disabled {
   .v2-review-app,
   .v2-calibration,
   .v2-ar-screen,
-  .v2-loading {
+  .v2-loading,
+  .v2-project-picker {
     width: min(100%, 520px);
     margin: 0 auto;
     box-shadow: 0 0 40px rgba(36, 63, 83, 0.16);
@@ -1712,6 +1874,20 @@ button:disabled {
 }
 
 @media (max-width: 370px) {
+  .v2-project-card {
+    grid-template-columns: 92px minmax(0, 1fr) 20px;
+    gap: 10px;
+  }
+
+  .v2-project-preview {
+    width: 92px;
+    height: 88px;
+  }
+
+  .v2-project-card-body > strong {
+    font-size: 16px;
+  }
+
   .v2-review-toolbar {
     grid-template-columns: auto minmax(0, 1fr) auto;
     padding-inline: 9px;

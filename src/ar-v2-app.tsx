@@ -63,7 +63,34 @@ type ManualOrigin = {
   snapId: string;
 };
 
+type ProjectOption = {
+  id: string;
+  name: string;
+  updatedAt?: string;
+  source: "cloud" | "local";
+  localData?: any;
+  summary?: any;
+};
+
 const clamp = (value: number, min = 0, max = 1) => Math.min(max, Math.max(min, value));
+
+const normalizeProjects = (raw: any) => {
+  if (Array.isArray(raw?.projects)) return raw.projects;
+  if (raw?.project || Array.isArray(raw?.buildings)) return [raw];
+  return [];
+};
+
+const projectName = (data: any) =>
+  data?.project?.name || data?.systemConfig?.projectName || "未命名導引專案";
+
+const projectPreview = (data: any) => {
+  for (const building of data?.buildings || []) {
+    for (const floor of building?.floors || []) {
+      if (floor?.imageUrl) return floor.imageUrl;
+    }
+  }
+  return "";
+};
 
 const normalizeAngle = (value: number) => {
   let angle = value % 360;
@@ -405,10 +432,74 @@ function MapPanel({
   );
 }
 
+function ProjectPicker({
+  options,
+  loadingId,
+  error,
+  onSelect,
+}: {
+  options: ProjectOption[];
+  loadingId: string | null;
+  error: string;
+  onSelect: (option: ProjectOption) => void;
+}) {
+  return (
+    <main className="v2-project-picker">
+      <header>
+        <span>AR 導引 V2</span>
+        <h1>選擇導引專案</h1>
+        <p>請選擇這次要使用的場域平面圖。</p>
+      </header>
+
+      {error && <div className="v2-project-error">{error}</div>}
+
+      <section className="v2-project-grid" aria-label="可用的導引專案">
+        {options.map((option) => {
+          const preview = projectPreview(option.localData);
+          const stats = option.summary?.stats;
+          const isLoading = loadingId === option.id;
+          return (
+            <button
+              type="button"
+              key={option.id}
+              className="v2-project-card"
+              onClick={() => onSelect(option)}
+              disabled={Boolean(loadingId)}
+            >
+              <div className="v2-project-preview">
+                {preview ? <img src={preview} alt={`${option.name} 平面圖預覽`} /> : <Map aria-hidden="true" />}
+                {isLoading && (
+                  <span className="v2-project-loading">
+                    <RefreshCw className="is-spinning" aria-hidden="true" />
+                    載入中
+                  </span>
+                )}
+              </div>
+              <div className="v2-project-card-body">
+                <span>導引專案</span>
+                <strong>{option.name}</strong>
+                <small>
+                  {stats
+                    ? `${stats.floorPlans} 張平面圖 · ${stats.markers} 個導引點`
+                    : "點選後載入平面圖與路網"}
+                </small>
+              </div>
+              <ChevronRight aria-hidden="true" />
+            </button>
+          );
+        })}
+      </section>
+    </main>
+  );
+}
+
 export default function ARNavigationV2() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [project, setProject] = useState<any>(null);
+  const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
+  const [projectLoadingId, setProjectLoadingId] = useState<string | null>(null);
+  const [projectPickError, setProjectPickError] = useState("");
   const [screen, setScreen] = useState<"destination" | "origin" | "review" | "calibrate" | "navigate">(
     "destination",
   );
@@ -431,31 +522,65 @@ export default function ARNavigationV2() {
     let active = true;
     const load = async () => {
       try {
-        let raw: any = null;
+        let localRaw: any = null;
         try {
-          const apiResponse = await fetch("./api/ar-content", { cache: "no-store" });
-          const contentType = apiResponse.headers.get("content-type") || "";
-          if (apiResponse.ok && contentType.includes("application/json")) {
-            raw = await apiResponse.json();
+          const fallbackResponse = await fetch("./ar-data.json", { cache: "no-store" });
+          if (fallbackResponse.ok) {
+            localRaw = await fallbackResponse.json();
           }
         } catch {
-          raw = null;
+          localRaw = null;
         }
-        if (!raw) {
-          const fallbackResponse = await fetch("./ar-data.json", { cache: "no-store" });
-          if (!fallbackResponse.ok) throw new Error(`讀取失敗 (${fallbackResponse.status})`);
-          raw = await fallbackResponse.json();
+
+        const optionMap = new globalThis.Map<string, ProjectOption>();
+        normalizeProjects(localRaw).forEach((item: any) => {
+          const id = item?.project?.id;
+          if (!id) return;
+          optionMap.set(id, {
+            id,
+            name: projectName(item),
+            updatedAt: item?.project?.updatedAt,
+            source: "local",
+            localData: item,
+          });
+        });
+
+        try {
+          const listResponse = await fetch(`./api/ar-content?list=1&ts=${Date.now()}`, {
+            cache: "no-store",
+          });
+          const contentType = listResponse.headers.get("content-type") || "";
+          if (listResponse.ok && contentType.includes("application/json")) {
+            const cloudList = await listResponse.json();
+            normalizeProjects(cloudList).forEach((item: any) => {
+              const id = item?.project?.id;
+              if (!id) return;
+              const localOption = optionMap.get(id);
+              optionMap.set(id, {
+                id,
+                name: projectName(item),
+                updatedAt: item?.project?.updatedAt,
+                source: "cloud",
+                localData: localOption?.localData,
+                summary: item,
+              });
+            });
+          }
+        } catch {
+          // Keep packaged project data available when the cloud API is unreachable.
         }
-        const selected =
-          (Array.isArray(raw.projects) &&
-            (raw.projects.find((item: any) => item?.project?.id === raw.activeProjectId) || raw.projects[0])) ||
-          raw;
-        if (!Array.isArray(selected?.buildings) || selected.buildings.length === 0) {
+
+        const options = Array.from(optionMap.values()).sort((a, b) =>
+          a.name.localeCompare(b.name, "zh-Hant"),
+        );
+        if (options.length === 0) {
           throw new Error("雲端尚未建立可用的 AR 專案");
         }
+
         if (active) {
-          setProject(selected);
+          setProjectOptions(options);
           setLoadError("");
+          if (options.length === 1) setProject(options[0].localData);
         }
       } catch (error: any) {
         if (active) setLoadError(error?.message || "無法載入導引資料");
@@ -468,6 +593,53 @@ export default function ARNavigationV2() {
       active = false;
     };
   }, []);
+
+  const selectProject = async (option: ProjectOption) => {
+    setProjectLoadingId(option.id);
+    setProjectPickError("");
+    try {
+      let selected = option.localData;
+      if (option.source === "cloud") {
+        try {
+          const response = await fetch(
+            `./api/ar-content?projectId=${encodeURIComponent(option.id)}&ts=${Date.now()}`,
+            { cache: "no-store" },
+          );
+          const contentType = response.headers.get("content-type") || "";
+          if (!response.ok || !contentType.includes("application/json")) {
+            throw new Error(`雲端讀取失敗 (${response.status})`);
+          }
+          selected = await response.json();
+        } catch (error) {
+          if (!selected) throw error;
+        }
+      }
+
+      if (!Array.isArray(selected?.buildings) || selected.buildings.length === 0) {
+        throw new Error("此專案尚未建立可用的平面圖");
+      }
+
+      setProject(selected);
+      setDestinationId(null);
+      setOrigin(null);
+      setSelectedFloorId(null);
+      setReviewStepIndex(0);
+      setScreen("destination");
+    } catch (error: any) {
+      setProjectPickError(error?.message || "無法載入此導引專案");
+    } finally {
+      setProjectLoadingId(null);
+    }
+  };
+
+  const returnToProjectPicker = () => {
+    setProject(null);
+    setDestinationId(null);
+    setOrigin(null);
+    setSelectedFloorId(null);
+    setReviewStepIndex(0);
+    setScreen("destination");
+  };
 
   useEffect(() => {
     const onOrientation = (event: DeviceOrientationEvent) => {
@@ -686,6 +858,17 @@ export default function ARNavigationV2() {
         <RefreshCw className="is-spinning" aria-hidden="true" />
         <strong>正在載入雲端導引資料</strong>
       </main>
+    );
+  }
+
+  if (!project && projectOptions.length > 0) {
+    return (
+      <ProjectPicker
+        options={projectOptions}
+        loadingId={projectLoadingId}
+        error={projectPickError}
+        onSelect={selectProject}
+      />
     );
   }
 
@@ -1012,9 +1195,11 @@ export default function ARNavigationV2() {
       : screen === "origin"
         ? "切換到你所在樓層，再點擊平面圖位置"
         : "確認後面向第一段路徑進行方向校正";
+  const selectedProjectName = projectName(project);
+  const isHsinchuProject = selectedProjectName.includes("新竹市政府");
 
   return (
-    <main className={`v2-map-screen is-${screen}`}>
+    <main className={`v2-map-screen is-${screen} ${isHsinchuProject ? "is-hsinchu-project" : ""}`}>
       <header className="v2-page-header">
         <button
           type="button"
@@ -1025,6 +1210,8 @@ export default function ARNavigationV2() {
               setScreen("destination");
             } else if (screen === "review") {
               setScreen("origin");
+            } else if (projectOptions.length > 1) {
+              returnToProjectPicker();
             } else {
               window.location.href = "./ar-v2.html";
             }
@@ -1033,7 +1220,10 @@ export default function ARNavigationV2() {
         >
           <ArrowLeft />
         </button>
-        <div className="v2-header-spacer" aria-hidden="true" />
+        <div className="v2-project-identity">
+          <span>目前場域</span>
+          <strong>{selectedProjectName}</strong>
+        </div>
         <div className="v2-version-badge">V2</div>
       </header>
 
