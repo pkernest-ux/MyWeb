@@ -1491,7 +1491,7 @@ button:disabled {
   position: absolute;
   z-index: 8;
   top: calc(112px + env(safe-area-inset-top));
-  bottom: calc(148px + env(safe-area-inset-bottom));
+  bottom: calc(190px + env(safe-area-inset-bottom));
   left: 50%;
   display: flex;
   width: min(94vw, 470px);
@@ -1671,7 +1671,7 @@ button:disabled {
   bottom: calc(10px + env(safe-area-inset-bottom));
   left: 10px;
   display: grid;
-  min-height: 124px;
+  min-height: 174px;
   grid-template-columns: minmax(0, 1fr);
   align-items: stretch;
   gap: 8px;
@@ -1792,6 +1792,58 @@ button:disabled {
   border-radius: inherit;
   background: #f7c948;
   transition: width 180ms ease;
+}
+
+.v2-nav-console .v2-scale-warning {
+  display: block;
+  margin-top: 5px;
+  color: #f7c948;
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+.v2-nav-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 7px;
+  margin-top: 7px;
+}
+
+.v2-nav-actions > button {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 31px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.17);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #d8e8f4;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.v2-nav-actions > button.is-arrived {
+  border-color: rgba(78, 217, 150, 0.38);
+  background: rgba(78, 217, 150, 0.14);
+  color: #8ff0bf;
+}
+
+.v2-nav-actions > button:disabled {
+  opacity: 0.34;
+}
+
+.v2-nav-actions > button svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.v2-nav-console.is-map-open .v2-scale-warning,
+.v2-nav-console.is-map-open .v2-nav-actions {
+  display: none;
 }
 
 .v2-assist-button {
@@ -2028,6 +2080,19 @@ button:disabled {
 }
 
 @media (max-height: 690px) {
+  .v2-ar-route-zone {
+    bottom: calc(168px + env(safe-area-inset-bottom));
+    min-height: 180px;
+  }
+
+  .v2-nav-console {
+    min-height: 154px;
+  }
+
+  .v2-nav-console .v2-scale-warning {
+    display: none;
+  }
+
   .v2-map-screen .v2-intro {
     padding-top: 24px;
   }

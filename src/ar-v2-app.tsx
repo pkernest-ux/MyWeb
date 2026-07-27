@@ -74,9 +74,12 @@ type ProjectOption = {
 };
 
 const clamp = (value: number, min = 0, max = 1) => Math.min(max, Math.max(min, value));
-const ESTIMATED_STRIDE_METERS = 0.68;
-const STEP_ACCELERATION_THRESHOLD = 1.15;
-const STEP_COOLDOWN_MS = 320;
+const ESTIMATED_STRIDE_METERS = 0.72;
+const STEP_ACCELERATION_THRESHOLD = 0.62;
+const STEP_RELEASE_THRESHOLD = 0.28;
+const STEP_COOLDOWN_MS = 300;
+const WALKING_FORWARD_LIMIT = 78;
+const WALKING_REVERSE_LIMIT = 112;
 
 const normalizeProjects = (raw: any) => {
   if (Array.isArray(raw?.projects)) return raw.projects;
@@ -518,6 +521,7 @@ export default function ARNavigationV2() {
   const [segmentProgress, setSegmentProgress] = useState(0);
   const [stepCount, setStepCount] = useState(0);
   const [motionDetected, setMotionDetected] = useState(false);
+  const [walkingDirection, setWalkingDirection] = useState<"idle" | "forward" | "reverse" | "paused">("idle");
   const [reviewStepIndex, setReviewStepIndex] = useState(0);
   const [mapExpanded, setMapExpanded] = useState(false);
   const [mapFloorId, setMapFloorId] = useState<string | null>(null);
@@ -527,7 +531,9 @@ export default function ARNavigationV2() {
   const navigationPointsRef = useRef<Array<any>>([]);
   const segmentIndexRef = useRef(0);
   const segmentProgressRef = useRef(0);
-  const motionSampleRef = useRef({ filtered: 0, lastStepAt: 0, hasSample: false });
+  const headingRef = useRef<number | null>(null);
+  const calibrationHeadingRef = useRef<number | null>(null);
+  const motionSampleRef = useRef({ filtered: 0, lastStepAt: 0, hasSample: false, armed: true });
 
   useEffect(() => {
     let active = true;
@@ -639,6 +645,7 @@ export default function ARNavigationV2() {
       setSegmentProgress(0);
       setStepCount(0);
       setMotionDetected(false);
+      setWalkingDirection("idle");
       setScreen("destination");
     } catch (error: any) {
       setProjectPickError(error?.message || "無法載入此導引專案");
@@ -657,13 +664,17 @@ export default function ARNavigationV2() {
     setSegmentProgress(0);
     setStepCount(0);
     setMotionDetected(false);
+    setWalkingDirection("idle");
     setScreen("destination");
   };
 
   useEffect(() => {
     const onOrientation = (event: DeviceOrientationEvent) => {
       const nextHeading = getHeading(event as DeviceOrientationEvent & { webkitCompassHeading?: number });
-      if (nextHeading !== null) setHeading(nextHeading);
+      if (nextHeading !== null) {
+        headingRef.current = nextHeading;
+        setHeading(nextHeading);
+      }
     };
     window.addEventListener("deviceorientation", onOrientation, true);
     if ("ondeviceorientationabsolute" in window) {
@@ -677,6 +688,10 @@ export default function ARNavigationV2() {
       streamRef.current?.getTracks().forEach((track) => track.stop());
     };
   }, []);
+
+  useEffect(() => {
+    calibrationHeadingRef.current = calibrationHeading;
+  }, [calibrationHeading]);
 
   useEffect(() => {
     if (videoRef.current && streamRef.current) {
@@ -784,16 +799,41 @@ export default function ARNavigationV2() {
     heading !== null && calibrationHeading !== null ? normalizeAngle(heading - calibrationHeading) : 0;
   const arrowRotation = normalizeAngle(currentBearing - firstBearing - headingDelta);
   const remainingDistance = routeLength(activeNavigationPoints);
+  const passedPoints = navigationPoints.slice(0, currentSegment + 1).reverse();
+  const firstPassedPoint = passedPoints[0];
+  const passedPointsWithoutDuplicate =
+    currentRoutePosition &&
+    firstPassedPoint &&
+    Math.hypot(
+      firstPassedPoint.physX - currentRoutePosition.physX,
+      firstPassedPoint.physY - currentRoutePosition.physY,
+    ) < 0.01
+      ? passedPoints.slice(1)
+      : passedPoints;
+  const passedNavigationPoints = currentRoutePosition
+    ? [currentRoutePosition, ...passedPointsWithoutDuplicate]
+    : passedPointsWithoutDuplicate;
+  const hasPassedRoute = currentSegment > 0 || currentSegmentProgress > 0.05;
+  const isFacingBackward = hasPassedRoute && Math.abs(arrowRotation) >= WALKING_REVERSE_LIMIT;
+  const projectionNavigationPoints =
+    isFacingBackward && passedNavigationPoints.length > 1
+      ? passedNavigationPoints
+      : activeNavigationPoints;
+  const projectionBearing =
+    projectionNavigationPoints.length > 1
+      ? segmentBearing(projectionNavigationPoints[0], projectionNavigationPoints[1])
+      : currentBearing;
+  const arProjectionRotation = normalizeAngle(projectionBearing - firstBearing - headingDelta);
   const arProjectedPoints = [{ x: 50, y: 94 }];
   for (
     let index = 0;
-    index < Math.min(activeNavigationPoints.length - 1, 6);
+    index < Math.min(projectionNavigationPoints.length - 1, 6);
     index += 1
   ) {
-    const start = activeNavigationPoints[index];
-    const end = activeNavigationPoints[index + 1];
+    const start = projectionNavigationPoints[index];
+    const end = projectionNavigationPoints[index + 1];
     if (!start || !end || start.fId !== currentRoutePosition?.fId || end.fId !== currentRoutePosition?.fId) break;
-    const relativeBearing = normalizeAngle(segmentBearing(start, end) - currentBearing);
+    const relativeBearing = normalizeAngle(segmentBearing(start, end) - projectionBearing);
     const segmentDistance = Math.hypot(end.physX - start.physX, end.physY - start.physY);
     const projectedDistance = clamp(segmentDistance * 4.5, 13, 24);
     const previous = arProjectedPoints[arProjectedPoints.length - 1];
@@ -808,10 +848,23 @@ export default function ARNavigationV2() {
     .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
     .join(" ");
   const arDirectionLabel =
-    Math.abs(arrowRotation) < 18 ? "沿路線直行" : arrowRotation > 0 ? "路線在右側" : "路線在左側";
+    isFacingBackward
+      ? "回頭檢視已走路線"
+      : Math.abs(arrowRotation) < 18
+        ? "沿路線直行"
+        : arrowRotation > 0
+          ? "路線在右側"
+          : "路線在左側";
   const mapFloor = graph.floors.find((floor) => floor.id === mapFloorId) ||
     graph.floors.find((floor) => floor.id === segmentStart?.fId) ||
     selectedFloor;
+  const mapFloorBounds = mapFloor?.bounds;
+  const isScaleUncalibrated =
+    !mapFloorBounds ||
+    (
+      Math.abs((mapFloorBounds.trX ?? 100) - (mapFloorBounds.blX ?? 0) - 100) < 0.01 &&
+      Math.abs((mapFloorBounds.trY ?? 100) - (mapFloorBounds.blY ?? 0) - 100) < 0.01
+    );
   const currentFloorStepIndex = Math.max(
     0,
     routeSteps.findIndex((step) => step.floorId === segmentStart?.fId),
@@ -850,7 +903,7 @@ export default function ARNavigationV2() {
       const magnitude = Math.sqrt(x * x + y * y + z * z);
       const dynamicMagnitude = values === gravityAcceleration ? Math.abs(magnitude - 9.81) : magnitude;
       const previousFiltered = motionSampleRef.current.filtered;
-      const filtered = previousFiltered * 0.72 + dynamicMagnitude * 0.28;
+      const filtered = previousFiltered * 0.45 + dynamicMagnitude * 0.55;
       motionSampleRef.current.filtered = filtered;
 
       if (!motionSampleRef.current.hasSample) {
@@ -858,37 +911,107 @@ export default function ARNavigationV2() {
         setMotionDetected(true);
       }
 
+      if (filtered <= STEP_RELEASE_THRESHOLD) {
+        motionSampleRef.current.armed = true;
+      }
+
       const now = Date.now();
       const isStep =
+        motionSampleRef.current.armed &&
         filtered >= STEP_ACCELERATION_THRESHOLD &&
-        previousFiltered < STEP_ACCELERATION_THRESHOLD &&
         now - motionSampleRef.current.lastStepAt >= STEP_COOLDOWN_MS;
       if (!isStep) return;
 
+      motionSampleRef.current.armed = false;
+      const previousStepAt = motionSampleRef.current.lastStepAt;
       motionSampleRef.current.lastStepAt = now;
-      setStepCount((count) => count + 1);
 
       const points = navigationPointsRef.current;
       let nextIndex = segmentIndexRef.current;
-      let nextProgress = segmentProgressRef.current + ESTIMATED_STRIDE_METERS;
+      const routeStart = points[nextIndex];
+      const routeEnd = points[nextIndex + 1];
+      if (!routeStart || !routeEnd || routeStart.fId !== routeEnd.fId) {
+        setWalkingDirection("paused");
+        return;
+      }
 
-      while (nextIndex < points.length - 1) {
-        const start = points[nextIndex];
-        const end = points[nextIndex + 1];
-        if (!start || !end || start.fId !== end.fId) {
-          nextProgress = 0;
-          break;
+      let movementSign = 1;
+      const currentHeading = headingRef.current;
+      const baseHeading = calibrationHeadingRef.current;
+      const firstRouteIndex = points.findIndex((point, index) => {
+        const nextPoint = points[index + 1];
+        return (
+          nextPoint &&
+          point.fId === nextPoint.fId &&
+          Math.hypot(nextPoint.physX - point.physX, nextPoint.physY - point.physY) > 0.01
+        );
+      });
+
+      if (currentHeading !== null && baseHeading !== null && firstRouteIndex >= 0) {
+        const firstRouteBearing = segmentBearing(points[firstRouteIndex], points[firstRouteIndex + 1]);
+        const routeBearing = segmentBearing(routeStart, routeEnd);
+        const deviceTurn = normalizeAngle(currentHeading - baseHeading);
+        const facingDelta = normalizeAngle(routeBearing - firstRouteBearing - deviceTurn);
+        const absoluteFacingDelta = Math.abs(facingDelta);
+
+        if (absoluteFacingDelta >= WALKING_REVERSE_LIMIT) {
+          movementSign = -1;
+        } else if (absoluteFacingDelta > WALKING_FORWARD_LIMIT) {
+          setWalkingDirection("paused");
+          return;
         }
+      }
 
-        const distance = Math.hypot(end.physX - start.physX, end.physY - start.physY);
-        if (nextProgress < distance) break;
-        if (nextIndex >= points.length - 2) {
-          nextProgress = distance;
-          break;
+      const stepInterval = previousStepAt > 0 ? now - previousStepAt : 0;
+      const strideMeters =
+        stepInterval > 0 && stepInterval < 430
+          ? 0.78
+          : stepInterval > 780
+            ? 0.64
+            : ESTIMATED_STRIDE_METERS;
+      let nextProgress = segmentProgressRef.current + strideMeters * movementSign;
+      setStepCount((count) => count + 1);
+      setWalkingDirection(movementSign > 0 ? "forward" : "reverse");
+
+      if (movementSign > 0) {
+        while (nextIndex < points.length - 1) {
+          const start = points[nextIndex];
+          const end = points[nextIndex + 1];
+          if (!start || !end || start.fId !== end.fId) {
+            nextProgress = 0;
+            break;
+          }
+
+          const distance = Math.hypot(end.physX - start.physX, end.physY - start.physY);
+          if (nextProgress < distance) break;
+          if (nextIndex >= points.length - 2) {
+            nextProgress = distance;
+            break;
+          }
+
+          nextProgress -= distance;
+          nextIndex += 1;
         }
+      } else {
+        while (nextProgress < 0) {
+          if (nextIndex <= 0) {
+            nextProgress = 0;
+            break;
+          }
 
-        nextProgress -= distance;
-        nextIndex += 1;
+          const previousStart = points[nextIndex - 1];
+          const previousEnd = points[nextIndex];
+          if (!previousStart || !previousEnd || previousStart.fId !== previousEnd.fId) {
+            nextProgress = 0;
+            break;
+          }
+
+          nextIndex -= 1;
+          nextProgress += Math.hypot(
+            previousEnd.physX - previousStart.physX,
+            previousEnd.physY - previousStart.physY,
+          );
+        }
       }
 
       segmentIndexRef.current = nextIndex;
@@ -914,6 +1037,44 @@ export default function ARNavigationV2() {
     setSegmentIndex(nextIndex);
     setSegmentProgress(0);
     setMapFloorId(targetStep.floorId);
+    setWalkingDirection("idle");
+  };
+
+  const replayCurrentFloorRoute = () => {
+    goToRouteFloor(currentFloorStepIndex);
+    setStepCount(0);
+    setWalkingDirection("idle");
+    motionSampleRef.current = { filtered: 0, lastStepAt: 0, hasSample: false, armed: true };
+  };
+
+  const completeCurrentFloorStage = () => {
+    const activeStep = routeSteps[currentFloorStepIndex];
+    const finalPoint = activeStep?.points[activeStep.points.length - 1];
+    if (!activeStep || !finalPoint) return;
+
+    const finalPointIndex = navigationPoints.findIndex(
+      (point) => point.id === finalPoint.id && point.fId === finalPoint.fId,
+    );
+    if (finalPointIndex < 0) return;
+
+    let nextIndex = finalPointIndex;
+    let nextProgress = 0;
+    if (!nextNavigationFloor) {
+      nextIndex = clamp(finalPointIndex - 1, 0, Math.max(0, navigationPoints.length - 2));
+      const start = navigationPoints[nextIndex];
+      const end = navigationPoints[nextIndex + 1];
+      nextProgress =
+        start && end
+          ? Math.hypot(end.physX - start.physX, end.physY - start.physY)
+          : 0;
+    }
+
+    segmentIndexRef.current = nextIndex;
+    segmentProgressRef.current = nextProgress;
+    setSegmentIndex(nextIndex);
+    setSegmentProgress(nextProgress);
+    setMapFloorId(activeStep.floorId);
+    setWalkingDirection("idle");
   };
 
   const selectDestination = (id: string) => {
@@ -977,14 +1138,17 @@ export default function ARNavigationV2() {
   };
 
   const beginNavigation = () => {
-    setCalibrationHeading(heading ?? 0);
+    const nextCalibrationHeading = heading ?? 0;
+    calibrationHeadingRef.current = nextCalibrationHeading;
+    setCalibrationHeading(nextCalibrationHeading);
     setSegmentIndex(0);
     segmentIndexRef.current = 0;
     segmentProgressRef.current = 0;
-    motionSampleRef.current = { filtered: 0, lastStepAt: 0, hasSample: false };
+    motionSampleRef.current = { filtered: 0, lastStepAt: 0, hasSample: false, armed: true };
     setSegmentProgress(0);
     setStepCount(0);
     setMotionDetected(false);
+    setWalkingDirection("idle");
     setMapExpanded(false);
     setScreen("navigate");
   };
@@ -992,13 +1156,16 @@ export default function ARNavigationV2() {
   const restart = () => {
     setDestinationId(null);
     setOrigin(null);
+    calibrationHeadingRef.current = null;
     setCalibrationHeading(null);
     setSegmentIndex(0);
     segmentIndexRef.current = 0;
     segmentProgressRef.current = 0;
+    motionSampleRef.current = { filtered: 0, lastStepAt: 0, hasSample: false, armed: true };
     setSegmentProgress(0);
     setStepCount(0);
     setMotionDetected(false);
+    setWalkingDirection("idle");
     setReviewStepIndex(0);
     setMapExpanded(false);
     setShowAssistMenu(false);
@@ -1045,10 +1212,30 @@ export default function ARNavigationV2() {
     const canReturnFloor = Boolean(previousNavigationFloor);
     const canAdvanceFloor = Boolean(changedFloor && nextNavigationFloor);
     const hasFloorControls = canReturnFloor || canAdvanceFloor;
+    const currentFloorStartPoint = routeSteps[currentFloorStepIndex]?.points[0];
+    const currentFloorStartIndex = currentFloorStartPoint
+      ? navigationPoints.findIndex(
+          (point) => point.id === currentFloorStartPoint.id && point.fId === currentFloorStartPoint.fId,
+        )
+      : 0;
+    const canReplayCurrentFloor =
+      currentSegment > Math.max(0, currentFloorStartIndex) || currentSegmentProgress > 0.05;
+    const walkingStatusText =
+      walkingDirection === "reverse"
+        ? `回走偵測 · 路線往回展開 · ${stepCount} 步`
+        : walkingDirection === "paused"
+          ? "方向偏離路線，已暫停距離計算"
+          : motionDetected
+            ? `步行輔助 · ${stepCount} 步`
+            : "等待加速器步行感測";
     const instruction = changedFloor
       ? `已抵達轉乘點，請切換至 ${segmentEnd.fName}`
       : isArrived
         ? `已抵達 ${nodeLabel(destination)}`
+        : walkingDirection === "reverse"
+          ? "偵測到回走，已恢復顯示走過的路線"
+          : walkingDirection === "paused"
+            ? "請面向道路方向，系統才會繼續計算距離"
         : isLastSegment
         ? `沿箭頭前進，即將抵達 ${nodeLabel(destination)}`
         : "沿 AR 路線前進，步行感測會自動更新進度";
@@ -1079,10 +1266,14 @@ export default function ARNavigationV2() {
         <div className="v2-ar-route-zone" aria-live="polite">
           <svg
             className="v2-ar-route-projection"
-            style={{ "--v2-route-rotation": `${arrowRotation}deg` } as React.CSSProperties}
+            style={{ "--v2-route-rotation": `${arProjectionRotation}deg` } as React.CSSProperties}
             viewBox="0 0 100 100"
             preserveAspectRatio="xMidYMid meet"
-            aria-label={`AR 導引路線，方向 ${Math.round(arrowRotation)} 度`}
+            aria-label={
+              isFacingBackward
+                ? "AR 已走路線回放"
+                : `AR 導引路線，方向 ${Math.round(arProjectionRotation)} 度`
+            }
           >
             <defs>
               <filter id="v2-ar-route-glow" x="-80%" y="-80%" width="260%" height="260%">
@@ -1142,7 +1333,7 @@ export default function ARNavigationV2() {
             mode="route"
             destinationId={destinationId}
             origin={origin}
-            routePoints={activeNavigationPoints}
+            routePoints={isFacingBackward ? navigationPoints : activeNavigationPoints}
             compact={!mapExpanded}
           />
           <span className="v2-map-floor-label">{mapFloor?.name}</span>
@@ -1182,13 +1373,36 @@ export default function ARNavigationV2() {
             <strong>{instruction}</strong>
             <small className="v2-walking-status">
               <Footprints aria-hidden="true" />
-              {motionDetected ? `步行輔助 · ${stepCount} 步` : "等待加速器步行感測"}
+              {walkingStatusText}
             </small>
             {!changedFloor && (
               <div className="v2-walking-progress" aria-label={`目前路段進度 ${Math.round(walkingProgress * 100)}%`}>
                 <span style={{ width: `${walkingProgress * 100}%` }} />
               </div>
             )}
+            {isScaleUncalibrated && (
+              <small className="v2-scale-warning">比例尺仍為預設 100×100 公尺，距離僅供估算</small>
+            )}
+            <div className="v2-nav-actions">
+              <button
+                type="button"
+                onClick={replayCurrentFloorRoute}
+                disabled={!canReplayCurrentFloor}
+                title="從目前樓層起點重新播放完整路線"
+              >
+                <RefreshCw aria-hidden="true" />
+                <span>重播本層</span>
+              </button>
+              <button
+                type="button"
+                className="is-arrived"
+                onClick={completeCurrentFloorStage}
+                title={nextNavigationFloor ? "已到達本層轉乘點" : "已到達目的地"}
+              >
+                <MapPin aria-hidden="true" />
+                <span>{nextNavigationFloor ? "到達本層終點" : "我已抵達"}</span>
+              </button>
+            </div>
           </div>
           {hasFloorControls &&
             (canAdvanceFloor ? (
