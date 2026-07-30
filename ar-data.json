@@ -8,7 +8,7 @@
         "id": "project_1783262670309_v8ykg",
         "name": "新竹市政府",
         "description": "",
-        "updatedAt": "2026-07-30T08:16:21.908Z"
+        "updatedAt": "2026-07-30T08:20:44.604Z"
       },
       "systemConfig": {
         "projectName": "新竹市政府",
@@ -495,15 +495,6 @@
                   "sourceFloorId": "f_1783262670309"
                 },
                 {
-                  "id": "wp_1785398677051_n2qpl",
-                  "x": 0.2781593767621249,
-                  "y": 0.3733369588718973,
-                  "isVerticalShaft": false,
-                  "shaftId": null,
-                  "linkedFloorIds": [],
-                  "sourceFloorId": "f_1783262670309"
-                },
-                {
                   "id": "wp_1785398690682_h6fpg",
                   "x": 0.31259467473139413,
                   "y": 0.37445603511447023,
@@ -808,6 +799,69 @@
                   "shaftId": null,
                   "linkedFloorIds": [],
                   "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1785399585684_jirzj",
+                  "x": 0.2756205932013088,
+                  "y": 0.40905295073590986,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1785399596572_f6e9k",
+                  "x": 0.2359296531275464,
+                  "y": 0.4082713309077126,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1785399599489_ta9py",
+                  "x": 0.16158794042079164,
+                  "y": 0.40670807037917994,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1785399601088_595jj",
+                  "x": 0.08472607670079828,
+                  "y": 0.40670807037917994,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1785399607240_wgxzl",
+                  "x": 0.23781970750622847,
+                  "y": 0.21911356133778717,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1785399609799_65mrf",
+                  "x": 0.3134214788963891,
+                  "y": 0.21989520203812254,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1785399615289_x4ve3",
+                  "x": 0.2371897118109523,
+                  "y": 0.4551699816492162,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
                 }
               ],
               "edges": [
@@ -880,11 +934,6 @@
                   "id": "edge_1785398635465_46tdr",
                   "start": "wp_1785398631838_boeig",
                   "end": "wp_1785398635465_kcb9t"
-                },
-                {
-                  "id": "edge_1785398690682_fq2v8",
-                  "start": "wp_1785398677051_n2qpl",
-                  "end": "wp_1785398690682_h6fpg"
                 },
                 {
                   "id": "edge_1785398696767_csldx",
@@ -1032,11 +1081,6 @@
                   "end": "wp_1785398635465_kcb9t"
                 },
                 {
-                  "id": "edge_1785399112212_y2y87",
-                  "start": "wp_1785398677051_n2qpl",
-                  "end": "wp_1785399112212_k2qwb"
-                },
-                {
                   "id": "edge_1785399114032_pum9j",
                   "start": "wp_1785399112212_k2qwb",
                   "end": "wp_1785398635465_kcb9t"
@@ -1160,6 +1204,41 @@
                   "id": "edge_1785399240222_fjlyd",
                   "start": "wp_1785399237129_2fk1u",
                   "end": "wp_1785398512683_7950v"
+                },
+                {
+                  "id": "edge_1785399585684_fnh7i",
+                  "start": "wp_1785399112212_k2qwb",
+                  "end": "wp_1785399585684_jirzj"
+                },
+                {
+                  "id": "edge_1785399596572_njmx9",
+                  "start": "wp_1785399585684_jirzj",
+                  "end": "wp_1785399596572_f6e9k"
+                },
+                {
+                  "id": "edge_1785399599489_g8ryf",
+                  "start": "wp_1785399596572_f6e9k",
+                  "end": "wp_1785399599489_ta9py"
+                },
+                {
+                  "id": "edge_1785399601088_st479",
+                  "start": "wp_1785399599489_ta9py",
+                  "end": "wp_1785399601088_595jj"
+                },
+                {
+                  "id": "edge_1785399607240_jp60g",
+                  "start": "wp_1785399596572_f6e9k",
+                  "end": "wp_1785399607240_wgxzl"
+                },
+                {
+                  "id": "edge_1785399609799_ttvgo",
+                  "start": "wp_1785399607240_wgxzl",
+                  "end": "wp_1785399609799_65mrf"
+                },
+                {
+                  "id": "edge_1785399615289_yk8ei",
+                  "start": "wp_1785399596572_f6e9k",
+                  "end": "wp_1785399615289_x4ve3"
                 }
               ],
               "bounds": {
