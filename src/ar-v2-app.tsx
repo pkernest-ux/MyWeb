@@ -456,14 +456,19 @@ function ProjectPicker({
   loadingId,
   error,
   onSelect,
+  onBack,
 }: {
   options: ProjectOption[];
   loadingId: string | null;
   error: string;
   onSelect: (option: ProjectOption) => void;
+  onBack: () => void;
 }) {
   return (
     <main className="v2-project-picker">
+      <button type="button" className="v2-project-back" onClick={onBack} aria-label="回到歡迎頁">
+        <ArrowLeft />
+      </button>
       <header>
         <span>AR 導引 V2</span>
         <h1>選擇導引專案</h1>
@@ -512,7 +517,20 @@ function ProjectPicker({
   );
 }
 
+function WelcomeScreen({ onStart }: { onStart: () => void }) {
+  return (
+    <main className="v2-welcome">
+      <div className="v2-welcome-background" aria-hidden="true" />
+      <button type="button" className="v2-welcome-start" onClick={onStart} aria-label="開始體驗">
+        <span>開始</span>
+        <span>體驗</span>
+      </button>
+    </main>
+  );
+}
+
 export default function ARNavigationV2() {
+  const [showWelcome, setShowWelcome] = useState(true);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [project, setProject] = useState<any>(null);
@@ -1214,6 +1232,10 @@ export default function ARNavigationV2() {
     setScreen("destination");
   };
 
+  if (showWelcome) {
+    return <WelcomeScreen onStart={() => setShowWelcome(false)} />;
+  }
+
   if (loading) {
     return (
       <main className="v2-loading">
@@ -1230,6 +1252,7 @@ export default function ARNavigationV2() {
         loadingId={projectLoadingId}
         error={projectPickError}
         onSelect={selectProject}
+        onBack={() => setShowWelcome(true)}
       />
     );
   }

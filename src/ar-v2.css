@@ -84,7 +84,64 @@ button:disabled {
   color: #df5d54;
 }
 
+.v2-welcome {
+  position: relative;
+  width: 100%;
+  height: 100dvh;
+  min-height: 560px;
+  overflow: hidden;
+  background: #f4ecdf;
+}
+
+.v2-welcome-background {
+  position: absolute;
+  inset: 0;
+  background: url("../assets/ar/welcome-portal.png") top center / cover no-repeat;
+}
+
+.v2-welcome-start {
+  position: absolute;
+  z-index: 2;
+  top: 60%;
+  left: 50%;
+  display: flex;
+  width: 96px;
+  height: 96px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  transform: translate(-50%, -50%);
+  border: 4px solid rgba(255, 255, 255, 0.88);
+  border-radius: 50%;
+  background: linear-gradient(180deg, #5ba4d8, #1070d1);
+  color: #ffffff;
+  box-shadow:
+    0 14px 34px rgba(16, 112, 209, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.32);
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1.15;
+  animation: v2-welcome-bounce 1.7s ease-in-out infinite;
+}
+
+.v2-welcome-start:active {
+  animation-play-state: paused;
+  transform: translate(-50%, -50%) scale(0.95);
+}
+
+@keyframes v2-welcome-bounce {
+  0%,
+  100% {
+    transform: translate(-50%, -50%);
+  }
+
+  50% {
+    transform: translate(-50%, calc(-50% - 10px));
+  }
+}
+
 .v2-project-picker {
+  position: relative;
   width: 100%;
   min-height: 100dvh;
   padding: calc(34px + env(safe-area-inset-top)) 18px calc(28px + env(safe-area-inset-bottom));
@@ -97,6 +154,28 @@ button:disabled {
 .v2-project-picker > header {
   max-width: 720px;
   margin: 0 auto 22px;
+  padding-top: 40px;
+}
+
+.v2-project-back {
+  position: absolute;
+  top: calc(16px + env(safe-area-inset-top));
+  left: 18px;
+  display: flex;
+  width: 42px;
+  height: 42px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(24, 117, 200, 0.16);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92);
+  color: #557089;
+  box-shadow: 0 8px 20px rgba(31, 68, 101, 0.12);
+}
+
+.v2-project-back svg {
+  width: 21px;
+  height: 21px;
 }
 
 .v2-project-picker > header span {
@@ -2025,6 +2104,7 @@ button:disabled {
   .v2-calibration,
   .v2-ar-screen,
   .v2-loading,
+  .v2-welcome,
   .v2-project-picker {
     width: min(100%, 520px);
     margin: 0 auto;
@@ -2033,6 +2113,12 @@ button:disabled {
 
   .v2-map-card {
     min-height: 400px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v2-welcome-start {
+    animation: none;
   }
 }
 
