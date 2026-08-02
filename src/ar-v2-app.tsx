@@ -315,6 +315,19 @@ function MapPanel({
   reverseFlow?: boolean;
 }) {
   const [ratio, setRatio] = useState(1.25);
+  const [mapTransform, setMapTransform] = useState({ scale: 1, x: 0, y: 0 });
+  const pointerMapRef = useRef(new globalThis.Map<number, { x: number; y: number }>());
+  const gestureRef = useRef({
+    startDistance: 0,
+    startScale: 1,
+    startCenterX: 0,
+    startCenterY: 0,
+    startPointerX: 0,
+    startPointerY: 0,
+    startPanX: 0,
+    startPanY: 0,
+    moved: false,
+  });
   const destinations = (Object.values(graph.nodes) as NodeData[]).filter(
     (node) => node.isMarker && node.fId === floor?.id,
   );
@@ -328,22 +341,150 @@ function MapPanel({
       : "";
   const routePathId = `v2-route-${String(floor?.id || "floor").replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 
-  const handleMapClick = (event: React.PointerEvent<HTMLDivElement>) => {
+  useEffect(() => {
+    pointerMapRef.current.clear();
+    setMapTransform({ scale: 1, x: 0, y: 0 });
+  }, [floor?.id]);
+
+  const constrainTransform = (
+    transform: { scale: number; x: number; y: number },
+    rect: DOMRect,
+  ) => {
+    const scale = clamp(transform.scale, 1, 4);
+    if (scale <= 1) return { scale: 1, x: 0, y: 0 };
+    const maxX = (rect.width * (scale - 1)) / 2;
+    const maxY = (rect.height * (scale - 1)) / 2;
+    return {
+      scale,
+      x: clamp(transform.x, -maxX, maxX),
+      y: clamp(transform.y, -maxY, maxY),
+    };
+  };
+
+  const selectOriginAtPointer = (event: React.PointerEvent<HTMLDivElement>) => {
     if (mode !== "origin" || !onOrigin) return;
     const rect = event.currentTarget.getBoundingClientRect();
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+    const localX = (event.clientX - rect.left - centerX - mapTransform.x) / mapTransform.scale + centerX;
+    const localY = (event.clientY - rect.top - centerY - mapTransform.y) / mapTransform.scale + centerY;
     onOrigin({
-      x: clamp((event.clientX - rect.left) / rect.width),
-      y: clamp((event.clientY - rect.top) / rect.height),
+      x: clamp(localX / rect.width),
+      y: clamp(localY / rect.height),
     });
+  };
+
+  const startPointerGesture = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    pointerMapRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const pointers = Array.from(pointerMapRef.current.values());
+    const gesture = gestureRef.current;
+    gesture.moved = false;
+    gesture.startPanX = mapTransform.x;
+    gesture.startPanY = mapTransform.y;
+
+    if (pointers.length === 1) {
+      gesture.startPointerX = pointers[0].x;
+      gesture.startPointerY = pointers[0].y;
+    } else if (pointers.length >= 2) {
+      const [first, second] = pointers;
+      gesture.startDistance = Math.hypot(second.x - first.x, second.y - first.y);
+      gesture.startScale = mapTransform.scale;
+      gesture.startCenterX = (first.x + second.x) / 2;
+      gesture.startCenterY = (first.y + second.y) / 2;
+    }
+  };
+
+  const movePointerGesture = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!pointerMapRef.current.has(event.pointerId)) return;
+    pointerMapRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const pointers = Array.from(pointerMapRef.current.values());
+    const gesture = gestureRef.current;
+    const rect = event.currentTarget.getBoundingClientRect();
+
+    if (pointers.length >= 2) {
+      const [first, second] = pointers;
+      const distance = Math.hypot(second.x - first.x, second.y - first.y);
+      const centerX = (first.x + second.x) / 2;
+      const centerY = (first.y + second.y) / 2;
+      if (Math.abs(distance - gesture.startDistance) > 2) gesture.moved = true;
+      setMapTransform(
+        constrainTransform(
+          {
+            scale: gesture.startScale * (distance / Math.max(1, gesture.startDistance)),
+            x: gesture.startPanX + centerX - gesture.startCenterX,
+            y: gesture.startPanY + centerY - gesture.startCenterY,
+          },
+          rect,
+        ),
+      );
+      return;
+    }
+
+    if (pointers.length === 1 && mapTransform.scale > 1) {
+      const deltaX = pointers[0].x - gesture.startPointerX;
+      const deltaY = pointers[0].y - gesture.startPointerY;
+      if (Math.hypot(deltaX, deltaY) > 3) gesture.moved = true;
+      setMapTransform(
+        constrainTransform(
+          {
+            scale: mapTransform.scale,
+            x: gesture.startPanX + deltaX,
+            y: gesture.startPanY + deltaY,
+          },
+          rect,
+        ),
+      );
+    }
+  };
+
+  const endPointerGesture = (event: React.PointerEvent<HTMLDivElement>) => {
+    const wasSinglePointer = pointerMapRef.current.size === 1;
+    const wasTap = wasSinglePointer && !gestureRef.current.moved;
+    pointerMapRef.current.delete(event.pointerId);
+
+    if (wasTap) selectOriginAtPointer(event);
+
+    const remaining = Array.from(pointerMapRef.current.values());
+    if (remaining.length === 1) {
+      gestureRef.current.startPointerX = remaining[0].x;
+      gestureRef.current.startPointerY = remaining[0].y;
+      gestureRef.current.startPanX = mapTransform.x;
+      gestureRef.current.startPanY = mapTransform.y;
+      gestureRef.current.moved = false;
+    }
+  };
+
+  const handleMapWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const scaleFactor = event.deltaY < 0 ? 1.16 : 0.86;
+    setMapTransform((current) =>
+      constrainTransform({ ...current, scale: current.scale * scaleFactor }, rect),
+    );
   };
 
   return (
     <div className={`v2-map-frame ${compact ? "is-compact" : ""}`}>
       <div
-        className={`v2-map-plane ${mode === "origin" ? "is-selecting" : ""}`}
+        className={`v2-map-plane ${mode === "origin" ? "is-selecting" : ""} ${mapTransform.scale > 1.01 ? "is-zoomed" : ""}`}
         style={{ aspectRatio: `${ratio}` }}
-        onPointerUp={handleMapClick}
+        onPointerDown={startPointerGesture}
+        onPointerMove={movePointerGesture}
+        onPointerUp={endPointerGesture}
+        onPointerCancel={endPointerGesture}
+        onWheel={handleMapWheel}
       >
+        <div
+          className="v2-map-world"
+          style={
+            {
+              transform: `translate3d(${mapTransform.x}px, ${mapTransform.y}px, 0) scale(${mapTransform.scale})`,
+              "--v2-pin-scale": String(1 / mapTransform.scale),
+            } as React.CSSProperties
+          }
+        >
         {floor?.imageUrl ? (
           <img
             src={floor.imageUrl}
@@ -407,6 +548,7 @@ function MapPanel({
               key={node.id}
               className={`v2-destination-pin ${destinationId === node.id ? "is-selected" : ""}`}
               style={{ left: `${clamp(node.x) * 100}%`, top: `${clamp(node.y) * 100}%` }}
+              onPointerDown={(event) => event.stopPropagation()}
               onPointerUp={(event) => event.stopPropagation()}
               onClick={(event) => {
                 event.stopPropagation();
@@ -439,6 +581,7 @@ function MapPanel({
             <LocateFixed aria-hidden="true" />
           </div>
         )}
+        </div>
 
         {mode === "origin" && (
           <div className="v2-map-hint">

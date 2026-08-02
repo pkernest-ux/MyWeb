@@ -586,7 +586,7 @@ button:disabled {
   max-height: 62dvh;
   overflow: hidden;
   background: #f5f8fb;
-  touch-action: manipulation;
+  touch-action: none;
   user-select: none;
 }
 
@@ -594,7 +594,22 @@ button:disabled {
   cursor: crosshair;
 }
 
-.v2-map-plane > img {
+.v2-map-plane.is-zoomed:not(.is-selecting) {
+  cursor: grab;
+}
+
+.v2-map-plane.is-zoomed:not(.is-selecting):active {
+  cursor: grabbing;
+}
+
+.v2-map-world {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+
+.v2-map-world > img {
   position: absolute;
   inset: 0;
   display: block;
@@ -680,7 +695,8 @@ button:disabled {
   height: 38px;
   align-items: center;
   justify-content: center;
-  transform: translate(-50%, -90%);
+  transform: translate(-50%, -90%) scale(var(--v2-pin-scale, 1));
+  transform-origin: 50% 90%;
   border-radius: 50%;
   background: #e35249;
   color: #ffffff;
@@ -723,7 +739,8 @@ button:disabled {
   height: 36px;
   align-items: center;
   justify-content: center;
-  transform: translate(-50%, -50%);
+  transform: translate(-50%, -50%) scale(var(--v2-pin-scale, 1));
+  transform-origin: 50% 50%;
   border: 3px solid #ffffff;
   border-radius: 50%;
   box-shadow: 0 5px 14px rgba(20, 48, 72, 0.3);
