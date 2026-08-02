@@ -13,7 +13,9 @@ import {
   LocateFixed,
   Map,
   MapPin,
+  Minus,
   Navigation,
+  Plus,
   RefreshCw,
   ScanLine,
   X,
@@ -316,17 +318,15 @@ function MapPanel({
 }) {
   const [ratio, setRatio] = useState(1.25);
   const [mapTransform, setMapTransform] = useState({ scale: 1, x: 0, y: 0 });
+  const mapPlaneRef = useRef<HTMLDivElement>(null);
   const pointerMapRef = useRef(new globalThis.Map<number, { x: number; y: number }>());
   const gestureRef = useRef({
-    startDistance: 0,
-    startScale: 1,
-    startCenterX: 0,
-    startCenterY: 0,
     startPointerX: 0,
     startPointerY: 0,
     startPanX: 0,
     startPanY: 0,
     moved: false,
+    multiPointer: false,
   });
   const destinations = (Object.values(graph.nodes) as NodeData[]).filter(
     (node) => node.isMarker && node.fId === floor?.id,
@@ -387,12 +387,9 @@ function MapPanel({
     if (pointers.length === 1) {
       gesture.startPointerX = pointers[0].x;
       gesture.startPointerY = pointers[0].y;
-    } else if (pointers.length >= 2) {
-      const [first, second] = pointers;
-      gesture.startDistance = Math.hypot(second.x - first.x, second.y - first.y);
-      gesture.startScale = mapTransform.scale;
-      gesture.startCenterX = (first.x + second.x) / 2;
-      gesture.startCenterY = (first.y + second.y) / 2;
+    } else {
+      gesture.multiPointer = true;
+      gesture.moved = true;
     }
   };
 
@@ -403,26 +400,7 @@ function MapPanel({
     const gesture = gestureRef.current;
     const rect = event.currentTarget.getBoundingClientRect();
 
-    if (pointers.length >= 2) {
-      const [first, second] = pointers;
-      const distance = Math.hypot(second.x - first.x, second.y - first.y);
-      const centerX = (first.x + second.x) / 2;
-      const centerY = (first.y + second.y) / 2;
-      if (Math.abs(distance - gesture.startDistance) > 2) gesture.moved = true;
-      setMapTransform(
-        constrainTransform(
-          {
-            scale: gesture.startScale * (distance / Math.max(1, gesture.startDistance)),
-            x: gesture.startPanX + centerX - gesture.startCenterX,
-            y: gesture.startPanY + centerY - gesture.startCenterY,
-          },
-          rect,
-        ),
-      );
-      return;
-    }
-
-    if (pointers.length === 1 && mapTransform.scale > 1) {
+    if (pointers.length === 1 && !gesture.multiPointer && mapTransform.scale > 1) {
       const deltaX = pointers[0].x - gesture.startPointerX;
       const deltaY = pointers[0].y - gesture.startPointerY;
       if (Math.hypot(deltaX, deltaY) > 3) gesture.moved = true;
@@ -441,13 +419,16 @@ function MapPanel({
 
   const endPointerGesture = (event: React.PointerEvent<HTMLDivElement>) => {
     const wasSinglePointer = pointerMapRef.current.size === 1;
-    const wasTap = wasSinglePointer && !gestureRef.current.moved;
+    const wasTap =
+      wasSinglePointer && !gestureRef.current.moved && !gestureRef.current.multiPointer;
     pointerMapRef.current.delete(event.pointerId);
 
     if (wasTap) selectOriginAtPointer(event);
 
     const remaining = Array.from(pointerMapRef.current.values());
-    if (remaining.length === 1) {
+    if (remaining.length === 0) {
+      gestureRef.current.multiPointer = false;
+    } else if (remaining.length === 1 && !gestureRef.current.multiPointer) {
       gestureRef.current.startPointerX = remaining[0].x;
       gestureRef.current.startPointerY = remaining[0].y;
       gestureRef.current.startPanX = mapTransform.x;
@@ -456,25 +437,24 @@ function MapPanel({
     }
   };
 
-  const handleMapWheel = (event: React.WheelEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const rect = event.currentTarget.getBoundingClientRect();
-    const scaleFactor = event.deltaY < 0 ? 1.16 : 0.86;
+  const changeMapZoom = (step: number) => {
+    const rect = mapPlaneRef.current?.getBoundingClientRect();
+    if (!rect) return;
     setMapTransform((current) =>
-      constrainTransform({ ...current, scale: current.scale * scaleFactor }, rect),
+      constrainTransform({ ...current, scale: current.scale + step }, rect),
     );
   };
 
   return (
     <div className={`v2-map-frame ${compact ? "is-compact" : ""}`}>
       <div
+        ref={mapPlaneRef}
         className={`v2-map-plane ${mode === "origin" ? "is-selecting" : ""} ${mapTransform.scale > 1.01 ? "is-zoomed" : ""}`}
         style={{ aspectRatio: `${ratio}` }}
         onPointerDown={startPointerGesture}
         onPointerMove={movePointerGesture}
         onPointerUp={endPointerGesture}
         onPointerCancel={endPointerGesture}
-        onWheel={handleMapWheel}
       >
         <div
           className="v2-map-world"
@@ -589,6 +569,31 @@ function MapPanel({
             點一下你目前所在的位置
           </div>
         )}
+
+        <div
+          className="v2-map-zoom-controls"
+          onPointerDown={(event) => event.stopPropagation()}
+          onPointerUp={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            aria-label="放大地圖"
+            title="放大地圖"
+            disabled={mapTransform.scale >= 4}
+            onClick={() => changeMapZoom(0.5)}
+          >
+            <Plus aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            aria-label="縮小地圖"
+            title="縮小地圖"
+            disabled={mapTransform.scale <= 1}
+            onClick={() => changeMapZoom(-0.5)}
+          >
+            <Minus aria-hidden="true" />
+          </button>
+        </div>
       </div>
     </div>
   );
