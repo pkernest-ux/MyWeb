@@ -405,6 +405,7 @@ button:disabled {
 }
 
 .v2-version-badge {
+  grid-column: 3;
   display: flex;
   width: 42px;
   height: 32px;

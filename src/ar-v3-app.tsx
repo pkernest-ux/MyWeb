@@ -2123,10 +2123,6 @@ export default function ARNavigationV3() {
         >
           <ArrowLeft />
         </button>
-        <div className="v2-project-identity">
-          <span>目前場域</span>
-          <strong>{selectedProjectName}</strong>
-        </div>
         <div className="v2-version-badge">V3</div>
       </header>
 
