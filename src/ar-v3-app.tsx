@@ -1039,7 +1039,6 @@ export default function ARNavigationV3() {
     }
   });
   const [reviewStepIndex, setReviewStepIndex] = useState(0);
-  const [overviewMapView, setOverviewMapView] = useState<"flat" | "perspective">("flat");
   const [mapFullscreen, setMapFullscreen] = useState(false);
   const [overviewLabelFontSize, setOverviewLabelFontSize] = useState(() => {
     try {
@@ -2261,14 +2260,9 @@ export default function ARNavigationV3() {
     );
   }
 
-  const pageTitle =
-    screen === "destination" ? "瀏覽導引地圖" : screen === "origin" ? "標示目前位置" : "確認導航路徑";
+  const pageTitle = screen === "origin" ? "標示目前位置" : "確認導航路徑";
   const pageDescription =
-    screen === "destination"
-      ? "可切換平面或 45° 模式瀏覽導引位置"
-      : screen === "origin"
-        ? "切換到你所在樓層，再點擊平面圖位置"
-        : "確認後面向第一段路徑進行方向校正";
+    screen === "origin" ? "切換到你所在樓層，再點擊平面圖位置" : "確認後面向第一段路徑進行方向校正";
   const selectedProjectName = projectName(project);
   const isHsinchuProject = selectedProjectName.includes("新竹市政府");
 
@@ -2369,28 +2363,6 @@ export default function ARNavigationV3() {
               <span>{selectedFloor?.buildingName}</span>
             </div>
           )}
-          {screen === "destination" && (
-            <div className="v3-map-view-toggle" role="group" aria-label="切換地圖顯示方式">
-              <button
-                type="button"
-                className={overviewMapView === "flat" ? "is-active" : ""}
-                aria-pressed={overviewMapView === "flat"}
-                onClick={() => setOverviewMapView("flat")}
-              >
-                <Map aria-hidden="true" />
-                平面
-              </button>
-              <button
-                type="button"
-                className={overviewMapView === "perspective" ? "is-active" : ""}
-                aria-pressed={overviewMapView === "perspective"}
-                onClick={() => setOverviewMapView("perspective")}
-              >
-                <Layers3 aria-hidden="true" />
-                45°
-              </button>
-            </div>
-          )}
           <strong>{selectedFloor?.name}</strong>
         </div>
         <MapPanel
@@ -2401,7 +2373,7 @@ export default function ARNavigationV3() {
           origin={origin}
           routePoints={navigationPoints}
           onOrigin={selectOrigin}
-          mapView={overviewMapView}
+          mapView="flat"
           labelFontSize={overviewLabelFontSize}
           isFullscreen={mapFullscreen}
           onToggleFullscreen={() => setMapFullscreen((current) => !current)}

@@ -916,47 +916,6 @@ button:disabled {
   gap: 6px;
 }
 
-.v2-map-card-title > .v3-map-view-toggle {
-  display: grid;
-  flex: 0 0 auto;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  margin-left: auto;
-  overflow: hidden;
-  border: 1px solid rgba(27, 67, 104, 0.18);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 3px 10px rgba(26, 58, 87, 0.2);
-}
-
-.v3-map-view-toggle button {
-  display: inline-flex;
-  min-width: 52px;
-  height: 34px;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  padding: 0 6px;
-  color: #59738e;
-  font-size: 11px;
-  font-weight: 900;
-  touch-action: manipulation;
-}
-
-.v3-map-view-toggle button + button {
-  border-left: 1px solid rgba(27, 67, 104, 0.14);
-}
-
-.v3-map-view-toggle button.is-active {
-  background: #174c82;
-  color: #ffffff;
-}
-
-.v3-map-view-toggle svg {
-  width: 16px;
-  height: 16px;
-  stroke-width: 2.5;
-}
-
 .v3-label-size-control {
   display: grid;
   flex: 0 0 auto;
@@ -2528,21 +2487,6 @@ button:disabled {
 
   .v2-map-card-title .v3-label-size-control button {
     width: 24px;
-  }
-
-  .v2-map-card-title > .v3-map-view-toggle {
-    grid-template-columns: repeat(2, 44px);
-  }
-
-  .v2-map-card-title .v3-map-view-toggle button {
-    min-width: 44px;
-    gap: 2px;
-    padding-inline: 3px;
-  }
-
-  .v2-map-card-title .v3-map-view-toggle svg {
-    width: 14px;
-    height: 14px;
   }
 
   .v2-map-card-title strong {
