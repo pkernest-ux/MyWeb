@@ -2302,24 +2302,12 @@ export default function ARNavigationV3() {
         </section>
       )}
 
-      <section className="v2-floor-section">
-        <div className="v2-section-heading">
-          <Layers3 />
-          <strong>
-            {screen === "destination" ? "目的地樓層" : screen === "review" ? "導引樓層" : "目前所在樓層"}
-          </strong>
-        </div>
-        {screen === "destination" ? (
-          <button
-            type="button"
-            className="v3-fixed-destination-button"
-            disabled={!fixedDestination || !fixedRouteStart || fixedRouteIds.length < 2}
-            onClick={startFixedDestinationRoute}
-          >
-            <Navigation aria-hidden="true" />
-            導航到產業發展處工商科(工商登記)
-          </button>
-        ) : (
+      {screen !== "destination" && (
+        <section className="v2-floor-section">
+          <div className="v2-section-heading">
+            <Layers3 />
+            <strong>{screen === "review" ? "導引樓層" : "目前所在樓層"}</strong>
+          </div>
           <FloorTabs
             floors={
               screen === "review"
@@ -2338,11 +2326,8 @@ export default function ARNavigationV3() {
               }
             }}
           />
-        )}
-        {screen === "destination" && (!fixedDestination || !fixedRouteStart || fixedRouteIds.length < 2) && (
-          <small className="v3-route-unavailable">後台尚未建立這個目的地的完整路徑</small>
-        )}
-      </section>
+        </section>
+      )}
 
       <section
         className={`v2-map-card ${mapFullscreen ? "is-fullscreen" : ""}`}
@@ -2422,6 +2407,27 @@ export default function ARNavigationV3() {
           onToggleFullscreen={() => setMapFullscreen((current) => !current)}
         />
       </section>
+
+      {screen === "destination" && (
+        <section className="v2-floor-section v3-destination-section">
+          <div className="v2-section-heading">
+            <Layers3 />
+            <strong>目的地</strong>
+          </div>
+          <button
+            type="button"
+            className="v3-fixed-destination-button"
+            disabled={!fixedDestination || !fixedRouteStart || fixedRouteIds.length < 2}
+            onClick={startFixedDestinationRoute}
+          >
+            <Navigation aria-hidden="true" />
+            導航到產業發展處工商科(工商登記)
+          </button>
+          {(!fixedDestination || !fixedRouteStart || fixedRouteIds.length < 2) && (
+            <small className="v3-route-unavailable">後台尚未建立這個目的地的完整路徑</small>
+          )}
+        </section>
+      )}
 
       {screen === "origin" && destination && (
         <section className="v2-selection-summary">
