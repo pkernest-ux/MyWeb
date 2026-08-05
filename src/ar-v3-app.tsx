@@ -81,6 +81,10 @@ const DEFAULT_STRIDE_CENTIMETERS = 60;
 const MIN_STRIDE_CENTIMETERS = 30;
 const MAX_STRIDE_CENTIMETERS = 120;
 const STRIDE_STORAGE_KEY = "ar-v3-stride-centimeters";
+const LABEL_SIZE_STORAGE_KEY = "ar-v3-map-label-size";
+const DEFAULT_LABEL_SIZE = 10;
+const MIN_LABEL_SIZE = 8;
+const MAX_LABEL_SIZE = 16;
 const STEP_ACCELERATION_THRESHOLD = 0.9;
 const STEP_RELEASE_THRESHOLD = 0.34;
 const STEP_COOLDOWN_MS = 420;
@@ -336,9 +340,13 @@ const placeMapLabels = (
   width: number,
   height: number,
   perspective: boolean,
+  zoomScale: number,
+  fontSize: number,
 ) => {
   const placements: Record<string, MapLabelPlacement> = {};
   if (!width || !height) return placements;
+
+  const scale = clamp(zoomScale, 1, 4);
 
   const projectPoint = (node: NodeData) => {
     const x = clamp(node.x) * width;
@@ -351,10 +359,26 @@ const placeMapLabels = (
       y: originY + (y - originY) * 0.98 * Math.SQRT1_2,
     };
   };
-  const pins = nodes.map((node) => ({ id: node.id, ...projectPoint(node) }));
+  const pins = nodes.map((node) => {
+    const point = projectPoint(node);
+    return { id: node.id, x: point.x * scale, y: point.y * scale };
+  });
+  const scaledWidth = width * scale;
+  const scaledHeight = height * scale;
   const occupied: Array<{ left: number; top: number; right: number; bottom: number }> = [
-    { left: Math.max(0, width - 142), top: 4, right: width - 4, bottom: 52 },
-    { left: Math.max(0, width - 54), top: Math.max(0, height - 94), right: width - 4, bottom: height - 4 },
+    { left: Math.max(0, scaledWidth - 142), top: 4, right: scaledWidth - 4, bottom: 52 },
+    {
+      left: Math.max(0, scaledWidth - 54),
+      top: Math.max(0, scaledHeight - 94),
+      right: scaledWidth - 4,
+      bottom: scaledHeight - 4,
+    },
+    {
+      left: 4,
+      top: Math.max(0, scaledHeight - 50),
+      right: 128,
+      bottom: scaledHeight - 4,
+    },
   ];
   const intersects = (
     a: { left: number; top: number; right: number; bottom: number },
@@ -365,63 +389,83 @@ const placeMapLabels = (
     a.right > b.left - gap &&
     a.top < b.bottom + gap &&
     a.bottom > b.top - gap;
-  const directions = [
-    { x: 0, y: -1 },
-    { x: 1, y: -0.72 },
-    { x: -1, y: -0.72 },
-    { x: 1, y: 0 },
-    { x: -1, y: 0 },
-    { x: 0.85, y: 0.72 },
-    { x: -0.85, y: 0.72 },
-    { x: 0, y: 1 },
-  ];
-  const radii = [20, 34, 50, 68, 88, 110, 134];
+  const candidateOffsets = [
+    { x: 0, y: -1, align: "center" },
+    { x: 1, y: -1, align: "edge" },
+    { x: -1, y: -1, align: "edge" },
+    { x: 1, y: 0, align: "side" },
+    { x: -1, y: 0, align: "side" },
+    { x: 1, y: 1, align: "edge" },
+    { x: -1, y: 1, align: "edge" },
+    { x: 0, y: 1, align: "center" },
+  ] as const;
+  const displacementSteps = [0, 14, 28, 44, 62, 84];
 
   [...nodes]
     .sort((a, b) => clamp(a.y) - clamp(b.y) || clamp(a.x) - clamp(b.x))
     .forEach((node) => {
       const label = nodeLabel(node);
       const estimatedTextWidth = Array.from(label).reduce(
-        (total, character) => total + (/[^\u0000-\u00ff]/.test(character) ? 10 : 6.2),
+        (total, character) => total + (/[^\u0000-\u00ff]/.test(character) ? fontSize : fontSize * 0.62),
         0,
       );
-      const labelWidth = clamp(estimatedTextWidth + 18, 54, 164);
+      const labelWidth = clamp(estimatedTextWidth + 18, 54, 184);
       const lineCount = Math.max(1, Math.ceil(estimatedTextWidth / Math.max(42, labelWidth - 16)));
-      const labelHeight = 10 + lineCount * 13;
-      const anchor = projectPoint(node);
+      const labelHeight = 10 + lineCount * fontSize * 1.25;
+      const projectedAnchor = projectPoint(node);
+      const anchor = { x: projectedAnchor.x * scale, y: projectedAnchor.y * scale };
       let best:
         | { box: { left: number; top: number; right: number; bottom: number }; score: number }
         | undefined;
 
-      radii.forEach((radius) => {
-        directions.forEach((direction, directionIndex) => {
-          const centerX = anchor.x + direction.x * (radius + labelWidth / 2);
-          const centerY = anchor.y + direction.y * (radius + labelHeight / 2);
-          const unclampedLeft = centerX - labelWidth / 2;
-          const unclampedTop = centerY - labelHeight / 2;
-          const left = clamp(unclampedLeft, -6, Math.max(-6, width - labelWidth + 6));
-          const top = clamp(unclampedTop, -28, Math.max(-28, height - labelHeight + 6));
+      displacementSteps.forEach((displacement, displacementIndex) => {
+        candidateOffsets.forEach((direction, directionIndex) => {
+          const verticalGap = 32 + displacement;
+          const horizontalGap = 18 + displacement;
+          let unclampedLeft = anchor.x - labelWidth / 2;
+          let unclampedTop = anchor.y - verticalGap - labelHeight;
+
+          if (direction.align === "edge") {
+            unclampedLeft =
+              direction.x > 0 ? anchor.x + horizontalGap : anchor.x - horizontalGap - labelWidth;
+            unclampedTop =
+              direction.y < 0 ? anchor.y - verticalGap - labelHeight : anchor.y + 12 + displacement;
+          } else if (direction.align === "side") {
+            unclampedLeft =
+              direction.x > 0 ? anchor.x + horizontalGap : anchor.x - horizontalGap - labelWidth;
+            unclampedTop = anchor.y - labelHeight / 2;
+          } else if (direction.y > 0) {
+            unclampedTop = anchor.y + 12 + displacement;
+          }
+
+          const left = clamp(unclampedLeft, -6, Math.max(-6, scaledWidth - labelWidth + 6));
+          const top = clamp(unclampedTop, -40, Math.max(-40, scaledHeight - labelHeight + 6));
           const box = { left, top, right: left + labelWidth, bottom: top + labelHeight };
           const labelCollisions = occupied.filter((item) => intersects(box, item)).length;
           const pinCollisions = pins.filter((pin) => {
             if (pin.id === node.id) return false;
             return intersects(box, {
-              left: pin.x - 10,
-              top: pin.y - 10,
-              right: pin.x + 10,
-              bottom: pin.y + 10,
+              left: pin.x - 15,
+              top: pin.y - 29,
+              right: pin.x + 15,
+              bottom: pin.y + 4,
             });
           }).length;
           const edgePenalty = Math.abs(left - unclampedLeft) + Math.abs(top - unclampedTop);
-          const score = labelCollisions * 10000 + pinCollisions * 4000 + radius + directionIndex + edgePenalty * 3;
+          const score =
+            labelCollisions * 100000 +
+            pinCollisions * 50000 +
+            displacementIndex * 1000 +
+            directionIndex * 100 +
+            edgePenalty * 4;
           if (!best || score < best.score) best = { box, score };
         });
       });
 
       if (!best) return;
       placements[node.id] = {
-        left: best.box.left,
-        top: best.box.top,
+        left: best.box.left / scale,
+        top: best.box.top / scale,
         width: labelWidth,
         height: labelHeight,
       };
@@ -481,6 +525,13 @@ function MapPanel({
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [mapTransform, setMapTransform] = useState({ scale: 1, x: 0, y: 0 });
   const [mapView, setMapView] = useState<"flat" | "perspective">("flat");
+  const [labelFontSize, setLabelFontSize] = useState(() => {
+    try {
+      return clamp(Number(window.localStorage.getItem(LABEL_SIZE_STORAGE_KEY)) || DEFAULT_LABEL_SIZE, MIN_LABEL_SIZE, MAX_LABEL_SIZE);
+    } catch {
+      return DEFAULT_LABEL_SIZE;
+    }
+  });
   const mapPlaneRef = useRef<HTMLDivElement>(null);
   const pointerMapRef = useRef(new globalThis.Map<number, { x: number; y: number }>());
   const gestureRef = useRef({
@@ -524,9 +575,28 @@ function MapPanel({
         (viewportSize.width * fittedWorld.width) / 100,
         (viewportSize.height * fittedWorld.height) / 100,
         effectiveMapView === "perspective",
+        mapTransform.scale,
+        labelFontSize,
       ),
-    [destinations, effectiveMapView, fittedWorld.height, fittedWorld.width, viewportSize.height, viewportSize.width],
+    [
+      destinations,
+      effectiveMapView,
+      fittedWorld.height,
+      fittedWorld.width,
+      labelFontSize,
+      mapTransform.scale,
+      viewportSize.height,
+      viewportSize.width,
+    ],
   );
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(LABEL_SIZE_STORAGE_KEY, String(labelFontSize));
+    } catch {
+      // Keep the in-memory setting when browser storage is unavailable.
+    }
+  }, [labelFontSize]);
 
   useEffect(() => {
     pointerMapRef.current.clear();
@@ -759,7 +829,11 @@ function MapPanel({
             )}
           </div>
           {mode === "destination" && (
-            <div className="v3-map-label-layer" aria-label="地圖位置標籤">
+            <div
+              className="v3-map-label-layer"
+              aria-label="地圖位置標籤"
+              style={{ "--v3-label-font-size": `${labelFontSize}px` } as React.CSSProperties}
+            >
               {destinations.map((node) => {
                 const placement = labelPlacements[node.id];
                 if (!placement) return null;
@@ -814,6 +888,37 @@ function MapPanel({
           <div className="v2-map-hint">
             <Crosshair aria-hidden="true" />
             點一下你目前所在的位置
+          </div>
+        )}
+
+        {mode === "destination" && (
+          <div
+            className="v3-label-size-control"
+            role="group"
+            aria-label="調整地圖標籤字級"
+            onPointerDown={(event) => event.stopPropagation()}
+            onPointerUp={(event) => event.stopPropagation()}
+          >
+            <span aria-hidden="true">字</span>
+            <button
+              type="button"
+              aria-label="縮小標籤文字"
+              title="縮小標籤文字"
+              disabled={labelFontSize <= MIN_LABEL_SIZE}
+              onClick={() => setLabelFontSize((current) => clamp(current - 1, MIN_LABEL_SIZE, MAX_LABEL_SIZE))}
+            >
+              <Minus aria-hidden="true" />
+            </button>
+            <output aria-label={`目前標籤字級 ${labelFontSize}`}>{labelFontSize}</output>
+            <button
+              type="button"
+              aria-label="放大標籤文字"
+              title="放大標籤文字"
+              disabled={labelFontSize >= MAX_LABEL_SIZE}
+              onClick={() => setLabelFontSize((current) => clamp(current + 1, MIN_LABEL_SIZE, MAX_LABEL_SIZE))}
+            >
+              <Plus aria-hidden="true" />
+            </button>
           </div>
         )}
 

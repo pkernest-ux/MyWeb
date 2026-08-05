@@ -779,7 +779,7 @@ button:disabled {
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.96);
   color: #183f6c;
-  font-size: 10px;
+  font-size: var(--v3-label-font-size, 10px);
   font-weight: 900;
   line-height: 1.2;
   overflow-wrap: anywhere;
@@ -907,6 +907,59 @@ button:disabled {
   width: 16px;
   height: 16px;
   stroke-width: 2.5;
+}
+
+.v3-label-size-control {
+  position: absolute;
+  z-index: 22;
+  bottom: 10px;
+  left: 10px;
+  display: grid;
+  grid-template-columns: 28px 32px 30px 32px;
+  min-height: 36px;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(27, 67, 104, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  color: #174c82;
+  box-shadow: 0 3px 10px rgba(26, 58, 87, 0.2);
+}
+
+.v3-label-size-control > span,
+.v3-label-size-control output {
+  display: inline-flex;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.v3-label-size-control output {
+  color: #183f6c;
+  font-variant-numeric: tabular-nums;
+}
+
+.v3-label-size-control button {
+  display: inline-flex;
+  width: 32px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  border-inline: 1px solid rgba(27, 67, 104, 0.12);
+  color: #174c82;
+  touch-action: manipulation;
+}
+
+.v3-label-size-control button:disabled {
+  color: #a8b7c5;
+}
+
+.v3-label-size-control svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2.7;
 }
 
 .v2-map-zoom-controls button {
