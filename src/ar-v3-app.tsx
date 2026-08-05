@@ -104,6 +104,30 @@ const projectPreview = (data: any) => {
   return "";
 };
 
+const loadProjectOption = async (option: ProjectOption) => {
+  let selected = option.localData;
+  if (option.source === "cloud") {
+    try {
+      const response = await fetch(
+        `./api/ar-content?projectId=${encodeURIComponent(option.id)}&ts=${Date.now()}`,
+        { cache: "no-store" },
+      );
+      const contentType = response.headers.get("content-type") || "";
+      if (!response.ok || !contentType.includes("application/json")) {
+        throw new Error(`雲端專案載入失敗 (${response.status})`);
+      }
+      selected = await response.json();
+    } catch (error) {
+      if (!selected) throw error;
+    }
+  }
+
+  if (!Array.isArray(selected?.buildings) || selected.buildings.length === 0) {
+    throw new Error("新竹市政府專案沒有可用的平面圖");
+  }
+  return selected;
+};
+
 const normalizeAngle = (value: number) => {
   let angle = value % 360;
   if (angle > 180) angle -= 360;
@@ -797,10 +821,18 @@ export default function ARNavigationV3() {
           throw new Error("雲端尚未建立可用的 AR 專案");
         }
 
+        const preferredOption =
+          options.find((option) => option.name.includes("新竹市政府")) ||
+          options.find((option) => option.id === localRaw?.activeProjectId);
+        if (!preferredOption) {
+          throw new Error("找不到新竹市政府導引專案");
+        }
+        const selected = await loadProjectOption(preferredOption);
+
         if (active) {
           setProjectOptions(options);
+          setProject(selected);
           setLoadError("");
-          if (options.length === 1) setProject(options[0].localData);
         }
       } catch (error: any) {
         if (active) setLoadError(error?.message || "無法載入導引資料");
@@ -1393,18 +1425,6 @@ export default function ARNavigationV3() {
     );
   }
 
-  if (!project && projectOptions.length > 0) {
-    return (
-      <ProjectPicker
-        options={projectOptions}
-        loadingId={projectLoadingId}
-        error={projectPickError}
-        onSelect={selectProject}
-        onBack={() => setShowWelcome(true)}
-      />
-    );
-  }
-
   if (loadError || !project) {
     return (
       <main className="v2-loading is-error">
@@ -1863,10 +1883,8 @@ export default function ARNavigationV3() {
               setScreen("destination");
             } else if (screen === "review") {
               setScreen("origin");
-            } else if (projectOptions.length > 1) {
-              returnToProjectPicker();
             } else {
-              window.location.href = "./ar-v3.html";
+              setShowWelcome(true);
             }
           }}
           aria-label="返回"
