@@ -2175,13 +2175,10 @@ export default function ARNavigationV3() {
               type="button"
               className="v2-review-ar-button"
               onClick={() => setScreen("calibrate")}
-              aria-label="進行方向導引"
+              aria-label="開啟 AR 導引"
             >
-              <span>
-                <ScanLine />
-                <b>AR</b>
-              </span>
-              方向導引
+              <span>AR</span>
+              <span>導引</span>
             </button>
           </div>
         </section>
