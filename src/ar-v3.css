@@ -443,6 +443,10 @@ button:disabled {
   padding: 12px 20px 8px;
 }
 
+.v2-map-screen.is-destination .v2-floor-section {
+  padding-top: clamp(48px, 13vw, 64px);
+}
+
 .v2-section-heading {
   display: flex;
   align-items: center;

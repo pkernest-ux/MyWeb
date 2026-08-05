@@ -2294,13 +2294,13 @@ export default function ARNavigationV3() {
         </button>
       </header>
 
-      <section className="v2-intro">
-        <div className="v2-step-label">
-          {screen === "destination" ? "導引地圖" : screen === "origin" ? "STEP 2" : "路徑預覽"}
-        </div>
-        <h1>{pageTitle}</h1>
-        <p>{pageDescription}</p>
-      </section>
+      {screen !== "destination" && (
+        <section className="v2-intro">
+          <div className="v2-step-label">{screen === "origin" ? "STEP 2" : "路徑預覽"}</div>
+          <h1>{pageTitle}</h1>
+          <p>{pageDescription}</p>
+        </section>
+      )}
 
       <section className="v2-floor-section">
         <div className="v2-section-heading">
