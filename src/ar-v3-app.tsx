@@ -76,6 +76,7 @@ type ProjectOption = {
 };
 
 const clamp = (value: number, min = 0, max = 1) => Math.min(max, Math.max(min, value));
+const FIXED_DESTINATION_TITLE = "產業發展處工商科(工商登記)";
 const DEFAULT_STRIDE_CENTIMETERS = 60;
 const MIN_STRIDE_CENTIMETERS = 30;
 const MAX_STRIDE_CENTIMETERS = 120;
@@ -292,6 +293,37 @@ const routeLength = (points: Array<{ physX: number; physY: number }>) =>
     0,
   );
 
+const findPrebuiltRouteStart = (graph: GraphData, destinationId: string) => {
+  if (!graph.nodes[destinationId] || Object.keys(graph.adjacency[destinationId] || {}).length === 0) {
+    return null;
+  }
+
+  const distances: Record<string, number> = { [destinationId]: 0 };
+  const remaining = new Set([destinationId]);
+  while (remaining.size) {
+    const current = Array.from(remaining).reduce((best, id) =>
+      distances[id] < distances[best] ? id : best,
+    );
+    remaining.delete(current);
+    Object.entries(graph.adjacency[current] || {}).forEach(([neighbor, weight]) => {
+      const nextDistance = distances[current] + weight;
+      if (distances[neighbor] === undefined || nextDistance < distances[neighbor]) {
+        distances[neighbor] = nextDistance;
+        remaining.add(neighbor);
+      }
+    });
+  }
+
+  const candidates = Object.keys(distances).filter(
+    (id) =>
+      id !== destinationId &&
+      !graph.nodes[id]?.isMarker &&
+      Object.keys(graph.adjacency[id] || {}).length <= 1,
+  );
+  const startId = candidates.sort((a, b) => distances[b] - distances[a])[0];
+  return startId ? graph.nodes[startId] : null;
+};
+
 function FloorTabs({
   floors,
   selectedId,
@@ -324,7 +356,6 @@ function MapPanel({
   destinationId,
   origin,
   routePoints,
-  onDestination,
   onOrigin,
   compact = false,
   reverseFlow = false,
@@ -335,12 +366,12 @@ function MapPanel({
   destinationId?: string | null;
   origin?: ManualOrigin | null;
   routePoints?: Array<any>;
-  onDestination?: (id: string) => void;
   onOrigin?: (point: { x: number; y: number }) => void;
   compact?: boolean;
   reverseFlow?: boolean;
 }) {
   const [ratio, setRatio] = useState(1.25);
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [mapTransform, setMapTransform] = useState({ scale: 1, x: 0, y: 0 });
   const [mapView, setMapView] = useState<"flat" | "perspective">("perspective");
   const mapPlaneRef = useRef<HTMLDivElement>(null);
@@ -367,11 +398,33 @@ function MapPanel({
   const routePathId = `v2-route-${String(floor?.id || "floor").replace(/[^a-zA-Z0-9_-]/g, "-")}`;
   const supportsPerspective = mode !== "origin" && !compact;
   const effectiveMapView = supportsPerspective ? mapView : "flat";
+  const fittedWorld = useMemo(() => {
+    if (!viewportSize.width || !viewportSize.height || !ratio) {
+      return { left: 0, top: 0, width: 100, height: 100 };
+    }
+    const viewportRatio = viewportSize.width / viewportSize.height;
+    if (viewportRatio > ratio) {
+      const width = (ratio / viewportRatio) * 100;
+      return { left: (100 - width) / 2, top: 0, width, height: 100 };
+    }
+    const height = (viewportRatio / ratio) * 100;
+    return { left: 0, top: (100 - height) / 2, width: 100, height };
+  }, [ratio, viewportSize.height, viewportSize.width]);
 
   useEffect(() => {
     pointerMapRef.current.clear();
     setMapTransform({ scale: 1, x: 0, y: 0 });
   }, [floor?.id]);
+
+  useEffect(() => {
+    const element = mapPlaneRef.current;
+    if (!element) return;
+    const updateSize = () => setViewportSize({ width: element.clientWidth, height: element.clientHeight });
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
 
   const constrainTransform = (
     transform: { scale: number; x: number; y: number },
@@ -489,6 +542,12 @@ function MapPanel({
             {
               transform: `translate3d(${mapTransform.x}px, ${mapTransform.y}px, 0) scale(${mapTransform.scale})`,
               "--v2-pin-scale": String(1 / mapTransform.scale),
+              left: `${fittedWorld.left}%`,
+              top: `${fittedWorld.top}%`,
+              width: `${fittedWorld.width}%`,
+              height: `${fittedWorld.height}%`,
+              right: "auto",
+              bottom: "auto",
             } as React.CSSProperties
           }
         >
@@ -551,22 +610,15 @@ function MapPanel({
 
             {mode === "destination" &&
               destinations.map((node) => (
-                <button
-                  type="button"
+                <div
                   key={node.id}
                   className={`v2-destination-pin ${destinationId === node.id ? "is-selected" : ""}`}
                   style={{ left: `${clamp(node.x) * 100}%`, top: `${clamp(node.y) * 100}%` }}
-                  onPointerDown={(event) => event.stopPropagation()}
-                  onPointerUp={(event) => event.stopPropagation()}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onDestination?.(node.id);
-                  }}
-                  aria-label={`選擇 ${nodeLabel(node)}`}
+                  aria-label={nodeLabel(node)}
                 >
                   <MapPin aria-hidden="true" />
                   <span>{nodeLabel(node)}</span>
-                </button>
+                </div>
               ))}
 
             {destinationId && graph.nodes[destinationId]?.fId === floor?.id && mode !== "destination" && (
@@ -970,14 +1022,29 @@ export default function ARNavigationV3() {
   }, [screen, cameraState]);
 
   const graph = useMemo(() => buildGraph(project?.buildings || []), [project]);
-  const destinationFloors = useMemo(
+  const fixedDestination = useMemo(
     () =>
-      graph.floors.filter((floor) =>
-        (Object.values(graph.nodes) as NodeData[]).some((node) => node.isMarker && node.fId === floor.id),
-      ),
+      (Object.values(graph.nodes) as NodeData[]).find(
+        (node) => node.isMarker && node.title === FIXED_DESTINATION_TITLE,
+      ) || null,
     [graph],
   );
-  const visibleFloors = screen === "destination" ? destinationFloors : graph.floors;
+  const fixedRouteStart = useMemo(
+    () => (fixedDestination ? findPrebuiltRouteStart(graph, fixedDestination.id) : null),
+    [fixedDestination, graph],
+  );
+  const fixedRouteIds = useMemo(
+    () =>
+      fixedDestination && fixedRouteStart
+        ? shortestPath(graph, fixedRouteStart.id, fixedDestination.id)
+        : [],
+    [fixedDestination, fixedRouteStart, graph],
+  );
+  const fixedDestinationFloor = fixedDestination
+    ? graph.floors.find((floor) => floor.id === fixedDestination.fId)
+    : null;
+  const visibleFloors =
+    screen === "destination" && fixedDestinationFloor ? [fixedDestinationFloor] : graph.floors;
 
   useEffect(() => {
     if (!visibleFloors.length) return;
@@ -1004,7 +1071,19 @@ export default function ARNavigationV3() {
         fName: graph.floors.find((floor) => floor.id === origin.floorId)?.name || "",
       }
     : null;
-  const navigationPoints = originPoint ? [originPoint, ...routeNodes] : routeNodes;
+  const navigationPoints = originPoint
+    ? [
+        originPoint,
+        ...routeNodes.filter(
+          (node, index) =>
+            !(
+              index === 0 &&
+              node.id === origin.snapId &&
+              Math.hypot(node.physX - origin.physX, node.physY - origin.physY) < 0.001
+            ),
+        ),
+      ]
+    : routeNodes;
   const totalDistance = routeLength(navigationPoints);
   const routeSteps: Array<{ floorId: string; floorName: string; points: Array<any> }> = [];
   navigationPoints.forEach((point) => {
@@ -1340,13 +1419,21 @@ export default function ARNavigationV3() {
     setWalkingDirection("idle");
   };
 
-  const selectDestination = (id: string) => {
-    setDestinationId(id);
+  const startFixedDestinationRoute = () => {
+    if (!fixedDestination || !fixedRouteStart || fixedRouteIds.length < 2) return;
+    setDestinationId(fixedDestination.id);
     setOrigin(null);
-    const node = graph.nodes[id];
-    const currentFloor = graph.floors.find((floor) => floor.id === node?.fId) || graph.floors[0];
-    setSelectedFloorId(currentFloor?.id || node?.fId || null);
-    setScreen("origin");
+    setOrigin({
+      floorId: fixedRouteStart.fId,
+      x: fixedRouteStart.x,
+      y: fixedRouteStart.y,
+      physX: fixedRouteStart.physX,
+      physY: fixedRouteStart.physY,
+      snapId: fixedRouteStart.id,
+    });
+    setReviewStepIndex(0);
+    setSelectedFloorId(fixedRouteStart.fId);
+    setScreen("review");
   };
 
   const selectOrigin = ({ x, y }: { x: number; y: number }) => {
@@ -1715,53 +1802,31 @@ export default function ARNavigationV3() {
 
   if (screen === "calibrate") {
     return (
-      <main className="v2-calibration">
-        <video ref={videoRef} className="v2-camera" playsInline muted />
-        <div className="v2-camera-shade" />
+      <main className="v3-permission-screen">
         <button type="button" className="v2-back-float" onClick={() => setScreen("review")} aria-label="返回">
           <ChevronLeft />
         </button>
-
-        <div className="v2-calibration-reticle" aria-hidden="true">
-          <span />
-          <Navigation />
-        </div>
-
-        <section className="v2-calibration-panel">
-          <div className="v2-step-label">方向校正</div>
-          <h1>面向第一段路徑</h1>
-          <p>請站在剛才點選的位置，面向準備前進的走道，再按下定位。</p>
-          <div className="v2-sensor-row">
-            <Camera />
-            <span>{cameraState === "ready" ? "相機已開啟" : "等待相機權限"}</span>
-            <Compass />
-            <span>{heading === null ? "等待方向感測" : `${Math.round(heading)}°`}</span>
-          </div>
-          <label className="v2-stride-setting">
-            <span>
+        <section className="v3-permission-panel">
+          <div className="v2-step-label">AR 導引</div>
+          <h1>開啟相機、方向與步行感測</h1>
+          <p>為了讓箭頭配合行進方向與步伐更新，請允許下列三項權限。</p>
+          <div className="v3-permission-list">
+            <div>
+              <Camera aria-hidden="true" />
+              <span>相機</span>
+              <strong>{cameraState === "ready" ? "已開啟" : "等待允許"}</strong>
+            </div>
+            <div>
+              <Compass aria-hidden="true" />
+              <span>動作與方向</span>
+              <strong>{heading === null ? "等待允許" : `${Math.round(heading)}°`}</strong>
+            </div>
+            <div>
               <Footprints aria-hidden="true" />
-              步距設定
-            </span>
-            <span className="v2-stride-input">
-              <input
-                type="number"
-                inputMode="decimal"
-                min={MIN_STRIDE_CENTIMETERS}
-                max={MAX_STRIDE_CENTIMETERS}
-                step="1"
-                value={strideInput}
-                placeholder={String(DEFAULT_STRIDE_CENTIMETERS)}
-                onChange={(event) => setStrideInput(event.target.value)}
-                onBlur={() => {
-                  if (strideInput.trim() === "") return;
-                  setStrideInput(String(strideCentimeters));
-                }}
-                aria-label="步距公分"
-              />
-              <b>公分</b>
-            </span>
-            <small>請用正常步伐行走；未設定時採用 60 公分。</small>
-          </label>
+              <span>步行感測</span>
+              <strong>{cameraState === "ready" ? "已開啟" : "等待允許"}</strong>
+            </div>
+          </div>
           {cameraMessage && <div className={`v2-message ${cameraState === "denied" ? "is-error" : ""}`}>{cameraMessage}</div>}
           {cameraState !== "ready" ? (
             <button type="button" className="v2-primary-button" onClick={requestCameraAndMotion}>
@@ -1775,14 +1840,10 @@ export default function ARNavigationV3() {
               onClick={beginNavigation}
               disabled={heading === null}
             >
-              <LocateFixed />
-              {heading === null ? "等待方向感測..." : "定位並開始導引"}
+              <Navigation />
+              {heading === null ? "等待方向感測..." : "開始 AR 導引"}
             </button>
           )}
-          <a className="v2-secondary-link" href="./ar.html">
-            <ScanLine />
-            改用影像辨識定位
-          </a>
         </section>
       </main>
     );
@@ -1798,7 +1859,7 @@ export default function ARNavigationV3() {
     return (
       <main className="v2-review-app">
         <header className="v2-review-header">
-          <button type="button" onClick={() => setScreen("origin")} aria-label="返回目前位置">
+          <button type="button" onClick={restart} aria-label="返回導覽地圖">
             <ArrowLeft />
           </button>
           <div>
@@ -1814,9 +1875,9 @@ export default function ARNavigationV3() {
               {activeReviewStep?.floorName || selectedFloor?.name || "樓層"}
             </strong>
             <span>{selectedFloor?.buildingName || "導引平面圖"}</span>
-            <button type="button" onClick={() => setScreen("origin")}>
-              <Crosshair />
-              重選位置
+            <button type="button" onClick={restart}>
+              <ArrowLeft />
+              返回地圖
             </button>
           </div>
 
@@ -1895,10 +1956,10 @@ export default function ARNavigationV3() {
   }
 
   const pageTitle =
-    screen === "destination" ? "選擇目的地" : screen === "origin" ? "標示目前位置" : "確認導航路徑";
+    screen === "destination" ? "瀏覽導引地圖" : screen === "origin" ? "標示目前位置" : "確認導航路徑";
   const pageDescription =
     screen === "destination"
-      ? "直接點擊平面圖上的房間大頭針"
+      ? "可切換平面或 45° 模式瀏覽導引位置"
       : screen === "origin"
         ? "切換到你所在樓層，再點擊平面圖位置"
         : "確認後面向第一段路徑進行方向校正";
@@ -1934,7 +1995,7 @@ export default function ARNavigationV3() {
 
       <section className="v2-intro">
         <div className="v2-step-label">
-          {screen === "destination" ? "STEP 1" : screen === "origin" ? "STEP 2" : "STEP 3"}
+          {screen === "destination" ? "導引地圖" : screen === "origin" ? "STEP 2" : "路徑預覽"}
         </div>
         <h1>{pageTitle}</h1>
         <p>{pageDescription}</p>
@@ -1947,24 +2008,39 @@ export default function ARNavigationV3() {
             {screen === "destination" ? "目的地樓層" : screen === "review" ? "導引樓層" : "目前所在樓層"}
           </strong>
         </div>
-        <FloorTabs
-          floors={
-            screen === "review"
-              ? (routeSteps
-                  .map((step) => graph.floors.find((floor) => floor.id === step.floorId))
-                  .filter(Boolean) as FloorData[])
-              : visibleFloors
-          }
-          selectedId={selectedFloor?.id || null}
-          onSelect={(id) => {
-            setSelectedFloorId(id);
-            if (screen === "origin") setOrigin(null);
-            if (screen === "review") {
-              const stepIndex = routeSteps.findIndex((step) => step.floorId === id);
-              if (stepIndex >= 0) setReviewStepIndex(stepIndex);
+        {screen === "destination" ? (
+          <button
+            type="button"
+            className="v3-fixed-destination-button"
+            disabled={!fixedDestination || !fixedRouteStart || fixedRouteIds.length < 2}
+            onClick={startFixedDestinationRoute}
+          >
+            <Navigation aria-hidden="true" />
+            導航到產業發展處工商科(工商登記)
+          </button>
+        ) : (
+          <FloorTabs
+            floors={
+              screen === "review"
+                ? (routeSteps
+                    .map((step) => graph.floors.find((floor) => floor.id === step.floorId))
+                    .filter(Boolean) as FloorData[])
+                : visibleFloors
             }
-          }}
-        />
+            selectedId={selectedFloor?.id || null}
+            onSelect={(id) => {
+              setSelectedFloorId(id);
+              if (screen === "origin") setOrigin(null);
+              if (screen === "review") {
+                const stepIndex = routeSteps.findIndex((step) => step.floorId === id);
+                if (stepIndex >= 0) setReviewStepIndex(stepIndex);
+              }
+            }}
+          />
+        )}
+        {screen === "destination" && (!fixedDestination || !fixedRouteStart || fixedRouteIds.length < 2) && (
+          <small className="v3-route-unavailable">後台尚未建立這個目的地的完整路徑</small>
+        )}
       </section>
 
       <section className="v2-map-card">
@@ -1982,7 +2058,6 @@ export default function ARNavigationV3() {
           destinationId={destinationId}
           origin={origin}
           routePoints={navigationPoints}
-          onDestination={selectDestination}
           onOrigin={selectOrigin}
         />
       </section>
@@ -2018,8 +2093,8 @@ export default function ARNavigationV3() {
         )}
         {screen === "destination" && (
           <div className="v2-footer-tip">
-            <MapPin />
-            點選紅色大頭針後，系統會帶你設定目前位置
+            <Map aria-hidden="true" />
+            地圖與大頭針僅供瀏覽，請使用上方按鈕開始導航
           </div>
         )}
       </footer>
