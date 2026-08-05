@@ -13,6 +13,7 @@ import {
   LocateFixed,
   Map,
   MapPin,
+  Maximize2,
   Minus,
   Navigation,
   Plus,
@@ -372,7 +373,7 @@ const placeMapLabels = (
   const occupied: Array<{ left: number; top: number; right: number; bottom: number }> = [
     {
       left: Math.max(0, scaledWidth - 54),
-      top: Math.max(0, scaledHeight - 94),
+      top: Math.max(0, scaledHeight - 136),
       right: scaledWidth - 4,
       bottom: scaledHeight - 4,
     },
@@ -545,6 +546,10 @@ function MapPanel({
     startPointerY: 0,
     startPanX: 0,
     startPanY: 0,
+    startPinchDistance: 0,
+    startPinchScale: 1,
+    startPinchCenterX: 0,
+    startPinchCenterY: 0,
     moved: false,
     multiPointer: false,
   });
@@ -660,9 +665,14 @@ function MapPanel({
     if (pointers.length === 1) {
       gesture.startPointerX = pointers[0].x;
       gesture.startPointerY = pointers[0].y;
-    } else {
+    } else if (pointers.length >= 2) {
+      const [first, second] = pointers;
       gesture.multiPointer = true;
       gesture.moved = true;
+      gesture.startPinchDistance = Math.hypot(second.x - first.x, second.y - first.y);
+      gesture.startPinchScale = mapTransform.scale;
+      gesture.startPinchCenterX = (first.x + second.x) / 2;
+      gesture.startPinchCenterY = (first.y + second.y) / 2;
     }
   };
 
@@ -673,7 +683,23 @@ function MapPanel({
     const gesture = gestureRef.current;
     const rect = event.currentTarget.getBoundingClientRect();
 
-    if (pointers.length === 1 && !gesture.multiPointer && mapTransform.scale > 1) {
+    if (pointers.length >= 2 && gesture.startPinchDistance > 0) {
+      const [first, second] = pointers;
+      const distance = Math.hypot(second.x - first.x, second.y - first.y);
+      const centerX = (first.x + second.x) / 2;
+      const centerY = (first.y + second.y) / 2;
+      const nextScale = gesture.startPinchScale * (distance / gesture.startPinchDistance);
+      setMapTransform(
+        constrainTransform(
+          {
+            scale: nextScale,
+            x: gesture.startPanX + centerX - gesture.startPinchCenterX,
+            y: gesture.startPanY + centerY - gesture.startPinchCenterY,
+          },
+          rect,
+        ),
+      );
+    } else if (pointers.length === 1 && !gesture.multiPointer && mapTransform.scale > 1) {
       const deltaX = pointers[0].x - gesture.startPointerX;
       const deltaY = pointers[0].y - gesture.startPointerY;
       if (Math.hypot(deltaX, deltaY) > 3) gesture.moved = true;
@@ -701,12 +727,13 @@ function MapPanel({
     const remaining = Array.from(pointerMapRef.current.values());
     if (remaining.length === 0) {
       gestureRef.current.multiPointer = false;
-    } else if (remaining.length === 1 && !gestureRef.current.multiPointer) {
+    } else if (remaining.length === 1) {
+      gestureRef.current.multiPointer = false;
       gestureRef.current.startPointerX = remaining[0].x;
       gestureRef.current.startPointerY = remaining[0].y;
       gestureRef.current.startPanX = mapTransform.x;
       gestureRef.current.startPanY = mapTransform.y;
-      gestureRef.current.moved = false;
+      gestureRef.current.moved = true;
     }
   };
 
@@ -716,6 +743,17 @@ function MapPanel({
     setMapTransform((current) =>
       constrainTransform({ ...current, scale: current.scale + step }, rect),
     );
+  };
+
+  const resetMapTransform = () => {
+    pointerMapRef.current.clear();
+    setMapTransform({ scale: 1, x: 0, y: 0 });
+  };
+
+  const zoomMapAtWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    if (compact) return;
+    event.preventDefault();
+    changeMapZoom(event.deltaY < 0 ? 0.25 : -0.25);
   };
 
   return (
@@ -728,6 +766,7 @@ function MapPanel({
         onPointerMove={movePointerGesture}
         onPointerUp={endPointerGesture}
         onPointerCancel={endPointerGesture}
+        onWheel={zoomMapAtWheel}
       >
         <div
           className="v2-map-world"
@@ -899,30 +938,41 @@ function MapPanel({
           </div>
         )}
 
-        <div
-          className="v2-map-zoom-controls"
-          onPointerDown={(event) => event.stopPropagation()}
-          onPointerUp={(event) => event.stopPropagation()}
-        >
-          <button
-            type="button"
-            aria-label="放大地圖"
-            title="放大地圖"
-            disabled={mapTransform.scale >= 4}
-            onClick={() => changeMapZoom(0.5)}
+        {!compact && (
+          <div
+            className="v2-map-zoom-controls"
+            onPointerDown={(event) => event.stopPropagation()}
+            onPointerUp={(event) => event.stopPropagation()}
           >
-            <Plus aria-hidden="true" />
-          </button>
-          <button
-            type="button"
-            aria-label="縮小地圖"
-            title="縮小地圖"
-            disabled={mapTransform.scale <= 1}
-            onClick={() => changeMapZoom(-0.5)}
-          >
-            <Minus aria-hidden="true" />
-          </button>
-        </div>
+            <button
+              type="button"
+              aria-label="放大地圖"
+              title="放大地圖"
+              disabled={mapTransform.scale >= 4}
+              onClick={() => changeMapZoom(0.5)}
+            >
+              <Plus aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              aria-label="縮小地圖"
+              title="縮小地圖"
+              disabled={mapTransform.scale <= 1}
+              onClick={() => changeMapZoom(-0.5)}
+            >
+              <Minus aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              aria-label="顯示完整地圖"
+              title="顯示完整地圖"
+              disabled={mapTransform.scale <= 1 && mapTransform.x === 0 && mapTransform.y === 0}
+              onClick={resetMapTransform}
+            >
+              <Maximize2 aria-hidden="true" />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
