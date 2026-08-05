@@ -399,8 +399,8 @@ const placeMapLabels = (
           const centerY = anchor.y + direction.y * (radius + labelHeight / 2);
           const unclampedLeft = centerX - labelWidth / 2;
           const unclampedTop = centerY - labelHeight / 2;
-          const left = clamp(unclampedLeft, 4, Math.max(4, width - labelWidth - 4));
-          const top = clamp(unclampedTop, 4, Math.max(4, height - labelHeight - 4));
+          const left = clamp(unclampedLeft, -6, Math.max(-6, width - labelWidth + 6));
+          const top = clamp(unclampedTop, -28, Math.max(-28, height - labelHeight + 6));
           const box = { left, top, right: left + labelWidth, bottom: top + labelHeight };
           const labelCollisions = occupied.filter((item) => intersects(box, item)).length;
           const pinCollisions = pins.filter((pin) => {
@@ -643,7 +643,7 @@ function MapPanel({
   };
 
   return (
-    <div className={`v2-map-frame ${compact ? "is-compact" : ""}`}>
+    <div className={`v2-map-frame ${compact ? "is-compact" : ""} ${mode === "destination" ? "is-browsing" : ""}`}>
       <div
         ref={mapPlaneRef}
         className={`v2-map-plane ${mode === "origin" ? "is-selecting" : ""} ${mapTransform.scale > 1.01 ? "is-zoomed" : ""}`}

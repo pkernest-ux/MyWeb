@@ -600,6 +600,14 @@ button:disabled {
   border-radius: 0;
 }
 
+.v2-map-frame.is-browsing {
+  padding-top: 30px;
+}
+
+.v2-map-frame.is-browsing .v2-map-plane {
+  overflow: visible;
+}
+
 .v2-map-plane {
   position: relative;
   width: 100%;
