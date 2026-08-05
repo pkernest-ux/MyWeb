@@ -85,6 +85,10 @@ const LABEL_SIZE_STORAGE_KEY = "ar-v3-map-label-size";
 const DEFAULT_LABEL_SIZE = 10;
 const MIN_LABEL_SIZE = 8;
 const MAX_LABEL_SIZE = 16;
+const REVIEW_FONT_STORAGE_KEY = "ar-v3-review-font-size";
+const DEFAULT_REVIEW_FONT_SIZE = 16;
+const MIN_REVIEW_FONT_SIZE = 13;
+const MAX_REVIEW_FONT_SIZE = 20;
 const STEP_ACCELERATION_THRESHOLD = 0.9;
 const STEP_RELEASE_THRESHOLD = 0.34;
 const STEP_COOLDOWN_MS = 420;
@@ -1060,6 +1064,17 @@ export default function ARNavigationV3() {
     }
   });
   const [reviewStepIndex, setReviewStepIndex] = useState(0);
+  const [reviewFontSize, setReviewFontSize] = useState(() => {
+    try {
+      return clamp(
+        Number(window.localStorage.getItem(REVIEW_FONT_STORAGE_KEY)) || DEFAULT_REVIEW_FONT_SIZE,
+        MIN_REVIEW_FONT_SIZE,
+        MAX_REVIEW_FONT_SIZE,
+      );
+    } catch {
+      return DEFAULT_REVIEW_FONT_SIZE;
+    }
+  });
   const [mapExpanded, setMapExpanded] = useState(false);
   const [mapFloorId, setMapFloorId] = useState<string | null>(null);
   const [showAssistMenu, setShowAssistMenu] = useState(false);
@@ -1089,6 +1104,14 @@ export default function ARNavigationV3() {
       // Navigation still works with the in-memory value when storage is unavailable.
     }
   }, [strideCentimeters, strideInput]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(REVIEW_FONT_STORAGE_KEY, String(reviewFontSize));
+    } catch {
+      // Keep the in-memory setting when browser storage is unavailable.
+    }
+  }, [reviewFontSize]);
 
   useEffect(() => {
     let active = true;
@@ -2151,6 +2174,7 @@ export default function ARNavigationV3() {
         <section
           className={`v2-review-dock ${routeSteps.length > 1 ? "has-floor-switches" : "is-single-floor"}`}
           aria-label="樓層路徑資訊"
+          style={{ "--v3-review-font-size": `${reviewFontSize}px` } as React.CSSProperties}
         >
           {routeSteps.length > 1 &&
             (previousReviewStep ? (
@@ -2176,6 +2200,35 @@ export default function ARNavigationV3() {
             <div className="v2-review-dock-meta">
               <span>本層約 {reviewStepDistance.toFixed(1)} 公尺</span>
               <span>全程 {totalDistance.toFixed(1)} 公尺</span>
+              <div className="v3-review-font-control" role="group" aria-label="調整資訊文字大小">
+                <button
+                  type="button"
+                  aria-label="縮小資訊文字"
+                  title="縮小資訊文字"
+                  disabled={reviewFontSize <= MIN_REVIEW_FONT_SIZE}
+                  onClick={() =>
+                    setReviewFontSize((current) =>
+                      clamp(current - 1, MIN_REVIEW_FONT_SIZE, MAX_REVIEW_FONT_SIZE),
+                    )
+                  }
+                >
+                  <Minus aria-hidden="true" />
+                </button>
+                <output aria-label={`目前資訊字級 ${reviewFontSize}`}>{reviewFontSize}</output>
+                <button
+                  type="button"
+                  aria-label="放大資訊文字"
+                  title="放大資訊文字"
+                  disabled={reviewFontSize >= MAX_REVIEW_FONT_SIZE}
+                  onClick={() =>
+                    setReviewFontSize((current) =>
+                      clamp(current + 1, MIN_REVIEW_FONT_SIZE, MAX_REVIEW_FONT_SIZE),
+                    )
+                  }
+                >
+                  <Plus aria-hidden="true" />
+                </button>
+              </div>
             </div>
           </div>
           {routeSteps.length > 1 &&
