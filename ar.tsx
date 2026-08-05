@@ -7,7 +7,8 @@ import {
   ZoomIn, ZoomOut, Maximize, Scan, Info, Smartphone,
   ArrowUp, ArrowDown, ArrowLeft, ArrowRight,
   ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, Minus, Navigation,
-  Building, Layers, ArrowUpDown, Eye, Ruler, Route, GitCommit, MousePointer2, Activity
+  Building, Layers, ArrowUpDown, Eye, Ruler, Route, GitCommit, MousePointer2, Activity,
+  Eraser, Undo2
 } from 'lucide-react';
 
 // ==========================================
@@ -377,6 +378,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const markerImageInputRef = useRef(null);
 
   const [mapTransform, setMapTransform] = useState({ x: 0, y: 0, scale: 1 });
+  const [deleteUndo, setDeleteUndo] = useState(null);
 
   const applyPublishedProjectData = (data, projectId = null) => {
     const selectedData = selectPublishedProjectData(data, projectId);
@@ -396,6 +398,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     setSelectedWaypointId(null);
     setPathStartNodeId(null);
     setMapTransform({ x: 0, y: 0, scale: 1 });
+    setDeleteUndo(null);
     localStorage.setItem('arManager_lastCloudSyncAt', project.updatedAt || new Date().toISOString());
     return project;
   };
@@ -596,6 +599,55 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const currentEdges = currentFloor?.edges || [];
   const currentBounds = getFloorBounds(currentFloor);
 
+  const resetMapEditingState = () => {
+    setSelectedMarkerId(null);
+    setSelectedWaypointId(null);
+    setReferenceFloorId('');
+    setIsAddMode(false);
+    setIsPathMode(false);
+    setIsToggleShaftMode(false);
+    setIsMeasuring(false);
+    setMeasurePoints([]);
+    setPathStartNodeId(null);
+    setHoverPos(null);
+    setIsNavTestMode(false);
+    setNavTestPoints([]);
+    setNavTestPath([]);
+    setMapTransform({ x: 0, y: 0, scale: 1 });
+  };
+
+  const saveDeleteUndo = (label) => {
+    setDeleteUndo({
+      projectId: activeProjectId,
+      label,
+      buildings,
+      activeBuildingId,
+      activeFloorId,
+      referenceFloorId
+    });
+  };
+
+  const restoreLastDelete = () => {
+    if (!deleteUndo || deleteUndo.projectId !== activeProjectId) return;
+    setBuildings(deleteUndo.buildings);
+    setActiveBuildingId(deleteUndo.activeBuildingId);
+    setActiveFloorId(deleteUndo.activeFloorId);
+    resetMapEditingState();
+    setReferenceFloorId(deleteUndo.referenceFloorId || '');
+    setDeleteUndo(null);
+    setAlertModal({ isOpen: true, message: `${deleteUndo.label}已復原。若先前已同步刪除結果，請再次同步以更新雲端。` });
+  };
+
+  const removeFloorReference = (node, floorId) => {
+    if (!node) return node;
+    const linkedFloorIds = (node.linkedFloorIds || []).filter(id => id !== floorId);
+    return {
+      ...node,
+      linkedFloorIds,
+      sourceFloorId: node.sourceFloorId === floorId ? null : node.sourceFloorId
+    };
+  };
+
   // ==========================================
   // 資料同步核心機制
   // ==========================================
@@ -766,6 +818,82 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           ...b, floors: [...b.floors, { id: newFId, name, imageUrl: null, markers: [], waypoints: [], edges: [], bounds: inheritBounds }]
         } : b));
         setActiveFloorId(newFId);
+      }
+    });
+  };
+
+  const requestDeleteCurrentFloor = () => {
+    if (!currentBuilding || !currentFloor) return;
+    if (currentBuilding.floors.length <= 1) {
+      setAlertModal({ isOpen: true, message: '每棟建築至少需要保留一個樓層。如需重新製作，請使用「清除圖面資料」。' });
+      return;
+    }
+
+    const markerCount = (currentFloor.markers || []).length;
+    const waypointCount = (currentFloor.waypoints || []).length;
+    const edgeCount = (currentFloor.edges || []).length;
+    setConfirmModal({
+      isOpen: true,
+      title: `刪除 ${currentFloor.name || '目前樓層'}`,
+      message: `將刪除此樓層的平面圖、${markerCount} 個點位、${waypointCount} 個路網節點與 ${edgeCount} 條連線。刪除後可立即使用「復原」還原，確定要繼續嗎？`,
+      onConfirm: () => {
+        saveDeleteUndo(`樓層「${currentFloor.name || '未命名樓層'}」`);
+        const floorIndex = currentBuilding.floors.findIndex(f => f.id === activeFloorId);
+        const remainingFloors = currentBuilding.floors.filter(f => f.id !== activeFloorId);
+        const nextFloor = remainingFloors[Math.min(Math.max(floorIndex, 0), remainingFloors.length - 1)];
+
+        setBuildings(prev => prev.map(building => {
+          if (building.id !== activeBuildingId) return building;
+          return {
+            ...building,
+            floors: building.floors
+              .filter(floor => floor.id !== activeFloorId)
+              .map(floor => ({
+                ...floor,
+                markers: (floor.markers || []).map(node => removeFloorReference(node, activeFloorId)),
+                waypoints: (floor.waypoints || []).map(node => removeFloorReference(node, activeFloorId))
+              }))
+          };
+        }));
+        setActiveFloorId(nextFloor?.id);
+        resetMapEditingState();
+      }
+    });
+  };
+
+  const requestClearCurrentFloor = () => {
+    if (!currentFloor) return;
+    const markerCount = (currentFloor.markers || []).length;
+    const waypointCount = (currentFloor.waypoints || []).length;
+    const edgeCount = (currentFloor.edges || []).length;
+    if (markerCount + waypointCount + edgeCount === 0) {
+      setAlertModal({ isOpen: true, message: '目前樓層沒有可清除的點位或路網資料。' });
+      return;
+    }
+
+    setConfirmModal({
+      isOpen: true,
+      title: `清除 ${currentFloor.name || '目前樓層'} 的圖面資料`,
+      message: `將清除 ${markerCount} 個 AR 點位、${waypointCount} 個路網節點與 ${edgeCount} 條連線；平面圖與比例尺會保留。清除後可立即使用「復原」還原，確定要繼續嗎？`,
+      onConfirm: () => {
+        saveDeleteUndo(`樓層「${currentFloor.name || '未命名樓層'}」的圖面資料`);
+        setBuildings(prev => prev.map(building => {
+          if (building.id !== activeBuildingId) return building;
+          return {
+            ...building,
+            floors: building.floors.map(floor => {
+              if (floor.id === activeFloorId) {
+                return { ...floor, markers: [], waypoints: [], edges: [] };
+              }
+              return {
+                ...floor,
+                markers: (floor.markers || []).map(node => removeFloorReference(node, activeFloorId)),
+                waypoints: (floor.waypoints || []).map(node => removeFloorReference(node, activeFloorId))
+              };
+            })
+          };
+        }));
+        resetMapEditingState();
       }
     });
   };
@@ -1269,6 +1397,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   };
 
   const handleClearAllData = () => {
+    saveDeleteUndo('清空所有系統資料');
     setBuildings(createDefaultBuildings());
     setSelectedMarkerId(null);
     setSelectedWaypointId(null);
@@ -1281,7 +1410,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     setIsNavTestMode(false);
     setNavTestPoints([]);
     setNavTestPath([]);
-    setAlertModal({ isOpen: true, message: '\u76ee\u524d\u5c08\u6848\u7684 AR \u8cc7\u6599\u5df2\u6e05\u9664\u3002' });
+    setAlertModal({ isOpen: true, message: '\u76ee\u524d\u5c08\u6848\u7684 AR \u8cc7\u6599\u5df2\u6e05\u9664\u3002\u5982\u679c\u662f\u8aa4\u64cd\u4f5c\uff0c\u53ef\u4f7f\u7528\u300c\u5fa9\u539f\u300d\u9084\u539f\u3002' });
   };
 
   const resetFloorEditingState = () => {
@@ -1633,14 +1762,14 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         </div>
         <div className="bg-slate-900 border border-red-900/30 rounded-xl p-4 md:p-6 shadow-lg">
           <h3 className="text-base md:text-lg font-bold text-red-400 mb-2 flex items-center"><Database className="w-5 h-5 mr-2" /> 資料庫管理</h3>
-          <p className="text-xs md:text-sm text-slate-500 mb-4 md:mb-6">這些操作將會對目前的配置造成不可逆的影響，請謹慎操作。</p>
+          <p className="text-xs md:text-sm text-slate-500 mb-4 md:mb-6">執行前會再次確認，刪除後可在離開頁面前使用「復原」還原上一次操作。</p>
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 bg-slate-950 rounded-lg border border-red-900/50 gap-4">
             <div><div className="font-bold text-slate-300 text-sm md:text-base">清空所有系統資料</div><div className="text-xs text-slate-500 mt-1">刪除所有建築物、樓層平面圖與點位。</div></div>
             <button onClick={() => {
               setConfirmModal({
                 isOpen: true,
                 title: '清空所有資料',
-                message: '確定要清空所有資料嗎？此操作無法復原。',
+                message: '確定要清空所有資料嗎？執行後可在離開頁面前使用「復原」還原。',
                 onConfirm: () => handleClearAllData()
               });
             }} className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 font-bold px-4 py-2 rounded-lg text-sm whitespace-nowrap">清空資料</button>
@@ -1760,7 +1889,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 <select className="bg-transparent text-cyan-400 font-bold text-sm focus:outline-none max-w-[100px] truncate" value={activeFloorId} onChange={(e) => setActiveFloorId(e.target.value)}>
                   {currentBuilding.floors.slice().sort((a,b) => getFloorLevel(b.name) - getFloorLevel(a.name)).map(f => <option key={f.id} value={f.id} className="bg-slate-900">{f.name}</option>)}
                 </select>
-                <button onClick={addFloor} className="ml-1 px-1 text-cyan-400 hover:text-cyan-300 transition-colors"><Plus className="w-4 h-4"/></button>
+                <button onClick={addFloor} className="ml-1 px-1 text-cyan-400 hover:text-cyan-300 transition-colors" title="新增樓層"><Plus className="w-4 h-4"/></button>
+                <button onClick={requestDeleteCurrentFloor} disabled={!currentFloor || currentBuilding.floors.length <= 1} className="px-1 text-red-400 hover:text-red-300 transition-colors disabled:text-slate-700 disabled:cursor-not-allowed" title={currentBuilding.floors.length <= 1 ? '每棟至少保留一個樓層' : '刪除目前樓層'}><Trash2 className="w-4 h-4"/></button>
               </div>
             )}
             <div className="w-px h-5 bg-slate-700 mx-1 hidden md:block"></div>
@@ -1839,6 +1969,9 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 </button>
                 <button onClick={() => setBoundsModal({ isOpen: true, blX: currentBounds.blX, blY: currentBounds.blY, trX: currentBounds.trX, trY: currentBounds.trY })} className="flex shrink-0 items-center justify-center w-10 h-10 bg-slate-900/90 backdrop-blur border border-slate-700 text-blue-400 hover:bg-slate-800 rounded-xl transition-all shadow-lg" title="座標與比例尺設定">
                   <Target className="w-5 h-5" />
+                </button>
+                <button onClick={requestClearCurrentFloor} disabled={currentMarkers.length + currentWaypoints.length + currentEdges.length === 0} className="flex shrink-0 items-center justify-center w-10 h-10 bg-red-500/10 backdrop-blur border border-red-500/30 text-red-300 hover:bg-red-500/20 rounded-xl transition-all shadow-lg disabled:opacity-40 disabled:cursor-not-allowed" title="清除目前圖面的所有路網與點位">
+                  <Eraser className="w-5 h-5" />
                 </button>
               </>
             )}
@@ -2085,6 +2218,18 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               </div>
             )}
           </div>
+        </div>
+      )}
+
+      {deleteUndo?.projectId === activeProjectId && (
+        <div className="fixed left-1/2 bottom-20 md:bottom-5 z-[90] -translate-x-1/2 w-[calc(100%-2rem)] max-w-md rounded-xl border border-emerald-500/40 bg-slate-900/95 px-4 py-3 shadow-2xl backdrop-blur-md flex items-center gap-3">
+          <Undo2 className="w-5 h-5 text-emerald-400 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-bold text-slate-100 truncate">{deleteUndo.label}已刪除</div>
+            <div className="text-[11px] text-slate-400">可立即復原；復原後再同步即可更新雲端。</div>
+          </div>
+          <button onClick={restoreLastDelete} className="shrink-0 rounded-lg bg-emerald-500 px-3 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400 transition-colors">復原</button>
+          <button onClick={() => setDeleteUndo(null)} className="shrink-0 p-1 text-slate-500 hover:text-white" title="關閉復原提示"><X className="w-4 h-4" /></button>
         </div>
       )}
 
