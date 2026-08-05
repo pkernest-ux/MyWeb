@@ -1610,24 +1610,6 @@ button:disabled {
   color: #49677f;
 }
 
-.v2-footer-tip {
-  display: flex;
-  width: 100%;
-  min-height: 46px;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  color: #58718a;
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.v2-footer-tip svg {
-  width: 18px;
-  height: 18px;
-  color: #e35249;
-}
-
 .v2-calibration,
 .v2-ar-screen {
   position: relative;
@@ -2496,6 +2478,10 @@ button:disabled {
 
   .v2-map-screen {
     padding-bottom: calc(76px + env(safe-area-inset-bottom));
+  }
+
+  .v2-map-screen.is-destination {
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
   .v2-map-screen.is-review {

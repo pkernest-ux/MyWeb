@@ -2436,8 +2436,8 @@ export default function ARNavigationV3() {
         </section>
       )}
 
-      <footer className="v2-action-bar">
-        {screen === "origin" && (
+      {screen === "origin" && (
+        <footer className="v2-action-bar">
           <button
             type="button"
             className="v2-primary-button"
@@ -2451,14 +2451,8 @@ export default function ARNavigationV3() {
             <Navigation />
             {origin ? (routeIds.length ? "確認位置並規劃路徑" : "目前位置找不到可用路徑") : "請先點選目前位置"}
           </button>
-        )}
-        {screen === "destination" && (
-          <div className="v2-footer-tip">
-            <Map aria-hidden="true" />
-            地圖與大頭針僅供瀏覽，請使用上方按鈕開始導航
-          </div>
-        )}
-      </footer>
+        </footer>
+      )}
     </main>
   );
 }
