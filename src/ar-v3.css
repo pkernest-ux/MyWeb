@@ -741,8 +741,8 @@ button:disabled {
   position: absolute;
   z-index: 12;
   display: flex;
-  width: 38px;
-  height: 38px;
+  width: 30px;
+  height: 30px;
   align-items: center;
   justify-content: center;
   transform: translate(-50%, -90%) scale(var(--v2-pin-scale, 1));
@@ -750,7 +750,7 @@ button:disabled {
   border-radius: 50%;
   background: #e35249;
   color: #ffffff;
-  box-shadow: 0 5px 12px rgba(97, 31, 28, 0.3);
+  box-shadow: 0 4px 9px rgba(97, 31, 28, 0.28);
   backface-visibility: hidden;
   pointer-events: none;
   transform-style: preserve-3d;
@@ -761,18 +761,28 @@ button:disabled {
 }
 
 .v2-destination-pin svg {
-  width: 24px;
-  height: 24px;
+  width: 19px;
+  height: 19px;
   fill: #e35249;
 }
 
-.v2-destination-pin span {
+.v3-map-label-layer {
   position: absolute;
-  bottom: 44px;
-  left: 50%;
-  max-width: 118px;
+  z-index: 14;
+  inset: 0;
+  pointer-events: none;
+}
+
+.v3-map-label-layer span {
+  position: absolute;
+  display: flex;
+  min-height: 23px;
+  align-items: center;
+  justify-content: center;
   padding: 4px 7px;
-  transform: translateX(-50%);
+  transform: scale(var(--v2-pin-scale, 1));
+  transform-origin: 0 0;
+  box-sizing: border-box;
   border: 1px solid rgba(27, 67, 104, 0.12);
   border-radius: 6px;
   background: rgba(255, 255, 255, 0.96);
@@ -780,22 +790,11 @@ button:disabled {
   font-size: 10px;
   font-weight: 900;
   line-height: 1.2;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  text-align: center;
+  white-space: normal;
   box-shadow: 0 4px 10px rgba(33, 59, 82, 0.16);
   backface-visibility: hidden;
-}
-
-.v2-destination-pin span::after {
-  position: absolute;
-  top: 100%;
-  left: 50%;
-  width: 8px;
-  height: 8px;
-  border-right: 1px solid rgba(27, 67, 104, 0.12);
-  border-bottom: 1px solid rgba(27, 67, 104, 0.12);
-  background: rgba(255, 255, 255, 0.96);
-  content: "";
-  transform: translate(-50%, -4px) rotate(45deg);
 }
 
 .v2-destination-pin.is-selected {

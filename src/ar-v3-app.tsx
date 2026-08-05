@@ -324,6 +324,113 @@ const findPrebuiltRouteStart = (graph: GraphData, destinationId: string) => {
   return startId ? graph.nodes[startId] : null;
 };
 
+type MapLabelPlacement = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
+const placeMapLabels = (
+  nodes: NodeData[],
+  width: number,
+  height: number,
+  perspective: boolean,
+) => {
+  const placements: Record<string, MapLabelPlacement> = {};
+  if (!width || !height) return placements;
+
+  const projectPoint = (node: NodeData) => {
+    const x = clamp(node.x) * width;
+    const y = clamp(node.y) * height;
+    if (!perspective) return { x, y };
+    const originX = width * 0.5;
+    const originY = height * 0.58;
+    return {
+      x: originX + (x - originX) * 0.98,
+      y: originY + (y - originY) * 0.98 * Math.SQRT1_2,
+    };
+  };
+  const pins = nodes.map((node) => ({ id: node.id, ...projectPoint(node) }));
+  const occupied: Array<{ left: number; top: number; right: number; bottom: number }> = [
+    { left: Math.max(0, width - 142), top: 4, right: width - 4, bottom: 52 },
+    { left: Math.max(0, width - 54), top: Math.max(0, height - 94), right: width - 4, bottom: height - 4 },
+  ];
+  const intersects = (
+    a: { left: number; top: number; right: number; bottom: number },
+    b: { left: number; top: number; right: number; bottom: number },
+    gap = 3,
+  ) =>
+    a.left < b.right + gap &&
+    a.right > b.left - gap &&
+    a.top < b.bottom + gap &&
+    a.bottom > b.top - gap;
+  const directions = [
+    { x: 0, y: -1 },
+    { x: 1, y: -0.72 },
+    { x: -1, y: -0.72 },
+    { x: 1, y: 0 },
+    { x: -1, y: 0 },
+    { x: 0.85, y: 0.72 },
+    { x: -0.85, y: 0.72 },
+    { x: 0, y: 1 },
+  ];
+  const radii = [20, 34, 50, 68, 88, 110, 134];
+
+  [...nodes]
+    .sort((a, b) => clamp(a.y) - clamp(b.y) || clamp(a.x) - clamp(b.x))
+    .forEach((node) => {
+      const label = nodeLabel(node);
+      const estimatedTextWidth = Array.from(label).reduce(
+        (total, character) => total + (/[^\u0000-\u00ff]/.test(character) ? 10 : 6.2),
+        0,
+      );
+      const labelWidth = clamp(estimatedTextWidth + 18, 54, 164);
+      const lineCount = Math.max(1, Math.ceil(estimatedTextWidth / Math.max(42, labelWidth - 16)));
+      const labelHeight = 10 + lineCount * 13;
+      const anchor = projectPoint(node);
+      let best:
+        | { box: { left: number; top: number; right: number; bottom: number }; score: number }
+        | undefined;
+
+      radii.forEach((radius) => {
+        directions.forEach((direction, directionIndex) => {
+          const centerX = anchor.x + direction.x * (radius + labelWidth / 2);
+          const centerY = anchor.y + direction.y * (radius + labelHeight / 2);
+          const unclampedLeft = centerX - labelWidth / 2;
+          const unclampedTop = centerY - labelHeight / 2;
+          const left = clamp(unclampedLeft, 4, Math.max(4, width - labelWidth - 4));
+          const top = clamp(unclampedTop, 4, Math.max(4, height - labelHeight - 4));
+          const box = { left, top, right: left + labelWidth, bottom: top + labelHeight };
+          const labelCollisions = occupied.filter((item) => intersects(box, item)).length;
+          const pinCollisions = pins.filter((pin) => {
+            if (pin.id === node.id) return false;
+            return intersects(box, {
+              left: pin.x - 10,
+              top: pin.y - 10,
+              right: pin.x + 10,
+              bottom: pin.y + 10,
+            });
+          }).length;
+          const edgePenalty = Math.abs(left - unclampedLeft) + Math.abs(top - unclampedTop);
+          const score = labelCollisions * 10000 + pinCollisions * 4000 + radius + directionIndex + edgePenalty * 3;
+          if (!best || score < best.score) best = { box, score };
+        });
+      });
+
+      if (!best) return;
+      placements[node.id] = {
+        left: best.box.left,
+        top: best.box.top,
+        width: labelWidth,
+        height: labelHeight,
+      };
+      occupied.push(best.box);
+    });
+
+  return placements;
+};
+
 function FloorTabs({
   floors,
   selectedId,
@@ -373,7 +480,7 @@ function MapPanel({
   const [ratio, setRatio] = useState(1.25);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [mapTransform, setMapTransform] = useState({ scale: 1, x: 0, y: 0 });
-  const [mapView, setMapView] = useState<"flat" | "perspective">("perspective");
+  const [mapView, setMapView] = useState<"flat" | "perspective">("flat");
   const mapPlaneRef = useRef<HTMLDivElement>(null);
   const pointerMapRef = useRef(new globalThis.Map<number, { x: number; y: number }>());
   const gestureRef = useRef({
@@ -410,6 +517,16 @@ function MapPanel({
     const height = (viewportRatio / ratio) * 100;
     return { left: 0, top: (100 - height) / 2, width: 100, height };
   }, [ratio, viewportSize.height, viewportSize.width]);
+  const labelPlacements = useMemo(
+    () =>
+      placeMapLabels(
+        destinations,
+        (viewportSize.width * fittedWorld.width) / 100,
+        (viewportSize.height * fittedWorld.height) / 100,
+        effectiveMapView === "perspective",
+      ),
+    [destinations, effectiveMapView, fittedWorld.height, fittedWorld.width, viewportSize.height, viewportSize.width],
+  );
 
   useEffect(() => {
     pointerMapRef.current.clear();
@@ -610,16 +727,15 @@ function MapPanel({
 
             {mode === "destination" &&
               destinations.map((node) => (
-                <div
-                  key={node.id}
-                  className={`v2-destination-pin ${destinationId === node.id ? "is-selected" : ""}`}
-                  style={{ left: `${clamp(node.x) * 100}%`, top: `${clamp(node.y) * 100}%` }}
-                  aria-label={nodeLabel(node)}
-                >
-                  <MapPin aria-hidden="true" />
-                  <span>{nodeLabel(node)}</span>
-                </div>
-              ))}
+                  <div
+                    key={node.id}
+                    className={`v2-destination-pin ${destinationId === node.id ? "is-selected" : ""}`}
+                    style={{ left: `${clamp(node.x) * 100}%`, top: `${clamp(node.y) * 100}%` }}
+                    aria-label={nodeLabel(node)}
+                  >
+                    <MapPin aria-hidden="true" />
+                  </div>
+                ))}
 
             {destinationId && graph.nodes[destinationId]?.fId === floor?.id && mode !== "destination" && (
               <div
@@ -642,6 +758,27 @@ function MapPanel({
               </div>
             )}
           </div>
+          {mode === "destination" && (
+            <div className="v3-map-label-layer" aria-label="地圖位置標籤">
+              {destinations.map((node) => {
+                const placement = labelPlacements[node.id];
+                if (!placement) return null;
+                return (
+                  <span
+                    key={node.id}
+                    style={{
+                      left: `${placement.left}px`,
+                      top: `${placement.top}px`,
+                      width: `${placement.width}px`,
+                      height: `${placement.height}px`,
+                    }}
+                  >
+                    {nodeLabel(node)}
+                  </span>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {supportsPerspective && (
