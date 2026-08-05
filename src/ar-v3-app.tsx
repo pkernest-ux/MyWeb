@@ -377,12 +377,6 @@ const placeMapLabels = (
       right: scaledWidth - 4,
       bottom: scaledHeight - 4,
     },
-    {
-      left: 4,
-      top: Math.max(0, scaledHeight - 50),
-      right: 128,
-      bottom: scaledHeight - 4,
-    },
   ];
   const intersects = (
     a: { left: number; top: number; right: number; bottom: number },
@@ -516,6 +510,7 @@ function MapPanel({
   reverseFlow = false,
   allowPerspective = true,
   mapView = "flat",
+  labelFontSize = DEFAULT_LABEL_SIZE,
 }: {
   floor?: FloorData;
   graph: GraphData;
@@ -528,17 +523,11 @@ function MapPanel({
   reverseFlow?: boolean;
   allowPerspective?: boolean;
   mapView?: "flat" | "perspective";
+  labelFontSize?: number;
 }) {
   const [ratio, setRatio] = useState(1.25);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [mapTransform, setMapTransform] = useState({ scale: 1, x: 0, y: 0 });
-  const [labelFontSize, setLabelFontSize] = useState(() => {
-    try {
-      return clamp(Number(window.localStorage.getItem(LABEL_SIZE_STORAGE_KEY)) || DEFAULT_LABEL_SIZE, MIN_LABEL_SIZE, MAX_LABEL_SIZE);
-    } catch {
-      return DEFAULT_LABEL_SIZE;
-    }
-  });
   const mapPlaneRef = useRef<HTMLDivElement>(null);
   const pointerMapRef = useRef(new globalThis.Map<number, { x: number; y: number }>());
   const gestureRef = useRef({
@@ -600,14 +589,6 @@ function MapPanel({
       viewportSize.width,
     ],
   );
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(LABEL_SIZE_STORAGE_KEY, String(labelFontSize));
-    } catch {
-      // Keep the in-memory setting when browser storage is unavailable.
-    }
-  }, [labelFontSize]);
 
   useEffect(() => {
     pointerMapRef.current.clear();
@@ -907,37 +888,6 @@ function MapPanel({
           </div>
         )}
 
-        {mode === "destination" && (
-          <div
-            className="v3-label-size-control"
-            role="group"
-            aria-label="調整地圖標籤字級"
-            onPointerDown={(event) => event.stopPropagation()}
-            onPointerUp={(event) => event.stopPropagation()}
-          >
-            <span aria-hidden="true">字</span>
-            <button
-              type="button"
-              aria-label="縮小標籤文字"
-              title="縮小標籤文字"
-              disabled={labelFontSize <= MIN_LABEL_SIZE}
-              onClick={() => setLabelFontSize((current) => clamp(current - 1, MIN_LABEL_SIZE, MAX_LABEL_SIZE))}
-            >
-              <Minus aria-hidden="true" />
-            </button>
-            <output aria-label={`目前標籤字級 ${labelFontSize}`}>{labelFontSize}</output>
-            <button
-              type="button"
-              aria-label="放大標籤文字"
-              title="放大標籤文字"
-              disabled={labelFontSize >= MAX_LABEL_SIZE}
-              onClick={() => setLabelFontSize((current) => clamp(current + 1, MIN_LABEL_SIZE, MAX_LABEL_SIZE))}
-            >
-              <Plus aria-hidden="true" />
-            </button>
-          </div>
-        )}
-
         {!compact && (
           <div
             className="v2-map-zoom-controls"
@@ -1088,6 +1038,17 @@ export default function ARNavigationV3() {
   });
   const [reviewStepIndex, setReviewStepIndex] = useState(0);
   const [overviewMapView, setOverviewMapView] = useState<"flat" | "perspective">("flat");
+  const [overviewLabelFontSize, setOverviewLabelFontSize] = useState(() => {
+    try {
+      return clamp(
+        Number(window.localStorage.getItem(LABEL_SIZE_STORAGE_KEY)) || DEFAULT_LABEL_SIZE,
+        MIN_LABEL_SIZE,
+        MAX_LABEL_SIZE,
+      );
+    } catch {
+      return DEFAULT_LABEL_SIZE;
+    }
+  });
   const [reviewFontSize, setReviewFontSize] = useState(() => {
     try {
       return clamp(
@@ -1128,6 +1089,14 @@ export default function ARNavigationV3() {
       // Navigation still works with the in-memory value when storage is unavailable.
     }
   }, [strideCentimeters, strideInput]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(LABEL_SIZE_STORAGE_KEY, String(overviewLabelFontSize));
+    } catch {
+      // Keep the in-memory setting when browser storage is unavailable.
+    }
+  }, [overviewLabelFontSize]);
 
   useEffect(() => {
     try {
@@ -2360,10 +2329,39 @@ export default function ARNavigationV3() {
 
       <section className="v2-map-card">
         <div className="v2-map-card-title">
-          <div>
-            <Building2 />
-            <span>{selectedFloor?.buildingName}</span>
-          </div>
+          {screen === "destination" ? (
+            <div className="v3-label-size-control" role="group" aria-label="調整地圖標籤字級">
+              <span aria-hidden="true">A</span>
+              <button
+                type="button"
+                aria-label="縮小標籤文字"
+                title="縮小標籤文字"
+                disabled={overviewLabelFontSize <= MIN_LABEL_SIZE}
+                onClick={() =>
+                  setOverviewLabelFontSize((current) => clamp(current - 1, MIN_LABEL_SIZE, MAX_LABEL_SIZE))
+                }
+              >
+                <Minus aria-hidden="true" />
+              </button>
+              <output aria-label={`目前標籤字級 ${overviewLabelFontSize}`}>{overviewLabelFontSize}</output>
+              <button
+                type="button"
+                aria-label="放大標籤文字"
+                title="放大標籤文字"
+                disabled={overviewLabelFontSize >= MAX_LABEL_SIZE}
+                onClick={() =>
+                  setOverviewLabelFontSize((current) => clamp(current + 1, MIN_LABEL_SIZE, MAX_LABEL_SIZE))
+                }
+              >
+                <Plus aria-hidden="true" />
+              </button>
+            </div>
+          ) : (
+            <div>
+              <Building2 />
+              <span>{selectedFloor?.buildingName}</span>
+            </div>
+          )}
           {screen === "destination" && (
             <div className="v3-map-view-toggle" role="group" aria-label="切換地圖顯示方式">
               <button
@@ -2397,6 +2395,7 @@ export default function ARNavigationV3() {
           routePoints={navigationPoints}
           onOrigin={selectOrigin}
           mapView={overviewMapView}
+          labelFontSize={overviewLabelFontSize}
         />
       </section>
 
