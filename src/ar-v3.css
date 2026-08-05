@@ -96,7 +96,7 @@ button:disabled {
 .v2-welcome-background {
   position: absolute;
   inset: 0;
-  background: url("../assets/ar/welcome-portal.png") top center / cover no-repeat;
+  background: url("../assets/ar-v3/welcome-portal-v2.png") top center / cover no-repeat;
 }
 
 .v2-welcome-start {
