@@ -370,7 +370,6 @@ const placeMapLabels = (
   const scaledWidth = width * scale;
   const scaledHeight = height * scale;
   const occupied: Array<{ left: number; top: number; right: number; bottom: number }> = [
-    { left: Math.max(0, scaledWidth - 142), top: 4, right: scaledWidth - 4, bottom: 52 },
     {
       left: Math.max(0, scaledWidth - 54),
       top: Math.max(0, scaledHeight - 94),
@@ -515,6 +514,7 @@ function MapPanel({
   compact = false,
   reverseFlow = false,
   allowPerspective = true,
+  mapView = "flat",
 }: {
   floor?: FloorData;
   graph: GraphData;
@@ -526,11 +526,11 @@ function MapPanel({
   compact?: boolean;
   reverseFlow?: boolean;
   allowPerspective?: boolean;
+  mapView?: "flat" | "perspective";
 }) {
   const [ratio, setRatio] = useState(1.25);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [mapTransform, setMapTransform] = useState({ scale: 1, x: 0, y: 0 });
-  const [mapView, setMapView] = useState<"flat" | "perspective">("flat");
   const [labelFontSize, setLabelFontSize] = useState(() => {
     try {
       return clamp(Number(window.localStorage.getItem(LABEL_SIZE_STORAGE_KEY)) || DEFAULT_LABEL_SIZE, MIN_LABEL_SIZE, MAX_LABEL_SIZE);
@@ -861,35 +861,6 @@ function MapPanel({
           )}
         </div>
 
-        {supportsPerspective && (
-          <div
-            className="v3-map-view-toggle"
-            role="group"
-            aria-label="切換地圖顯示方式"
-            onPointerDown={(event) => event.stopPropagation()}
-            onPointerUp={(event) => event.stopPropagation()}
-          >
-            <button
-              type="button"
-              className={mapView === "flat" ? "is-active" : ""}
-              aria-pressed={mapView === "flat"}
-              onClick={() => setMapView("flat")}
-            >
-              <Map aria-hidden="true" />
-              平面
-            </button>
-            <button
-              type="button"
-              className={mapView === "perspective" ? "is-active" : ""}
-              aria-pressed={mapView === "perspective"}
-              onClick={() => setMapView("perspective")}
-            >
-              <Layers3 aria-hidden="true" />
-              45°
-            </button>
-          </div>
-        )}
-
         {mode === "origin" && (
           <div className="v2-map-hint">
             <Crosshair aria-hidden="true" />
@@ -1066,6 +1037,7 @@ export default function ARNavigationV3() {
     }
   });
   const [reviewStepIndex, setReviewStepIndex] = useState(0);
+  const [overviewMapView, setOverviewMapView] = useState<"flat" | "perspective">("flat");
   const [reviewFontSize, setReviewFontSize] = useState(() => {
     try {
       return clamp(
@@ -2342,6 +2314,28 @@ export default function ARNavigationV3() {
             <Building2 />
             <span>{selectedFloor?.buildingName}</span>
           </div>
+          {screen === "destination" && (
+            <div className="v3-map-view-toggle" role="group" aria-label="切換地圖顯示方式">
+              <button
+                type="button"
+                className={overviewMapView === "flat" ? "is-active" : ""}
+                aria-pressed={overviewMapView === "flat"}
+                onClick={() => setOverviewMapView("flat")}
+              >
+                <Map aria-hidden="true" />
+                平面
+              </button>
+              <button
+                type="button"
+                className={overviewMapView === "perspective" ? "is-active" : ""}
+                aria-pressed={overviewMapView === "perspective"}
+                onClick={() => setOverviewMapView("perspective")}
+              >
+                <Layers3 aria-hidden="true" />
+                45°
+              </button>
+            </div>
+          )}
           <strong>{selectedFloor?.name}</strong>
         </div>
         <MapPanel
@@ -2352,6 +2346,7 @@ export default function ARNavigationV3() {
           origin={origin}
           routePoints={navigationPoints}
           onOrigin={selectOrigin}
+          mapView={overviewMapView}
         />
       </section>
 
