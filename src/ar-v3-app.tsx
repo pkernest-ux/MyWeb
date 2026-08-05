@@ -14,6 +14,7 @@ import {
   Map,
   MapPin,
   Maximize2,
+  Minimize2,
   Minus,
   Navigation,
   Plus,
@@ -511,6 +512,8 @@ function MapPanel({
   allowPerspective = true,
   mapView = "flat",
   labelFontSize = DEFAULT_LABEL_SIZE,
+  isFullscreen = false,
+  onToggleFullscreen,
 }: {
   floor?: FloorData;
   graph: GraphData;
@@ -524,6 +527,8 @@ function MapPanel({
   allowPerspective?: boolean;
   mapView?: "flat" | "perspective";
   labelFontSize?: number;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
 }) {
   const [ratio, setRatio] = useState(1.25);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
@@ -610,9 +615,9 @@ function MapPanel({
     rect: DOMRect,
   ) => {
     const scale = clamp(transform.scale, 1, 4);
-    if (scale <= 1) return { scale: 1, x: 0, y: 0 };
-    const maxX = (rect.width * (scale - 1)) / 2;
-    const maxY = (rect.height * (scale - 1)) / 2;
+    const initialPanRatio = compact ? 0 : 0.18;
+    const maxX = (rect.width * (scale - 1)) / 2 + rect.width * initialPanRatio;
+    const maxY = (rect.height * (scale - 1)) / 2 + rect.height * initialPanRatio;
     return {
       scale,
       x: clamp(transform.x, -maxX, maxX),
@@ -680,7 +685,7 @@ function MapPanel({
           rect,
         ),
       );
-    } else if (pointers.length === 1 && !gesture.multiPointer && mapTransform.scale > 1) {
+    } else if (pointers.length === 1 && !gesture.multiPointer && !compact) {
       const deltaX = pointers[0].x - gesture.startPointerX;
       const deltaY = pointers[0].y - gesture.startPointerY;
       if (Math.hypot(deltaX, deltaY) > 3) gesture.moved = true;
@@ -726,11 +731,6 @@ function MapPanel({
     );
   };
 
-  const resetMapTransform = () => {
-    pointerMapRef.current.clear();
-    setMapTransform({ scale: 1, x: 0, y: 0 });
-  };
-
   const zoomMapAtWheel = (event: React.WheelEvent<HTMLDivElement>) => {
     if (compact) return;
     event.preventDefault();
@@ -741,7 +741,7 @@ function MapPanel({
     <div className={`v2-map-frame ${compact ? "is-compact" : ""} ${mode === "destination" ? "is-browsing" : ""}`}>
       <div
         ref={mapPlaneRef}
-        className={`v2-map-plane ${mode === "origin" ? "is-selecting" : ""} ${mapTransform.scale > 1.01 ? "is-zoomed" : ""}`}
+        className={`v2-map-plane ${mode === "origin" ? "is-selecting" : ""} ${!compact ? "is-pannable" : ""}`}
         style={{ aspectRatio: `${ratio}` }}
         onPointerDown={startPointerGesture}
         onPointerMove={movePointerGesture}
@@ -912,15 +912,17 @@ function MapPanel({
             >
               <Minus aria-hidden="true" />
             </button>
-            <button
-              type="button"
-              aria-label="顯示完整地圖"
-              title="顯示完整地圖"
-              disabled={mapTransform.scale <= 1 && mapTransform.x === 0 && mapTransform.y === 0}
-              onClick={resetMapTransform}
-            >
-              <Maximize2 aria-hidden="true" />
-            </button>
+            {onToggleFullscreen && (
+              <button
+                type="button"
+                aria-label={isFullscreen ? "離開全螢幕地圖" : "全螢幕地圖"}
+                title={isFullscreen ? "離開全螢幕地圖" : "全螢幕地圖"}
+                aria-pressed={isFullscreen}
+                onClick={onToggleFullscreen}
+              >
+                {isFullscreen ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -1038,6 +1040,7 @@ export default function ARNavigationV3() {
   });
   const [reviewStepIndex, setReviewStepIndex] = useState(0);
   const [overviewMapView, setOverviewMapView] = useState<"flat" | "perspective">("flat");
+  const [mapFullscreen, setMapFullscreen] = useState(false);
   const [overviewLabelFontSize, setOverviewLabelFontSize] = useState(() => {
     try {
       return clamp(
@@ -1097,6 +1100,20 @@ export default function ARNavigationV3() {
       // Keep the in-memory setting when browser storage is unavailable.
     }
   }, [overviewLabelFontSize]);
+
+  useEffect(() => {
+    if (!mapFullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMapFullscreen(false);
+    };
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [mapFullscreen]);
 
   useEffect(() => {
     try {
@@ -2327,7 +2344,12 @@ export default function ARNavigationV3() {
         )}
       </section>
 
-      <section className="v2-map-card">
+      <section
+        className={`v2-map-card ${mapFullscreen ? "is-fullscreen" : ""}`}
+        role={mapFullscreen ? "dialog" : undefined}
+        aria-label={mapFullscreen ? "全螢幕導引地圖" : undefined}
+        aria-modal={mapFullscreen ? true : undefined}
+      >
         <div className="v2-map-card-title">
           {screen === "destination" ? (
             <div className="v3-label-size-control" role="group" aria-label="調整地圖標籤字級">
@@ -2396,6 +2418,8 @@ export default function ARNavigationV3() {
           onOrigin={selectOrigin}
           mapView={overviewMapView}
           labelFontSize={overviewLabelFontSize}
+          isFullscreen={mapFullscreen}
+          onToggleFullscreen={() => setMapFullscreen((current) => !current)}
         />
       </section>
 
