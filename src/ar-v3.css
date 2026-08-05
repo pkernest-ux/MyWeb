@@ -860,7 +860,7 @@ button:disabled {
 
 .v2-map-zoom-controls {
   position: absolute;
-  z-index: 20;
+  z-index: 24;
   right: 10px;
   bottom: 10px;
   display: grid;
@@ -2457,6 +2457,11 @@ button:disabled {
 }
 
 @media (max-width: 699px) {
+  .v2-map-zoom-controls {
+    right: 12px;
+    bottom: 20px;
+  }
+
   .v2-map-screen {
     padding-bottom: calc(76px + env(safe-area-inset-bottom));
   }

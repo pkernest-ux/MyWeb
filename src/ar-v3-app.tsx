@@ -514,6 +514,7 @@ function MapPanel({
   onOrigin,
   compact = false,
   reverseFlow = false,
+  allowPerspective = true,
 }: {
   floor?: FloorData;
   graph: GraphData;
@@ -524,6 +525,7 @@ function MapPanel({
   onOrigin?: (point: { x: number; y: number }) => void;
   compact?: boolean;
   reverseFlow?: boolean;
+  allowPerspective?: boolean;
 }) {
   const [ratio, setRatio] = useState(1.25);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
@@ -558,7 +560,7 @@ function MapPanel({
           .join(" ")
       : "";
   const routePathId = `v2-route-${String(floor?.id || "floor").replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-  const supportsPerspective = mode !== "origin" && !compact;
+  const supportsPerspective = allowPerspective && mode !== "origin" && !compact;
   const effectiveMapView = supportsPerspective ? mapView : "flat";
   const fittedWorld = useMemo(() => {
     if (!viewportSize.width || !viewportSize.height || !ratio) {
@@ -1957,6 +1959,7 @@ export default function ARNavigationV3() {
             routePoints={isFacingBackward ? passedNavigationPoints : activeNavigationPoints}
             compact={!mapExpanded}
             reverseFlow={isFacingBackward}
+            allowPerspective={false}
           />
           <span className="v2-map-floor-label">{mapFloor?.name}</span>
           <span className="v2-map-toggle-label">{mapExpanded ? "縮小" : "地圖"}</span>
