@@ -2123,7 +2123,6 @@ export default function ARNavigationV3() {
         >
           <ArrowLeft />
         </button>
-        <div className="v2-version-badge">V3</div>
       </header>
 
       <section className="v2-intro">
