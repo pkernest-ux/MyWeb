@@ -1597,10 +1597,14 @@ button:disabled {
 }
 
 .v3-permission-panel h1 {
-  margin: 14px 0 8px;
+  margin: 14px 0 24px;
   color: #ffffff;
   font-size: 27px;
   line-height: 1.25;
+}
+
+.v3-permission-button-step {
+  flex: 0 0 auto;
 }
 
 .v3-permission-panel > p {

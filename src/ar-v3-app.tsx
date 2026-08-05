@@ -2088,8 +2088,7 @@ export default function ARNavigationV3() {
         />
         <section className="v3-permission-panel">
           <div className="v2-step-label">AR 導引</div>
-          <h1>開啟相機、方向與步行感測</h1>
-          <p>為了讓箭頭配合行進方向與步伐更新，請允許下列三項權限。</p>
+          <h1>步驟1：拿起手機面對箭頭所指方向</h1>
           <div className="v3-permission-list">
             <div>
               <Camera aria-hidden="true" />
@@ -2110,6 +2109,7 @@ export default function ARNavigationV3() {
           {cameraMessage && <div className={`v2-message ${cameraState === "denied" ? "is-error" : ""}`}>{cameraMessage}</div>}
           {cameraState !== "ready" ? (
             <button type="button" className="v2-primary-button" onClick={requestCameraAndMotion}>
+              <span className="v3-permission-button-step">步驟2：</span>
               <Camera />
               {cameraState === "loading" ? "正在開啟..." : "開啟相機、方向與步行感測"}
             </button>
