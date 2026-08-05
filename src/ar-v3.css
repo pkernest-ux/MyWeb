@@ -964,16 +964,16 @@ button:disabled {
   height: 36px;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(27, 67, 104, 0.18);
+  border: 1px solid #17202b;
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.96);
-  color: #174c82;
+  background: #17202b;
+  color: #ffffff;
   box-shadow: 0 3px 10px rgba(26, 58, 87, 0.2);
   touch-action: manipulation;
 }
 
 .v2-map-zoom-controls button:active:not(:disabled) {
-  background: #eaf5ff;
+  background: #000000;
 }
 
 .v2-map-zoom-controls button:disabled {
