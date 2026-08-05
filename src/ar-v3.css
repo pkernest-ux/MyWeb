@@ -586,6 +586,8 @@ button:disabled {
   max-height: 62dvh;
   overflow: hidden;
   background: #f5f8fb;
+  perspective: 900px;
+  perspective-origin: 50% 48%;
   touch-action: none;
   user-select: none;
 }
@@ -606,10 +608,24 @@ button:disabled {
   position: absolute;
   inset: 0;
   transform-origin: 50% 50%;
+  transform-style: preserve-3d;
   will-change: transform;
 }
 
-.v2-map-world > img {
+.v3-map-surface {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 58%;
+  transform-style: preserve-3d;
+  transition: transform 260ms ease;
+  will-change: transform;
+}
+
+.v3-map-surface.is-perspective {
+  transform: rotateX(45deg) scale(0.98);
+}
+
+.v3-map-surface > img {
   position: absolute;
   inset: 0;
   display: block;
@@ -703,6 +719,10 @@ button:disabled {
   box-shadow: 0 5px 12px rgba(97, 31, 28, 0.3);
 }
 
+.v3-map-surface.is-perspective .v2-destination-pin {
+  transform: translate(-50%, -90%) scale(var(--v2-pin-scale, 1)) rotateX(-45deg);
+}
+
 .v2-destination-pin svg {
   width: 24px;
   height: 24px;
@@ -711,7 +731,7 @@ button:disabled {
 
 .v2-destination-pin span {
   position: absolute;
-  top: 40px;
+  bottom: 44px;
   left: 50%;
   max-width: 118px;
   padding: 4px 7px;
@@ -725,6 +745,19 @@ button:disabled {
   line-height: 1.2;
   white-space: nowrap;
   box-shadow: 0 4px 10px rgba(33, 59, 82, 0.16);
+}
+
+.v2-destination-pin span::after {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  border-right: 1px solid rgba(27, 67, 104, 0.12);
+  border-bottom: 1px solid rgba(27, 67, 104, 0.12);
+  background: rgba(255, 255, 255, 0.96);
+  content: "";
+  transform: translate(-50%, -4px) rotate(45deg);
 }
 
 .v2-destination-pin.is-selected {
@@ -745,6 +778,10 @@ button:disabled {
   border-radius: 50%;
   box-shadow: 0 5px 14px rgba(20, 48, 72, 0.3);
   pointer-events: none;
+}
+
+.v3-map-surface.is-perspective .v2-static-pin {
+  transform: translate(-50%, -50%) scale(var(--v2-pin-scale, 1)) rotateX(-45deg);
 }
 
 .v2-static-pin svg {
@@ -798,6 +835,49 @@ button:disabled {
   bottom: 10px;
   display: grid;
   gap: 6px;
+}
+
+.v3-map-view-toggle {
+  position: absolute;
+  z-index: 22;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  overflow: hidden;
+  border: 1px solid rgba(27, 67, 104, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 3px 10px rgba(26, 58, 87, 0.2);
+}
+
+.v3-map-view-toggle button {
+  display: inline-flex;
+  min-width: 64px;
+  height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 9px;
+  color: #59738e;
+  font-size: 12px;
+  font-weight: 900;
+  touch-action: manipulation;
+}
+
+.v3-map-view-toggle button + button {
+  border-left: 1px solid rgba(27, 67, 104, 0.14);
+}
+
+.v3-map-view-toggle button.is-active {
+  background: #174c82;
+  color: #ffffff;
+}
+
+.v3-map-view-toggle svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: 2.5;
 }
 
 .v2-map-zoom-controls button {

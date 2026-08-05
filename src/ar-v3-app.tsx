@@ -342,6 +342,7 @@ function MapPanel({
 }) {
   const [ratio, setRatio] = useState(1.25);
   const [mapTransform, setMapTransform] = useState({ scale: 1, x: 0, y: 0 });
+  const [mapView, setMapView] = useState<"flat" | "perspective">("perspective");
   const mapPlaneRef = useRef<HTMLDivElement>(null);
   const pointerMapRef = useRef(new globalThis.Map<number, { x: number; y: number }>());
   const gestureRef = useRef({
@@ -364,6 +365,8 @@ function MapPanel({
           .join(" ")
       : "";
   const routePathId = `v2-route-${String(floor?.id || "floor").replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+  const supportsPerspective = mode !== "origin" && !compact;
+  const effectiveMapView = supportsPerspective ? mapView : "flat";
 
   useEffect(() => {
     pointerMapRef.current.clear();
@@ -489,103 +492,134 @@ function MapPanel({
             } as React.CSSProperties
           }
         >
-        {floor?.imageUrl ? (
-          <img
-            src={floor.imageUrl}
-            alt={`${floor.name} 平面圖`}
-            draggable={false}
-            onLoad={(event) => {
-              const image = event.currentTarget;
-              if (image.naturalWidth && image.naturalHeight) setRatio(image.naturalWidth / image.naturalHeight);
-            }}
-          />
-        ) : (
-          <div className="v2-empty-map">
-            <Map aria-hidden="true" />
-            <span>此樓層尚未上傳平面圖</span>
-          </div>
-        )}
+          <div className={`v3-map-surface is-${effectiveMapView}`}>
+            {floor?.imageUrl ? (
+              <img
+                src={floor.imageUrl}
+                alt={`${floor.name} 平面圖`}
+                draggable={false}
+                onLoad={(event) => {
+                  const image = event.currentTarget;
+                  if (image.naturalWidth && image.naturalHeight) setRatio(image.naturalWidth / image.naturalHeight);
+                }}
+              />
+            ) : (
+              <div className="v2-empty-map">
+                <Map aria-hidden="true" />
+                <span>此樓層尚未上傳平面圖</span>
+              </div>
+            )}
 
-        {polyline && routePath && (
-          <svg
-            key={`${routePathId}-${reverseFlow ? "reverse" : "forward"}`}
-            className={`v2-route-layer ${reverseFlow ? "is-reversed" : ""}`}
-            viewBox="0 0 100 100"
-            preserveAspectRatio="none"
-            aria-hidden="true"
-          >
-            <path className="v2-map-route-outline" d={routePath} />
-            <path id={routePathId} className="v2-route-base" d={routePath} />
-            {Array.from({ length: 5 }, (_, index) => (
-              <g className="v2-flow-arrow" key={`flow-arrow-${index}`}>
-                <path d="M -1.6 -1.35 L 1.25 0 L -1.6 1.35 Z" />
-                <animateMotion
-                  dur="4.5s"
-                  begin={`${(-index * 0.9).toFixed(1)}s`}
-                  repeatCount="indefinite"
-                  rotate="auto"
+            {polyline && routePath && (
+              <svg
+                key={`${routePathId}-${reverseFlow ? "reverse" : "forward"}`}
+                className={`v2-route-layer ${reverseFlow ? "is-reversed" : ""}`}
+                viewBox="0 0 100 100"
+                preserveAspectRatio="none"
+                aria-hidden="true"
+              >
+                <path className="v2-map-route-outline" d={routePath} />
+                <path id={routePathId} className="v2-route-base" d={routePath} />
+                {Array.from({ length: 5 }, (_, index) => (
+                  <g className="v2-flow-arrow" key={`flow-arrow-${index}`}>
+                    <path d="M -1.6 -1.35 L 1.25 0 L -1.6 1.35 Z" />
+                    <animateMotion
+                      dur="4.5s"
+                      begin={`${(-index * 0.9).toFixed(1)}s`}
+                      repeatCount="indefinite"
+                      rotate="auto"
+                    >
+                      <mpath href={`#${routePathId}`} />
+                    </animateMotion>
+                  </g>
+                ))}
+                <image
+                  className="v2-route-mascot"
+                  href="./assets/ar/mascot-walking-small.png"
+                  x="-6"
+                  y="-11"
+                  width="12"
+                  height="12"
+                  preserveAspectRatio="xMidYMid meet"
                 >
-                  <mpath href={`#${routePathId}`} />
-                </animateMotion>
-              </g>
-            ))}
-            <image
-              className="v2-route-mascot"
-              href="./assets/ar/mascot-walking-small.png"
-              x="-6"
-              y="-11"
-              width="12"
-              height="12"
-              preserveAspectRatio="xMidYMid meet"
-            >
-              <animateMotion dur="7s" repeatCount="indefinite" rotate="0">
-                <mpath href={`#${routePathId}`} />
-              </animateMotion>
-            </image>
-          </svg>
-        )}
+                  <animateMotion dur="7s" repeatCount="indefinite" rotate="0">
+                    <mpath href={`#${routePathId}`} />
+                  </animateMotion>
+                </image>
+              </svg>
+            )}
 
-        {mode === "destination" &&
-          destinations.map((node) => (
+            {mode === "destination" &&
+              destinations.map((node) => (
+                <button
+                  type="button"
+                  key={node.id}
+                  className={`v2-destination-pin ${destinationId === node.id ? "is-selected" : ""}`}
+                  style={{ left: `${clamp(node.x) * 100}%`, top: `${clamp(node.y) * 100}%` }}
+                  onPointerDown={(event) => event.stopPropagation()}
+                  onPointerUp={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDestination?.(node.id);
+                  }}
+                  aria-label={`選擇 ${nodeLabel(node)}`}
+                >
+                  <MapPin aria-hidden="true" />
+                  <span>{nodeLabel(node)}</span>
+                </button>
+              ))}
+
+            {destinationId && graph.nodes[destinationId]?.fId === floor?.id && mode !== "destination" && (
+              <div
+                className="v2-static-pin is-destination"
+                style={{
+                  left: `${clamp(graph.nodes[destinationId].x) * 100}%`,
+                  top: `${clamp(graph.nodes[destinationId].y) * 100}%`,
+                }}
+              >
+                <MapPin aria-hidden="true" />
+              </div>
+            )}
+
+            {origin && origin.floorId === floor?.id && (
+              <div
+                className="v2-static-pin is-origin"
+                style={{ left: `${clamp(origin.x) * 100}%`, top: `${clamp(origin.y) * 100}%` }}
+              >
+                <LocateFixed aria-hidden="true" />
+              </div>
+            )}
+          </div>
+        </div>
+
+        {supportsPerspective && (
+          <div
+            className="v3-map-view-toggle"
+            role="group"
+            aria-label="切換地圖顯示方式"
+            onPointerDown={(event) => event.stopPropagation()}
+            onPointerUp={(event) => event.stopPropagation()}
+          >
             <button
               type="button"
-              key={node.id}
-              className={`v2-destination-pin ${destinationId === node.id ? "is-selected" : ""}`}
-              style={{ left: `${clamp(node.x) * 100}%`, top: `${clamp(node.y) * 100}%` }}
-              onPointerDown={(event) => event.stopPropagation()}
-              onPointerUp={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.stopPropagation();
-                onDestination?.(node.id);
-              }}
-              aria-label={`選擇 ${nodeLabel(node)}`}
+              className={mapView === "flat" ? "is-active" : ""}
+              aria-pressed={mapView === "flat"}
+              onClick={() => setMapView("flat")}
             >
-              <MapPin aria-hidden="true" />
-              <span>{nodeLabel(node)}</span>
+              <Map aria-hidden="true" />
+              平面
             </button>
-          ))}
-
-        {destinationId && graph.nodes[destinationId]?.fId === floor?.id && mode !== "destination" && (
-          <div
-            className="v2-static-pin is-destination"
-            style={{
-              left: `${clamp(graph.nodes[destinationId].x) * 100}%`,
-              top: `${clamp(graph.nodes[destinationId].y) * 100}%`,
-            }}
-          >
-            <MapPin aria-hidden="true" />
+            <button
+              type="button"
+              className={mapView === "perspective" ? "is-active" : ""}
+              aria-pressed={mapView === "perspective"}
+              onClick={() => setMapView("perspective")}
+            >
+              <Layers3 aria-hidden="true" />
+              45°
+            </button>
           </div>
         )}
-
-        {origin && origin.floorId === floor?.id && (
-          <div
-            className="v2-static-pin is-origin"
-            style={{ left: `${clamp(origin.x) * 100}%`, top: `${clamp(origin.y) * 100}%` }}
-          >
-            <LocateFixed aria-hidden="true" />
-          </div>
-        )}
-        </div>
 
         {mode === "origin" && (
           <div className="v2-map-hint">
