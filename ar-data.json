@@ -8,7 +8,7 @@
         "id": "project_1783262670309_v8ykg",
         "name": "新竹市政府",
         "description": "",
-        "updatedAt": "2026-08-05T05:59:42.741Z"
+        "updatedAt": "2026-08-05T06:40:51.150Z"
       },
       "systemConfig": {
         "projectName": "新竹市政府",
@@ -385,8 +385,80 @@
                   "recognitionStatus": "untested"
                 }
               ],
-              "waypoints": [],
-              "edges": [],
+              "waypoints": [
+                {
+                  "id": "wp_1785912013288_2lvt1",
+                  "x": 0.4804331552922439,
+                  "y": 0.8787046948532603,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1785912017619_lsz9o",
+                  "x": 0.4794548130568561,
+                  "y": 0.6981948819577583,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1785912030784_9msrb",
+                  "x": 0.27693797033158063,
+                  "y": 0.6981948819577583,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1785912036638_fv63d",
+                  "x": 0.274981285860805,
+                  "y": 0.4091352491453664,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1785912039218_lv4mr",
+                  "x": 0.16247192879120753,
+                  "y": 0.4091352491453664,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309"
+                }
+              ],
+              "edges": [
+                {
+                  "id": "edge_1785912017619_jhon9",
+                  "start": "wp_1785912013288_2lvt1",
+                  "end": "wp_1785912017619_lsz9o"
+                },
+                {
+                  "id": "edge_1785912030785_q21kg",
+                  "start": "wp_1785912017619_lsz9o",
+                  "end": "wp_1785912030784_9msrb"
+                },
+                {
+                  "id": "edge_1785912036638_5x5dn",
+                  "start": "wp_1785912030784_9msrb",
+                  "end": "wp_1785912036638_fv63d"
+                },
+                {
+                  "id": "edge_1785912039218_0fxi1",
+                  "start": "wp_1785912036638_fv63d",
+                  "end": "wp_1785912039218_lv4mr"
+                },
+                {
+                  "id": "edge_1785912041901_ctpyv",
+                  "start": "wp_1785912039218_lv4mr",
+                  "end": "marker_1785908911374_zwnlz"
+                }
+              ],
               "bounds": {
                 "blX": 0,
                 "blY": 0,
