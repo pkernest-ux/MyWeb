@@ -2081,6 +2081,11 @@ export default function ARNavigationV3() {
         <button type="button" className="v2-back-float" onClick={() => setScreen("review")} aria-label="返回">
           <ChevronLeft />
         </button>
+        <img
+          className="v3-permission-hero"
+          src="./assets/ar-v3/hsinchu-city-hall-navigation-clean.png"
+          alt="新竹市政府室內導引起點"
+        />
         <section className="v3-permission-panel">
           <div className="v2-step-label">AR 導引</div>
           <h1>開啟相機、方向與步行感測</h1>
