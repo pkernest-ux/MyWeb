@@ -92,8 +92,7 @@ const DEFAULT_REVIEW_FONT_SIZE = 16;
 const MIN_REVIEW_FONT_SIZE = 13;
 const MAX_REVIEW_FONT_SIZE = 20;
 const AR_LOOKAHEAD_METERS = 8;
-const AR_TURN_EXIT_METERS = 6;
-const AR_MAX_LOOKAHEAD_METERS = 40;
+const AR_MAX_LOOKAHEAD_METERS = 60;
 const AR_TURN_ANGLE_THRESHOLD = 18;
 const AR_LOOKAHEAD_SCREEN_UNITS = 72;
 const STEP_ACCELERATION_THRESHOLD = 0.9;
@@ -1451,7 +1450,7 @@ export default function ARNavigationV3() {
       ? segmentBearing(projectionNavigationPoints[0], projectionNavigationPoints[1])
       : currentBearing;
   const arProjectionRotation = normalizeAngle(projectionBearing - firstBearing - headingDelta);
-  let distanceToUpcomingTurn: number | null = null;
+  let distanceThroughUpcomingTurn: number | null = null;
   let distanceBeforeTurn = 0;
   let previousProjectionBearing: number | null = null;
   for (let index = 0; index < projectionNavigationPoints.length - 1; index += 1) {
@@ -1465,17 +1464,17 @@ export default function ARNavigationV3() {
       previousProjectionBearing !== null &&
       Math.abs(normalizeAngle(bearing - previousProjectionBearing)) >= AR_TURN_ANGLE_THRESHOLD
     ) {
-      distanceToUpcomingTurn = distanceBeforeTurn;
+      distanceThroughUpcomingTurn = distanceBeforeTurn + segmentDistance;
       break;
     }
     distanceBeforeTurn += segmentDistance;
     previousProjectionBearing = bearing;
   }
   const arLookaheadMeters =
-    distanceToUpcomingTurn === null
+    distanceThroughUpcomingTurn === null
       ? AR_LOOKAHEAD_METERS
       : clamp(
-          distanceToUpcomingTurn + AR_TURN_EXIT_METERS,
+          distanceThroughUpcomingTurn,
           AR_LOOKAHEAD_METERS,
           AR_MAX_LOOKAHEAD_METERS,
         );
@@ -1497,7 +1496,7 @@ export default function ARNavigationV3() {
     const previous = arProjectedPoints[arProjectedPoints.length - 1];
     const radians = (relativeBearing * Math.PI) / 180;
     arProjectedPoints.push({
-      x: clamp(previous.x + Math.sin(radians) * projectedDistance * 0.82, 8, 92),
+      x: clamp(previous.x + Math.sin(radians) * projectedDistance, 8, 92),
       y: clamp(previous.y - Math.cos(radians) * projectedDistance, 7, 94),
     });
     remainingArLookahead -= visibleDistance;
