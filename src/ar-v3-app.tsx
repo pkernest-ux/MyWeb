@@ -91,6 +91,8 @@ const REVIEW_FONT_STORAGE_KEY = "ar-v3-review-font-size";
 const DEFAULT_REVIEW_FONT_SIZE = 16;
 const MIN_REVIEW_FONT_SIZE = 13;
 const MAX_REVIEW_FONT_SIZE = 20;
+const AR_LOOKAHEAD_METERS = 8;
+const AR_LOOKAHEAD_SCREEN_UNITS = 72;
 const STEP_ACCELERATION_THRESHOLD = 0.9;
 const STEP_RELEASE_THRESHOLD = 0.34;
 const STEP_COOLDOWN_MS = 420;
@@ -1447,9 +1449,10 @@ export default function ARNavigationV3() {
       : currentBearing;
   const arProjectionRotation = normalizeAngle(projectionBearing - firstBearing - headingDelta);
   const arProjectedPoints = [{ x: 50, y: 94 }];
+  let remainingArLookahead = AR_LOOKAHEAD_METERS;
   for (
     let index = 0;
-    index < Math.min(projectionNavigationPoints.length - 1, 6);
+    index < Math.min(projectionNavigationPoints.length - 1, 12) && remainingArLookahead > 0.01;
     index += 1
   ) {
     const start = projectionNavigationPoints[index];
@@ -1457,13 +1460,16 @@ export default function ARNavigationV3() {
     if (!start || !end || start.fId !== currentRoutePosition?.fId || end.fId !== currentRoutePosition?.fId) break;
     const relativeBearing = normalizeAngle(segmentBearing(start, end) - projectionBearing);
     const segmentDistance = Math.hypot(end.physX - start.physX, end.physY - start.physY);
-    const projectedDistance = clamp(segmentDistance * 4.5, 13, 24);
+    if (segmentDistance < 0.01) continue;
+    const visibleDistance = Math.min(segmentDistance, remainingArLookahead);
+    const projectedDistance = (visibleDistance / AR_LOOKAHEAD_METERS) * AR_LOOKAHEAD_SCREEN_UNITS;
     const previous = arProjectedPoints[arProjectedPoints.length - 1];
     const radians = (relativeBearing * Math.PI) / 180;
     arProjectedPoints.push({
       x: clamp(previous.x + Math.sin(radians) * projectedDistance * 0.82, 8, 92),
       y: clamp(previous.y - Math.cos(radians) * projectedDistance, 7, 94),
     });
+    remainingArLookahead -= visibleDistance;
   }
   if (arProjectedPoints.length === 1) arProjectedPoints.push({ x: 50, y: 16 });
   const arRoutePath = arProjectedPoints
