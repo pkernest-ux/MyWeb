@@ -1574,7 +1574,7 @@ button:disabled {
   justify-content: flex-start;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: calc(92px + env(safe-area-inset-top)) 28px calc(24px + env(safe-area-inset-bottom));
+  padding: calc(56px + env(safe-area-inset-top)) 28px calc(20px + env(safe-area-inset-bottom));
   background: #081720;
   color: #ffffff;
 }
@@ -1582,14 +1582,14 @@ button:disabled {
 .v3-permission-hero {
   display: block;
   width: 100%;
-  aspect-ratio: 1.65;
+  aspect-ratio: 1.85;
   object-fit: cover;
   object-position: center;
 }
 
 .v3-permission-panel {
   width: 100%;
-  padding: 32px 22px 22px;
+  padding: 26px 22px 20px;
   border: 1px solid rgba(152, 185, 207, 0.24);
   border-radius: 8px;
   background: #142c3d;
@@ -1605,6 +1605,20 @@ button:disabled {
 
 .v3-permission-button-step {
   flex: 0 0 auto;
+}
+
+@media (max-height: 760px) {
+  .v3-permission-screen {
+    padding-top: calc(42px + env(safe-area-inset-top));
+  }
+
+  .v3-permission-panel {
+    padding-top: 22px;
+  }
+
+  .v3-permission-list {
+    margin: 16px 0;
+  }
 }
 
 .v3-permission-panel > p {
