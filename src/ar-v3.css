@@ -857,6 +857,9 @@ button:disabled {
   border-radius: 50%;
   box-shadow: 0 5px 14px rgba(20, 48, 72, 0.3);
   pointer-events: none;
+  transition:
+    left 220ms linear,
+    top 220ms linear;
 }
 
 .v3-map-surface.is-perspective .v2-static-pin {

@@ -1412,6 +1412,16 @@ export default function ARNavigationV3() {
           physY: segmentStart.physY + (segmentEnd.physY - segmentStart.physY) * walkingProgress,
         }
       : segmentStart;
+  const liveMapOrigin: ManualOrigin | null = currentRoutePosition
+    ? {
+        floorId: currentRoutePosition.fId,
+        x: currentRoutePosition.x,
+        y: currentRoutePosition.y,
+        physX: currentRoutePosition.physX,
+        physY: currentRoutePosition.physY,
+        snapId: currentRoutePosition.id,
+      }
+    : origin;
   const activeNavigationPoints = currentRoutePosition
     ? [currentRoutePosition, ...navigationPoints.slice(currentSegment + 1)]
     : navigationPoints;
@@ -1987,7 +1997,7 @@ export default function ARNavigationV3() {
             graph={graph}
             mode="route"
             destinationId={destinationId}
-            origin={origin}
+            origin={liveMapOrigin}
             routePoints={isFacingBackward ? passedNavigationPoints : activeNavigationPoints}
             compact={!mapExpanded}
             reverseFlow={isFacingBackward}
