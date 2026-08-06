@@ -1413,9 +1413,93 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     setAlertModal({ isOpen: true, message: '\u76ee\u524d\u5c08\u6848\u7684 AR \u8cc7\u6599\u5df2\u6e05\u9664\u3002\u5982\u679c\u662f\u8aa4\u64cd\u4f5c\uff0c\u53ef\u4f7f\u7528\u300c\u5fa9\u539f\u300d\u9084\u539f\u3002' });
   };
 
+  const resetFloorEditingState = () => {
+    setSelectedMarkerId(null);
+    setSelectedWaypointId(null);
+    setIsAddMode(false);
+    setIsPathMode(false);
+    setIsToggleShaftMode(false);
+    setPathStartNodeId(null);
+    setHoverPos(null);
+    setIsNavTestMode(false);
+    setNavTestPoints([]);
+    setNavTestPath([]);
+    setIsMeasuring(false);
+    setMeasurePoints([]);
+    setIsConfirmingDelete(false);
+  };
+
+  const clearCurrentFloorDrawing = () => {
+    if (!currentFloor) return;
+    const floorId = currentFloor.id;
+
+    setBuildings(prev => prev.map(building => {
+      if (building.id !== activeBuildingId) return building;
+
+      return {
+        ...building,
+        floors: building.floors.map(floor => {
+          if (floor.id === floorId) {
+            return {
+              ...floor,
+              markers: [],
+              waypoints: [],
+              edges: []
+            };
+          }
+
+          const removeFloorFromShaft = (node) => {
+            if (!Array.isArray(node.linkedFloorIds) || !node.linkedFloorIds.includes(floorId)) return node;
+            const linkedFloorIds = node.linkedFloorIds.filter(linkedId => linkedId !== floorId);
+            return {
+              ...node,
+              linkedFloorIds,
+              sourceFloorId: node.sourceFloorId === floorId
+                ? (linkedFloorIds[0] || floor.id)
+                : node.sourceFloorId
+            };
+          };
+
+          return {
+            ...floor,
+            markers: (floor.markers || []).map(removeFloorFromShaft),
+            waypoints: (floor.waypoints || []).map(removeFloorFromShaft)
+          };
+        })
+      };
+    }));
+
+    resetFloorEditingState();
+    setAlertModal({
+      isOpen: true,
+      message: `「${currentBuilding?.name || '目前場域'} / ${currentFloor.name || '目前樓層'}」的繪製內容已從後台草稿清除；平面圖、比例尺與其他樓層資料均已保留。如需套用到民眾端，請再按「同步雲端」。`
+    });
+  };
+
+  const requestClearCurrentFloorDrawing = () => {
+    if (!currentFloor) return;
+    const markerCount = currentMarkers.length;
+    const waypointCount = currentWaypoints.length;
+    const edgeCount = currentEdges.length;
+
+    if (markerCount + waypointCount + edgeCount === 0) {
+      setAlertModal({ isOpen: true, message: '目前樓層沒有可清除的 AR 點位或路網資料。' });
+      return;
+    }
+
+    setConfirmModal({
+      isOpen: true,
+      title: '清除目前樓層繪製內容',
+      message: `確定要清除「${currentBuilding?.name || '目前場域'} / ${currentFloor.name || '目前樓層'}」的 ${markerCount} 個 AR 點位、${waypointCount} 個路網節點及 ${edgeCount} 條連線嗎？平面圖、比例尺、其他樓層與其他專案不會被刪除。`,
+      onConfirm: clearCurrentFloorDrawing
+    });
+  };
+
   const exportJSON = () => {
     const exportName = (systemConfig.projectName || activeProject?.name || 'ar_project').replace(/[^\w\u4e00-\u9fff-]+/g, '_');
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({
+    const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-');
+    const fileName = `${exportName}_ar_config_v7_${timestamp}.json`;
+    const payload = {
       version: '7.0',
       project: {
         id: activeProjectId,
@@ -1425,12 +1509,20 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       },
       systemConfig,
       buildings
-    }, null, 2));
+    };
+    const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
+      type: 'application/json;charset=utf-8'
+    });
+    const downloadUrl = URL.createObjectURL(blob);
     const downloadAnchorNode = document.createElement('a');
-    downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", `${exportName}_ar_config_v7.json`);
+    downloadAnchorNode.href = downloadUrl;
+    downloadAnchorNode.download = fileName;
+    downloadAnchorNode.style.display = 'none';
     document.body.appendChild(downloadAnchorNode);
-    downloadAnchorNode.click(); downloadAnchorNode.remove();
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+    window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+    setAlertModal({ isOpen: true, message: `已建立「${fileName}」，請查看瀏覽器的下載項目。` });
   };
 
   const resetMapView = () => {
@@ -1820,7 +1912,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               title="從雲端載入已上架的 AR 資料"
             >
               <Download className="w-5 h-5" />
-              <span>載入雲端</span>
+              <span className="md:hidden">載入</span>
+              <span className="hidden md:inline">載入雲端</span>
             </button>
             <button
               onClick={saveActiveProject}
@@ -1828,7 +1921,27 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               title="把目前這台裝置的 AR 資料同步到雲端"
             >
               <HardDrive className="w-5 h-5" />
-              <span>同步雲端</span>
+              <span className="md:hidden">同步</span>
+              <span className="hidden md:inline">同步雲端</span>
+            </button>
+            <button
+              onClick={exportJSON}
+              className="flex shrink-0 items-center justify-center gap-2 h-10 px-3 rounded-xl transition-all shadow-lg font-bold text-xs bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30"
+              title="下載目前專案的 AR JSON 配置檔"
+            >
+              <Download className="w-5 h-5" />
+              <span className="md:hidden">JSON</span>
+              <span className="hidden md:inline">下載JSON</span>
+            </button>
+            <button
+              onClick={requestClearCurrentFloorDrawing}
+              disabled={!currentFloor || currentMarkers.length + currentWaypoints.length + currentEdges.length === 0}
+              className="flex shrink-0 items-center justify-center gap-2 h-10 px-3 rounded-xl transition-all shadow-lg font-bold text-xs bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
+              title="清除目前樓層的 AR 點位、路網節點與連線，保留平面圖"
+            >
+              <Trash2 className="w-5 h-5" />
+              <span className="md:hidden">清除</span>
+              <span className="hidden md:inline">清除本層</span>
             </button>
             <button
               onClick={() => { if (!currentFloor?.imageUrl) return; setIsNavTestMode(!isNavTestMode); setIsPathMode(false); setIsToggleShaftMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setHoverPos(null); setNavTestPoints([]); setNavTestPath([]); }}
