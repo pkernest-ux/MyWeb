@@ -92,6 +92,9 @@ const DEFAULT_REVIEW_FONT_SIZE = 16;
 const MIN_REVIEW_FONT_SIZE = 13;
 const MAX_REVIEW_FONT_SIZE = 20;
 const AR_LOOKAHEAD_METERS = 8;
+const AR_TURN_EXIT_METERS = 6;
+const AR_MAX_LOOKAHEAD_METERS = 40;
+const AR_TURN_ANGLE_THRESHOLD = 18;
 const AR_LOOKAHEAD_SCREEN_UNITS = 72;
 const STEP_ACCELERATION_THRESHOLD = 0.9;
 const STEP_RELEASE_THRESHOLD = 0.34;
@@ -1448,8 +1451,36 @@ export default function ARNavigationV3() {
       ? segmentBearing(projectionNavigationPoints[0], projectionNavigationPoints[1])
       : currentBearing;
   const arProjectionRotation = normalizeAngle(projectionBearing - firstBearing - headingDelta);
+  let distanceToUpcomingTurn: number | null = null;
+  let distanceBeforeTurn = 0;
+  let previousProjectionBearing: number | null = null;
+  for (let index = 0; index < projectionNavigationPoints.length - 1; index += 1) {
+    const start = projectionNavigationPoints[index];
+    const end = projectionNavigationPoints[index + 1];
+    if (!start || !end || start.fId !== currentRoutePosition?.fId || end.fId !== currentRoutePosition?.fId) break;
+    const bearing = segmentBearing(start, end);
+    const segmentDistance = Math.hypot(end.physX - start.physX, end.physY - start.physY);
+    if (segmentDistance < 0.01) continue;
+    if (
+      previousProjectionBearing !== null &&
+      Math.abs(normalizeAngle(bearing - previousProjectionBearing)) >= AR_TURN_ANGLE_THRESHOLD
+    ) {
+      distanceToUpcomingTurn = distanceBeforeTurn;
+      break;
+    }
+    distanceBeforeTurn += segmentDistance;
+    previousProjectionBearing = bearing;
+  }
+  const arLookaheadMeters =
+    distanceToUpcomingTurn === null
+      ? AR_LOOKAHEAD_METERS
+      : clamp(
+          distanceToUpcomingTurn + AR_TURN_EXIT_METERS,
+          AR_LOOKAHEAD_METERS,
+          AR_MAX_LOOKAHEAD_METERS,
+        );
   const arProjectedPoints = [{ x: 50, y: 94 }];
-  let remainingArLookahead = AR_LOOKAHEAD_METERS;
+  let remainingArLookahead = arLookaheadMeters;
   for (
     let index = 0;
     index < Math.min(projectionNavigationPoints.length - 1, 12) && remainingArLookahead > 0.01;
@@ -1462,7 +1493,7 @@ export default function ARNavigationV3() {
     const segmentDistance = Math.hypot(end.physX - start.physX, end.physY - start.physY);
     if (segmentDistance < 0.01) continue;
     const visibleDistance = Math.min(segmentDistance, remainingArLookahead);
-    const projectedDistance = (visibleDistance / AR_LOOKAHEAD_METERS) * AR_LOOKAHEAD_SCREEN_UNITS;
+    const projectedDistance = (visibleDistance / arLookaheadMeters) * AR_LOOKAHEAD_SCREEN_UNITS;
     const previous = arProjectedPoints[arProjectedPoints.length - 1];
     const radians = (relativeBearing * Math.PI) / 180;
     arProjectedPoints.push({
