@@ -8,7 +8,7 @@
         "id": "project_1783262670309_v8ykg",
         "name": "新竹市政府",
         "description": "",
-        "updatedAt": "2026-08-05T06:40:51.150Z"
+        "updatedAt": "2026-08-06T14:01:57.162Z"
       },
       "systemConfig": {
         "projectName": "新竹市政府",
@@ -462,8 +462,8 @@
               "bounds": {
                 "blX": 0,
                 "blY": 0,
-                "trX": 100,
-                "trY": 100
+                "trX": 150,
+                "trY": 150
               }
             },
             {
