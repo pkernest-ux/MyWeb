@@ -2153,6 +2153,15 @@ button:disabled {
   bottom: 7px;
 }
 
+.v2-nav-map.is-expanded .v2-map-toggle-label {
+  right: auto;
+  bottom: calc(18px + env(safe-area-inset-bottom));
+  left: 18px;
+  min-height: 42px;
+  padding: 0 16px;
+  font-size: 17px;
+}
+
 .v2-nav-console {
   position: absolute;
   z-index: 22;
@@ -2175,6 +2184,10 @@ button:disabled {
 
 .v2-nav-console.has-floor-controls {
   grid-template-columns: 64px minmax(0, 1fr) 64px;
+}
+
+.v2-nav-console.is-walking-only {
+  min-height: 82px;
 }
 
 .v2-nav-console.is-map-open {
@@ -2225,6 +2238,35 @@ button:disabled {
   justify-content: center;
   flex-direction: column;
   padding: 3px 5px;
+}
+
+.v2-nav-console.is-map-open.is-walking-only {
+  height: calc(86px + env(safe-area-inset-bottom));
+}
+
+.v3-distance-only {
+  align-items: center;
+  padding: 0;
+}
+
+.v3-distance-only .v2-nav-status {
+  justify-content: center;
+}
+
+.v3-distance-only .v2-nav-status > span:first-child,
+.v3-distance-only > strong,
+.v3-distance-only .v2-walking-status,
+.v3-distance-only .v2-walking-progress,
+.v3-distance-only .v2-scale-warning,
+.v3-distance-only .v2-nav-actions {
+  display: none;
+}
+
+.v3-distance-only .v2-nav-status > span:last-child {
+  color: #fff4c0;
+  font-size: 24px;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
 }
 
 .v2-nav-status {

@@ -1878,7 +1878,7 @@ export default function ARNavigationV3() {
             <ChevronLeft />
           </button>
           <div>
-            <span>AR 方向導引 V3</span>
+            <span>AR 方向導引</span>
             <strong>{nodeLabel(destination)}</strong>
           </div>
           <button type="button" onClick={restart} aria-label="重新選擇">
@@ -1945,17 +1945,6 @@ export default function ARNavigationV3() {
           <span className="v2-ar-route-direction">{arDirectionLabel}</span>
         </div>
 
-        <button
-          type="button"
-          className="v2-realign-button"
-          onClick={realignRoute}
-          disabled={heading === null}
-          aria-label="重新校正 AR 路線"
-        >
-          <LocateFixed />
-          <span>校正路線</span>
-        </button>
-
         <div className={`v2-nav-map ${mapExpanded ? "is-expanded" : ""}`}>
           <MapPanel
             floor={mapFloor}
@@ -1997,10 +1986,10 @@ export default function ARNavigationV3() {
             ) : (
               <span className="v2-floor-control-space" aria-hidden="true" />
             ))}
-          <div className="v2-nav-console-info">
+          <div className="v2-nav-console-info v3-distance-only">
             <div className="v2-nav-status">
               <span>{segmentStart?.fName || destination?.fName}</span>
-              <span>{isArrived ? "已抵達" : `剩餘 ${remainingDistance.toFixed(1)} m`}</span>
+              <span>剩餘 {remainingDistance.toFixed(1)} m</span>
             </div>
             <strong>{instruction}</strong>
             <small className="v2-walking-status">
@@ -2146,7 +2135,6 @@ export default function ARNavigationV3() {
             <img src="./assets/ar/mascot-walking-small.png" alt="皮卡" />
             <strong>室內導引</strong>
           </div>
-          <span>V3</span>
         </header>
 
         <section className="v2-review-map-area">
