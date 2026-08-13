@@ -662,22 +662,13 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const currentBuilding = buildings.find(b => b.id === activeBuildingId) || buildings[0];
   const currentFloor = currentBuilding?.floors.find(f => f.id === activeFloorId);
   const currentFloorImageUrl = floorImagePreviewMode === 'navigation'
-    ? (currentFloor?.navigationImageUrl || currentFloor?.imageUrl)
-    : (currentFloor?.imageUrl || currentFloor?.navigationImageUrl);
+    ? currentFloor?.navigationImageUrl
+    : currentFloor?.imageUrl;
   const hasCurrentFloorPlan = Boolean(currentFloor?.imageUrl || currentFloor?.navigationImageUrl);
   const currentMarkers = currentFloor?.markers || [];
   const currentWaypoints = currentFloor?.waypoints || [];
   const currentEdges = currentFloor?.edges || [];
   const currentBounds = getFloorBounds(currentFloor);
-
-  useEffect(() => {
-    if (!currentFloor) return;
-    if (floorImagePreviewMode === 'overview' && !currentFloor.imageUrl && currentFloor.navigationImageUrl) {
-      setFloorImagePreviewMode('navigation');
-    } else if (floorImagePreviewMode === 'navigation' && !currentFloor.navigationImageUrl && currentFloor.imageUrl) {
-      setFloorImagePreviewMode('overview');
-    }
-  }, [currentFloor, floorImagePreviewMode]);
 
   const resetMapEditingState = () => {
     setSelectedMarkerId(null);
@@ -2213,38 +2204,6 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 </button>
               </>
             )}
-            {currentFloor && (
-              <div className="flex shrink-0 items-center h-10 rounded-xl border border-slate-700 bg-slate-900/90 p-1 shadow-lg" role="group" aria-label="切換平面圖預覽">
-                <button
-                  type="button"
-                  onClick={() => setFloorImagePreviewMode('overview')}
-                  disabled={!currentFloor.imageUrl}
-                  className={`h-8 px-2 rounded-lg text-[10px] font-bold transition-colors disabled:opacity-40 ${floorImagePreviewMode === 'overview' ? 'bg-cyan-500 text-slate-950' : 'text-slate-300 hover:bg-slate-800'}`}
-                  title="預覽無文字平面圖"
-                >
-                  無字
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setFloorImagePreviewMode('navigation')}
-                  disabled={!currentFloor.navigationImageUrl}
-                  className={`h-8 px-2 rounded-lg text-[10px] font-bold transition-colors disabled:opacity-40 ${floorImagePreviewMode === 'navigation' ? 'bg-amber-400 text-slate-950' : 'text-slate-300 hover:bg-slate-800'}`}
-                  title="預覽有文字導覽圖"
-                >
-                  有字
-                </button>
-              </div>
-            )}
-            <input type="file" ref={fileInputRef} onChange={handleFloorPlanUpload} className="hidden" accept="image/*" />
-            <button onClick={() => fileInputRef.current?.click()} className="flex shrink-0 items-center justify-center gap-1.5 h-10 px-2.5 bg-slate-900/90 backdrop-blur border border-cyan-500/40 text-cyan-200 hover:text-white hover:bg-slate-800 rounded-xl transition-all shadow-lg" title="上傳無文字平面圖，供目的地地圖與大頭針標籤使用">
-              <Upload className="w-4 h-4" />
-              <span className="text-[10px] font-bold whitespace-nowrap">無字圖</span>
-            </button>
-            <input type="file" ref={navigationImageInputRef} onChange={handleNavigationFloorPlanUpload} className="hidden" accept="image/*" />
-            <button onClick={() => navigationImageInputRef.current?.click()} className="flex shrink-0 items-center justify-center gap-1.5 h-10 px-2.5 bg-slate-900/90 backdrop-blur border border-amber-500/40 text-amber-200 hover:text-white hover:bg-slate-800 rounded-xl transition-all shadow-lg" title="上傳有文字導覽圖，供路徑導覽頁使用">
-              <ImageIcon className="w-4 h-4" />
-              <span className="text-[10px] font-bold whitespace-nowrap">有字圖</span>
-            </button>
           </div>
 
           <div ref={wrapperRef} className={`flex-1 relative overflow-hidden bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-900 to-slate-950 touch-none select-none ${isPathMode ? 'cursor-crosshair' : (isToggleShaftMode ? 'cursor-pointer' : (isAddMode ? 'cursor-crosshair' : (isMeasuring ? 'cursor-crosshair' : (isNavTestMode ? 'cursor-crosshair' : (isPanning ? 'cursor-grabbing' : 'cursor-grab')))))}`} onPointerDown={handleMapPointerDown} onPointerMove={handleMapPointerMove} onPointerUp={handleMapPointerUp} onPointerCancel={handleMapPointerUp}>
@@ -2488,21 +2447,60 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             )}
 
             {!currentFloorImageUrl && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-center text-slate-500 pointer-events-none px-4"><Map className="w-12 h-12 mx-auto mb-3 opacity-50 text-cyan-500/30" /><p className="text-base md:text-lg mb-1">尚未載入 {currentBuilding?.name} - {currentFloor?.name} 的平面圖</p><p className="text-xs">請從工具列選擇「無字圖」或「有字圖」上傳</p></div>
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center text-slate-500 pointer-events-none px-4 pb-28 md:pb-16">
+                <Map className="w-12 h-12 mx-auto mb-3 opacity-50 text-cyan-500/30" />
+                <p className="text-base md:text-lg mb-1">尚未上傳{floorImagePreviewMode === 'navigation' ? '有文字導覽圖' : '無文字平面圖'}</p>
+                <p className="text-xs">請使用左下角的「上傳{floorImagePreviewMode === 'navigation' ? '有字圖' : '無字圖'}」按鈕</p>
+              </div>
             )}
 
-            {currentFloor?.imageUrl && scaleBarWidthPx > 0 && (
+            {currentFloor && (
+              <div className="absolute bottom-20 left-3 z-50 flex max-w-[calc(100%-5.25rem)] flex-wrap items-center gap-2 rounded-xl border border-slate-700 bg-slate-950/90 p-2 shadow-xl backdrop-blur-md md:bottom-4 md:left-4 md:max-w-[calc(100%-12rem)]" aria-label="平面圖顯示與上傳">
+                <div className="flex h-10 shrink-0 items-center rounded-lg border border-slate-700 bg-slate-900 p-1" role="group" aria-label="切換平面圖預覽">
+                  <button
+                    type="button"
+                    onClick={() => setFloorImagePreviewMode('overview')}
+                    aria-pressed={floorImagePreviewMode === 'overview'}
+                    className={`h-8 min-w-12 rounded-md px-2 text-xs font-bold transition-colors ${floorImagePreviewMode === 'overview' ? 'bg-cyan-500 text-slate-950' : 'text-slate-300 hover:bg-slate-800'}`}
+                    title={currentFloor.imageUrl ? '顯示無文字平面圖' : '尚未上傳無文字平面圖'}
+                  >
+                    無字{!currentFloor.imageUrl && <span className="ml-1 text-[9px] font-medium opacity-70">未上傳</span>}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFloorImagePreviewMode('navigation')}
+                    aria-pressed={floorImagePreviewMode === 'navigation'}
+                    className={`h-8 min-w-12 rounded-md px-2 text-xs font-bold transition-colors ${floorImagePreviewMode === 'navigation' ? 'bg-amber-400 text-slate-950' : 'text-slate-300 hover:bg-slate-800'}`}
+                    title={currentFloor.navigationImageUrl ? '顯示有文字導覽圖' : '尚未上傳有文字導覽圖'}
+                  >
+                    有字{!currentFloor.navigationImageUrl && <span className="ml-1 text-[9px] font-medium opacity-70">未上傳</span>}
+                  </button>
+                </div>
+                <input type="file" ref={fileInputRef} onChange={handleFloorPlanUpload} className="hidden" accept="image/*" />
+                <button type="button" onClick={() => fileInputRef.current?.click()} className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-cyan-500/40 bg-slate-900 px-2.5 text-cyan-200 shadow-lg transition-colors hover:bg-slate-800 hover:text-white" title="上傳無文字平面圖，供目的地地圖與大頭針標籤使用">
+                  <Upload className="h-4 w-4" />
+                  <span className="whitespace-nowrap text-[11px] font-bold">上傳無字圖</span>
+                </button>
+                <input type="file" ref={navigationImageInputRef} onChange={handleNavigationFloorPlanUpload} className="hidden" accept="image/*" />
+                <button type="button" onClick={() => navigationImageInputRef.current?.click()} className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-amber-500/40 bg-slate-900 px-2.5 text-amber-200 shadow-lg transition-colors hover:bg-slate-800 hover:text-white" title="上傳有文字導覽圖，供路徑導覽頁使用">
+                  <ImageIcon className="h-4 w-4" />
+                  <span className="whitespace-nowrap text-[11px] font-bold">上傳有字圖</span>
+                </button>
+              </div>
+            )}
+
+            {currentFloorImageUrl && scaleBarWidthPx > 0 && (
               <div onClick={() => setBoundsModal({ isOpen: true, blX: currentBounds.blX, blY: currentBounds.blY, trX: currentBounds.trX, trY: currentBounds.trY })} className="absolute top-20 right-3 md:top-4 md:right-20 z-40 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2.5 rounded-lg shadow-lg cursor-pointer hover:bg-slate-800 transition-colors" title="點擊校正全域座標">
                 <span className="text-[10px] text-cyan-400 font-bold mb-1.5 flex items-center"><Target className="w-3 h-3 mr-1"/> 比例尺: {scaleBarMeters} m</span>
                 <div className="h-1.5 bg-cyan-500/50 border-x-2 border-cyan-400" style={{ width: `${scaleBarWidthPx}px` }}></div>
               </div>
             )}
 
-            {currentFloor?.imageUrl && (
-              <div className="absolute bottom-28 right-3 md:bottom-4 md:right-4 flex flex-col space-y-2 z-40">
-                <button onClick={() => setMapTransform(prev => ({...prev, scale: Math.min(10, prev.scale * 1.2)}))} className="p-2 bg-slate-900/90 backdrop-blur border border-slate-700 hover:bg-slate-800 text-slate-200 rounded-xl shadow-lg transition-colors"><ZoomIn className="w-5 h-5"/></button>
-                <button onClick={() => setMapTransform(prev => ({...prev, scale: Math.max(0.1, prev.scale / 1.2)}))} className="p-2 bg-slate-900/90 backdrop-blur border border-slate-700 hover:bg-slate-800 text-slate-200 rounded-xl shadow-lg transition-colors"><ZoomOut className="w-5 h-5"/></button>
-                <button onClick={resetMapView} className="p-2 bg-slate-900/90 backdrop-blur border border-slate-700 hover:bg-slate-800 text-slate-200 rounded-xl shadow-lg transition-colors mt-1"><Maximize className="w-5 h-5"/></button>
+            {currentFloorImageUrl && (
+              <div className="absolute bottom-20 right-3 z-50 flex flex-col space-y-2 md:bottom-4 md:right-32">
+                <button type="button" onClick={() => setMapTransform(prev => ({...prev, scale: Math.min(10, prev.scale * 1.2)}))} className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-slate-900/95 text-slate-100 shadow-lg backdrop-blur transition-colors hover:bg-slate-800" title="放大平面圖" aria-label="放大平面圖"><ZoomIn className="h-5 w-5"/></button>
+                <button type="button" onClick={() => setMapTransform(prev => ({...prev, scale: Math.max(0.1, prev.scale / 1.2)}))} className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-slate-900/95 text-slate-100 shadow-lg backdrop-blur transition-colors hover:bg-slate-800" title="縮小平面圖" aria-label="縮小平面圖"><ZoomOut className="h-5 w-5"/></button>
+                <button type="button" onClick={resetMapView} className="mt-1 flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-slate-900/95 text-slate-100 shadow-lg backdrop-blur transition-colors hover:bg-slate-800" title="顯示完整平面圖" aria-label="顯示完整平面圖"><Maximize className="h-5 w-5"/></button>
               </div>
             )}
           </div>
