@@ -309,7 +309,7 @@ const normalizePublishedProjects = (data) => {
 };
 
 const mergePublishedProjectLists = (...sources) => {
-  const projectMap = new Map();
+  const projectMap = new globalThis.Map();
 
   sources.forEach(source => {
     normalizePublishedProjects(source).forEach(item => {
@@ -2560,7 +2560,12 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             )}
 
             {!cloudProjectModal.isLoading && cloudProjectModal.error && (
-              <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">{cloudProjectModal.error}</div>
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
+                <p>{cloudProjectModal.error}</p>
+                <button type="button" onClick={openCloudProjectList} className="mt-3 inline-flex items-center gap-2 rounded-lg border border-red-300/30 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-100 transition-colors hover:bg-red-500/20">
+                  <RefreshCw className="h-4 w-4" />重新整理列表
+                </button>
+              </div>
             )}
 
             {!cloudProjectModal.isLoading && !cloudProjectModal.error && (
