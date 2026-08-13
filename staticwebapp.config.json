@@ -19,6 +19,18 @@
       }
     },
     {
+      "route": "/assets/ar/ar-app.js",
+      "headers": {
+        "Cache-Control": "no-cache, no-store, must-revalidate"
+      }
+    },
+    {
+      "route": "/assets/ar/ar-app.css",
+      "headers": {
+        "Cache-Control": "no-cache, no-store, must-revalidate"
+      }
+    },
+    {
       "route": "/admin-dashboard.html",
       "allowedRoles": ["authenticated"]
     },

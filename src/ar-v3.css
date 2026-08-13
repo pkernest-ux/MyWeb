@@ -1586,8 +1586,9 @@ button:disabled {
   display: block;
   width: 100%;
   aspect-ratio: 1.85;
-  object-fit: cover;
+  object-fit: contain;
   object-position: center;
+  background: #030b11;
 }
 
 .v3-permission-panel {
@@ -1630,6 +1631,34 @@ button:disabled {
   font-size: 14px;
   font-weight: 600;
   line-height: 1.6;
+}
+
+.v3-permission-panel .v3-guide-segment-summary {
+  margin-top: -14px;
+  color: #cfe8f8;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.v3-guide-external-link {
+  display: inline-flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 0 13px;
+  border: 1px solid rgba(247, 201, 72, 0.38);
+  border-radius: 7px;
+  background: rgba(247, 201, 72, 0.1);
+  color: #ffe27c;
+  font-size: 13px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.v3-guide-external-link svg {
+  width: 18px;
+  height: 18px;
 }
 
 .v3-permission-list {
@@ -1800,76 +1829,6 @@ button:disabled {
   width: 19px;
   height: 19px;
   color: #f7c948;
-}
-
-.v2-stride-setting {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 5px 10px;
-  margin: -3px 0 12px;
-  padding: 9px 10px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.v2-stride-setting > span:first-child {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: #e1e9ef;
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.v2-stride-setting > span:first-child svg {
-  width: 18px;
-  height: 18px;
-  color: #f7c948;
-}
-
-.v2-stride-input {
-  display: flex;
-  min-height: 36px;
-  align-items: center;
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 7px;
-  background: rgba(4, 12, 20, 0.56);
-}
-
-.v2-stride-input input {
-  width: 62px;
-  height: 34px;
-  padding: 0 4px 0 10px;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: #ffffff;
-  font: inherit;
-  font-size: 14px;
-  font-weight: 900;
-  text-align: right;
-}
-
-.v2-stride-input input::placeholder {
-  color: #ffffff;
-  opacity: 0.76;
-}
-
-.v2-stride-input b {
-  padding: 0 9px 0 4px;
-  color: #b9c7d3;
-  font-size: 11px;
-}
-
-.v2-stride-setting small {
-  grid-column: 1 / -1;
-  color: #b9c7d3;
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1.4;
 }
 
 .v2-message {
@@ -2241,6 +2200,39 @@ button:disabled {
   justify-content: center;
   flex-direction: column;
   padding: 3px 5px;
+}
+
+.v2-nav-console.v3-corner-console {
+  min-height: 128px;
+  grid-template-columns: 64px minmax(0, 1fr) 64px;
+}
+
+.v2-nav-console.v3-corner-console.is-map-open {
+  grid-template-columns: 64px minmax(0, 1fr) 64px;
+}
+
+.v3-corner-console .v3-corner-control {
+  min-height: 66px;
+}
+
+.v3-corner-console .v2-nav-console-info {
+  text-align: center;
+}
+
+.v3-corner-console .v2-nav-status {
+  font-size: 11px;
+}
+
+.v3-corner-console .v2-nav-console-info > strong {
+  font-size: 15px;
+  -webkit-line-clamp: 2;
+}
+
+.v3-corner-console .v3-segment-distance {
+  display: block;
+  color: #fff2ae;
+  font-size: 13px;
+  font-weight: 900;
 }
 
 .v2-nav-console.is-map-open.is-walking-only {

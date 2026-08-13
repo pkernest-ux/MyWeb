@@ -376,6 +376,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const containerRef = useRef(null);
   const fileInputRef = useRef(null);
   const markerImageInputRef = useRef(null);
+  const waypointGuideImageInputRef = useRef(null);
 
   const [mapTransform, setMapTransform] = useState({ x: 0, y: 0, scale: 1 });
   const [deleteUndo, setDeleteUndo] = useState(null);
@@ -663,7 +664,10 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
       const effectiveShaftId = updates.shaftId !== undefined ? updates.shaftId : targetNode.shaftId;
       const effectiveIsVerticalShaft = updates.isVerticalShaft !== undefined ? updates.isVerticalShaft : targetNode.isVerticalShaft;
-      const isShaftSync = effectiveIsVerticalShaft && effectiveShaftId;
+      const isGuideUpdate = Object.keys(updates).some(field =>
+        ['guideTitle', 'guideInstruction', 'guideImageUrl', 'guideExternalUrl'].includes(field)
+      );
+      const isShaftSync = effectiveIsVerticalShaft && effectiveShaftId && !isGuideUpdate;
       const sourceBounds = getFloorBounds(sourceFloor);
 
       return prev.map(b => {
@@ -922,7 +926,19 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   // ==========================================
   const addWaypointAndEdge = (x, y) => {
     const wpId = `wp_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-    const newWp = { id: wpId, x, y, isVerticalShaft: false, shaftId: null, linkedFloorIds: [], sourceFloorId: activeFloorId };
+    const newWp = {
+      id: wpId,
+      x,
+      y,
+      isVerticalShaft: false,
+      shaftId: null,
+      linkedFloorIds: [],
+      sourceFloorId: activeFloorId,
+      guideTitle: '',
+      guideInstruction: '',
+      guideImageUrl: null,
+      guideExternalUrl: ''
+    };
     setBuildings(prev => prev.map(b => b.id === activeBuildingId ? {
       ...b, floors: b.floors.map(f => {
         if (f.id !== activeFloorId) return f;
@@ -1188,6 +1204,21 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         compressImage(event.target.result, 800, (compressedDataUrl) => {
           handleMarkerUpdate(currentMarkerId, 'imageUrl', compressedDataUrl);
           handleMarkerUpdate(currentMarkerId, 'recognitionStatus', 'untested');
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+    target.value = '';
+  };
+
+  const handleWaypointGuideImageUpload = (e) => {
+    const file = e.target.files[0]; const target = e.target;
+    if (file && selectedWaypointId) {
+      const currentWaypointId = selectedWaypointId;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        compressImage(event.target.result, 1200, (compressedDataUrl) => {
+          handleWaypointUpdate(currentWaypointId, 'guideImageUrl', compressedDataUrl);
         });
       };
       reader.readAsDataURL(file);
@@ -2460,6 +2491,38 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 <div className="flex space-x-3">
                   <div className="flex-1"><label className="block text-[11px] text-slate-400 mb-1">相對 X (%)</label><input type="number" step="0.1" value={+(selectedWaypoint.x * 100).toFixed(1)} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'x', Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)) / 100)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200" /></div>
                   <div className="flex-1"><label className="block text-[11px] text-slate-400 mb-1">相對 Y (%)</label><input type="number" step="0.1" value={+(selectedWaypoint.y * 100).toFixed(1)} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'y', Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)) / 100)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200" /></div>
+                </div>
+
+                <div className="p-3 bg-cyan-950/20 border border-cyan-500/25 rounded-xl space-y-3 mt-4">
+                  <div>
+                    <h3 className="text-xs font-semibold text-cyan-300">轉角導引提示</h3>
+                    <p className="mt-1 text-[10px] leading-relaxed text-slate-400">民眾抵達這個轉折點時，前台會顯示參考照片與提示，重新確認面向後再開始下一段 AR。</p>
+                  </div>
+                  <label className="block">
+                    <span className="block text-[11px] text-slate-400 mb-1">轉角名稱</span>
+                    <input type="text" value={selectedWaypoint.guideTitle || ''} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'guideTitle', e.target.value)} placeholder="例如：一樓中央樓梯前" className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600" />
+                  </label>
+                  <label className="block">
+                    <span className="block text-[11px] text-slate-400 mb-1">面向提示</span>
+                    <textarea rows="3" value={selectedWaypoint.guideInstruction || ''} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'guideInstruction', e.target.value)} placeholder="例如：站在樓梯前，面向左側走廊" className="w-full resize-none bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600" />
+                  </label>
+                  <label className="block">
+                    <span className="block text-[11px] text-slate-400 mb-1">Google Street View 或外部參考網址</span>
+                    <input type="url" value={selectedWaypoint.guideExternalUrl || ''} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'guideExternalUrl', e.target.value)} placeholder="https://..." className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600" />
+                  </label>
+                  <div>
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <span className="text-[11px] text-slate-400">方向參考照片</span>
+                      <div className="flex gap-2">
+                        {selectedWaypoint.guideImageUrl && <button type="button" onClick={() => handleWaypointUpdate(selectedWaypoint.id, 'guideImageUrl', null)} className="text-[10px] text-red-300 bg-red-500/10 px-2.5 py-1.5 rounded border border-red-500/25">移除</button>}
+                        <input type="file" ref={waypointGuideImageInputRef} onChange={handleWaypointGuideImageUpload} className="hidden" accept="image/*" />
+                        <button type="button" onClick={() => waypointGuideImageInputRef.current?.click()} className="text-[10px] text-cyan-200 bg-cyan-500/10 px-2.5 py-1.5 rounded border border-cyan-500/25">上傳/更換</button>
+                      </div>
+                    </div>
+                    <div className="border border-slate-800 bg-slate-950 rounded-xl p-2 flex items-center justify-center min-h-[120px]">
+                      {selectedWaypoint.guideImageUrl ? <img src={selectedWaypoint.guideImageUrl} alt="轉角方向參考" className="max-w-full max-h-48 object-contain rounded" /> : <div className="text-center text-slate-600"><ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-50" /><span className="text-xs">未上傳方向參考照片</span></div>}
+                    </div>
+                  </div>
                 </div>
 
                 <div className="p-3 bg-slate-950/50 border border-slate-800 rounded-xl space-y-3 mt-4">
