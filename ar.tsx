@@ -238,7 +238,10 @@ const updateFlowArrowGroup = (group, elapsedMs) => {
 
 const createDefaultConfig = (name = '新導引專案') => ({
   projectName: name,
-  lerpFactor: 15
+  lerpFactor: 15,
+  welcomeImageUrl: null,
+  welcomeButtonText: '開始體驗',
+  welcomeButtonTop: 60
 });
 
 const createDefaultBuildings = () => [
@@ -421,6 +424,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const containerRef = useRef(null);
   const fileInputRef = useRef(null);
   const navigationImageInputRef = useRef(null);
+  const welcomeImageInputRef = useRef(null);
   const markerImageInputRef = useRef(null);
   const waypointGuideImageInputRef = useRef(null);
   const nodePointerStartRef = useRef(null);
@@ -1316,6 +1320,21 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const handleFloorPlanUpload = (e) => handleFloorImageUpload(e, 'imageUrl', 'overview');
   const handleNavigationFloorPlanUpload = (e) => handleFloorImageUpload(e, 'navigationImageUrl', 'navigation');
 
+  const handleWelcomeImageUpload = (e) => {
+    const file = e.target.files[0];
+    const target = e.target;
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        compressImage(event.target.result, 1600, (compressedDataUrl) => {
+          setSystemConfig(prev => ({ ...prev, welcomeImageUrl: compressedDataUrl }));
+        }, 0.82);
+      };
+      reader.readAsDataURL(file);
+    }
+    target.value = '';
+  };
+
   const handleWaypointGuideImageUpload = (e) => {
     const file = e.target.files[0]; const target = e.target;
     if (file && selectedWaypointId) {
@@ -1900,7 +1919,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             <button className="md:hidden mr-3 text-slate-400 hover:text-white shrink-0" onClick={() => setIsMobileMenuOpen(true)}><Menu className="w-6 h-6" /></button>
             <h2 className="text-xl md:text-2xl font-bold text-slate-200 flex items-center"><Settings className="mr-2 md:mr-3 text-cyan-400" /> 系統設定</h2>
           </div>
-          <p className="text-slate-500 text-xs md:text-sm">匯出目前 AR 導引資料，包含大樓、樓層、平面圖、點位、路徑與設定資料。</p>
+          <p className="text-slate-500 text-xs md:text-sm">設定目前專案的名稱、歡迎頁與 AR 導引參數；儲存後會跟著專案同步到雲端。</p>
         </div>
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 md:p-6 shadow-lg">
           <h3 className="text-base md:text-lg font-bold text-slate-300 mb-4 md:mb-6 flex items-center"><HardDrive className="w-5 h-5 mr-2 text-blue-400" /> 基礎環境參數</h3>
@@ -1912,6 +1931,70 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             <div className="pt-2 border-t border-slate-800">
               <label className="block text-xs md:text-sm font-medium text-slate-400 mb-1.5 mt-2">防抖強度預設值 (Lerp Factor)</label>
               <input type="range" min="5" max="50" value={systemConfig.lerpFactor} onChange={(e) => setSystemConfig({...systemConfig, lerpFactor: parseInt(e.target.value)})} className="w-full accent-cyan-500" />
+            </div>
+          </div>
+        </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 md:p-6 shadow-lg">
+          <h3 className="text-base md:text-lg font-bold text-slate-300 mb-2 flex items-center"><ImageIcon className="w-5 h-5 mr-2 text-amber-300" /> 歡迎頁設定</h3>
+          <p className="text-xs md:text-sm text-slate-500 mb-5">此設定只套用到目前選擇的專案；民眾選好場域後會先看到這個畫面。</p>
+          <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_230px] gap-5 md:gap-7 items-start">
+            <div className="space-y-5">
+              <div>
+                <label className="block text-xs md:text-sm font-medium text-slate-400 mb-2">歡迎頁封面圖</label>
+                <input type="file" ref={welcomeImageInputRef} onChange={handleWelcomeImageUpload} className="hidden" accept="image/*" />
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => welcomeImageInputRef.current?.click()} className="inline-flex items-center gap-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-200 border border-amber-500/30 px-3 py-2 rounded-lg text-xs font-bold transition-colors">
+                    <Upload className="w-4 h-4" />上傳／更換封面
+                  </button>
+                  {systemConfig.welcomeImageUrl && (
+                    <button type="button" onClick={() => setSystemConfig(prev => ({ ...prev, welcomeImageUrl: null }))} className="inline-flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-3 py-2 rounded-lg text-xs font-bold transition-colors">
+                      <Undo2 className="w-4 h-4" />恢復預設封面
+                    </button>
+                  )}
+                </div>
+                <p className="mt-2 text-[11px] leading-relaxed text-slate-500">建議使用手機直式圖片；上傳後會壓縮並儲存在目前專案資料中。</p>
+              </div>
+              <div>
+                <label className="block text-xs md:text-sm font-medium text-slate-400 mb-1.5">開始按鈕文字</label>
+                <input
+                  type="text"
+                  value={systemConfig.welcomeButtonText || '開始體驗'}
+                  maxLength={8}
+                  onChange={(e) => setSystemConfig(prev => ({ ...prev, welcomeButtonText: e.target.value }))}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
+                />
+              </div>
+              <div>
+                <div className="flex items-center justify-between gap-3 mb-1.5">
+                  <label className="text-xs md:text-sm font-medium text-slate-400">按鈕垂直位置</label>
+                  <output className="text-xs font-bold text-cyan-300">{Number(systemConfig.welcomeButtonTop ?? 60)}%</output>
+                </div>
+                <input
+                  type="range"
+                  min="42"
+                  max="76"
+                  step="1"
+                  value={Number(systemConfig.welcomeButtonTop ?? 60)}
+                  onChange={(e) => setSystemConfig(prev => ({ ...prev, welcomeButtonTop: parseInt(e.target.value) }))}
+                  className="w-full accent-cyan-500"
+                />
+              </div>
+            </div>
+            <div className="mx-auto w-[210px]">
+              <div className="relative aspect-[9/16] overflow-hidden rounded-lg border border-slate-700 bg-[#f4ecdf] shadow-xl">
+                <img
+                  src={systemConfig.welcomeImageUrl || './assets/ar-v3/welcome-portal.png'}
+                  alt="歡迎頁預覽"
+                  className="absolute inset-0 w-full h-full object-cover object-top"
+                />
+                <div
+                  className="absolute left-1/2 flex h-[58px] w-[58px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-[3px] border-white/90 bg-blue-600 px-1 text-center text-[11px] font-black leading-tight text-white shadow-lg"
+                  style={{ top: `${Number(systemConfig.welcomeButtonTop ?? 60)}%` }}
+                >
+                  {systemConfig.welcomeButtonText || '開始體驗'}
+                </div>
+              </div>
+              <p className="mt-2 text-center text-[11px] text-slate-500">歡迎頁預覽</p>
             </div>
           </div>
         </div>

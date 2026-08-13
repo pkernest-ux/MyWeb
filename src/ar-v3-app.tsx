@@ -1144,13 +1144,32 @@ function ProjectPicker({
   );
 }
 
-function WelcomeScreen({ onStart }: { onStart: () => void }) {
+function WelcomeScreen({ config, onStart }: { config?: any; onStart: () => void }) {
+  const buttonText = String(config?.welcomeButtonText || "開始體驗").trim() || "開始體驗";
+  const buttonCharacters = Array.from(buttonText);
+  const splitIndex = Math.ceil(buttonCharacters.length / 2);
+  const buttonLines = [
+    buttonCharacters.slice(0, splitIndex).join(""),
+    buttonCharacters.slice(splitIndex).join(""),
+  ].filter(Boolean);
+  const buttonTop = clamp(Number(config?.welcomeButtonTop) || 60, 42, 76);
+
   return (
     <main className="v2-welcome">
-      <div className="v2-welcome-background" aria-hidden="true" />
-      <button type="button" className="v2-welcome-start" onClick={onStart} aria-label="開始體驗">
-        <span>開始</span>
-        <span>體驗</span>
+      <img
+        className="v2-welcome-background"
+        src={config?.welcomeImageUrl || "./assets/ar-v3/welcome-portal.png"}
+        alt=""
+        aria-hidden="true"
+      />
+      <button
+        type="button"
+        className="v2-welcome-start"
+        style={{ top: `${buttonTop}%` }}
+        onClick={onStart}
+        aria-label={buttonText}
+      >
+        {buttonLines.map((line, index) => <span key={`${line}-${index}`}>{line}</span>)}
       </button>
     </main>
   );
@@ -1710,7 +1729,7 @@ export default function ARNavigationV3() {
   }
 
   if (showWelcome) {
-    return <WelcomeScreen onStart={() => setShowWelcome(false)} />;
+    return <WelcomeScreen config={project?.systemConfig} onStart={() => setShowWelcome(false)} />;
   }
 
   if (screen === "navigate") {
