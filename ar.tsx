@@ -377,6 +377,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const fileInputRef = useRef(null);
   const markerImageInputRef = useRef(null);
   const waypointGuideImageInputRef = useRef(null);
+  const nodePointerStartRef = useRef(null);
 
   const [mapTransform, setMapTransform] = useState({ x: 0, y: 0, scale: 1 });
   const [deleteUndo, setDeleteUndo] = useState(null);
@@ -606,6 +607,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     setReferenceFloorId('');
     setIsAddMode(false);
     setIsPathMode(false);
+    setDraggingId(null);
+    nodePointerStartRef.current = null;
     setIsToggleShaftMode(false);
     setIsMeasuring(false);
     setMeasurePoints([]);
@@ -1139,26 +1142,33 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const handleMapPointerMove = (e) => {
     if (isPanning) {
         setMapTransform(prev => ({ ...prev, x: e.clientX - panStart.x, y: e.clientY - panStart.y }));
+    } else if (draggingId && containerRef.current) {
+        const canDragMarker = isAddMode && currentMarkers.some(marker => marker.id === draggingId);
+        const canDragWaypoint = isPathMode && currentWaypoints.some(waypoint => waypoint.id === draggingId);
+        if (!canDragMarker && !canDragWaypoint) {
+          setDraggingId(null);
+          return;
+        }
+        const rect = containerRef.current.getBoundingClientRect();
+        let x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        let y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+        if (canDragMarker) {
+            handleMarkerUpdate(draggingId, 'x', x);
+            handleMarkerUpdate(draggingId, 'y', y);
+        } else if (canDragWaypoint) {
+            handleWaypointUpdate(draggingId, 'x', x);
+            handleWaypointUpdate(draggingId, 'y', y);
+        }
     } else if (isPathMode && pathStartNodeId && containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
         let x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
         let y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
         setHoverPos({x, y});
-    } else if (draggingId && containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        let x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-        let y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
-        if (draggingId.startsWith('marker_')) {
-            handleMarkerUpdate(draggingId, 'x', x);
-            handleMarkerUpdate(draggingId, 'y', y);
-        } else if (draggingId.startsWith('wp_')) {
-            handleWaypointUpdate(draggingId, 'x', x);
-            handleWaypointUpdate(draggingId, 'y', y);
-        }
     }
   };
 
   const handleMapPointerUp = (e) => {
+    if (draggingId) setDraggingId(null);
     if (isPanning) {
       setIsPanning(false); e.target.releasePointerCapture(e.pointerId);
       const dist = Math.hypot(e.clientX - panStartClient.x, e.clientY - panStartClient.y);
@@ -1184,7 +1194,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             isVerticalShaft: false, shaftId: null, linkedFloorIds: [], x, y, imageUrl: null, enabled: true, recognitionStatus: 'untested'
           };
           setBuildings(prev => prev.map(b => b.id === activeBuildingId ? { ...b, floors: b.floors.map(f => f.id === activeFloorId ? { ...f, markers: [...f.markers, newMarker] } : f) } : b));
-          setSelectedMarkerId(newMarker.id); setSelectedWaypointId(null); setIsAddMode(false);
+          setSelectedMarkerId(newMarker.id); setSelectedWaypointId(null);
         } else if (isMeasuring) {
           setMeasurePoints(prev => prev.length >= 2 ? [{x, y}] : [...prev, {x, y}]);
         } else {
@@ -1192,6 +1202,22 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           setSelectedWaypointId(null);
         }
       }
+    }
+  };
+
+  const finishNodePointerInteraction = (e, nodeId = null, connectOnTap = false) => {
+    e.stopPropagation();
+    const pointerStart = nodePointerStartRef.current;
+    const pointerDistance = pointerStart
+      ? Math.hypot(e.clientX - pointerStart.x, e.clientY - pointerStart.y)
+      : Number.POSITIVE_INFINITY;
+    setDraggingId(null);
+    nodePointerStartRef.current = null;
+    if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    if (connectOnTap && isPathMode && pointerStart?.nodeId === nodeId && pointerDistance < 5) {
+      connectToNode(nodeId);
     }
   };
 
@@ -1228,6 +1254,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
   const handleEditFromList = (bId, fId, mId) => {
     setActiveBuildingId(bId); setActiveFloorId(fId); setSelectedMarkerId(mId); setSelectedWaypointId(null); setActiveTab('map');
+    setIsAddMode(true); setIsPathMode(false); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsMeasuring(false); setDraggingId(null);
   };
 
   const getProjectContentStats = (projectBuildings) => {
@@ -1986,16 +2013,16 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             {currentFloor?.imageUrl && (
               <>
                 <div className="hidden md:block w-6 h-px bg-slate-700 mx-auto my-0.5"></div>
-                <button onClick={() => { setIsToggleShaftMode(!isToggleShaftMode); setIsPathMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isToggleShaftMode ? 'bg-green-500 text-white shadow-[0_0_15px_rgba(34,197,94,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-green-400 hover:bg-slate-800'}`} title="指定跨樓層轉折點 (點擊節點切換)">
+                <button onClick={() => { setIsToggleShaftMode(!isToggleShaftMode); setIsPathMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setDraggingId(null); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isToggleShaftMode ? 'bg-green-500 text-white shadow-[0_0_15px_rgba(34,197,94,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-green-400 hover:bg-slate-800'}`} title="指定跨樓層轉折點 (點擊節點切換)">
                   {isToggleShaftMode ? <X className="w-5 h-5" /> : <ArrowUpDown className="w-5 h-5" />}
                 </button>
-                <button onClick={() => { setIsPathMode(!isPathMode); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isPathMode ? 'bg-orange-500 text-white shadow-[0_0_15px_rgba(249,115,22,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-orange-400 hover:bg-slate-800'}`} title="路徑建置 (一般轉折點與連線)">
+                <button onClick={() => { setIsPathMode(!isPathMode); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setDraggingId(null); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isPathMode ? 'bg-orange-500 text-white shadow-[0_0_15px_rgba(249,115,22,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-orange-400 hover:bg-slate-800'}`} title="路徑建置與節點編輯">
                   {isPathMode ? <X className="w-5 h-5" /> : <Route className="w-5 h-5" />}
                 </button>
                 <button onClick={() => { setIsMeasuring(!isMeasuring); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsPathMode(false); setMeasurePoints([]); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isMeasuring ? 'bg-purple-500 text-white shadow-[0_0_15px_rgba(168,85,247,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-purple-400 hover:bg-slate-800'}`} title="尺規量測">
                   {isMeasuring ? <X className="w-5 h-5" /> : <Ruler className="w-5 h-5" />}
                 </button>
-                <button onClick={() => { setIsAddMode(!isAddMode); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsMeasuring(false); setIsPathMode(false); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isAddMode ? 'bg-cyan-500 text-slate-950 shadow-[0_0_15px_rgba(6,182,212,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-cyan-400 hover:bg-slate-800'}`} title="新增 AR 點位">
+                <button onClick={() => { setIsAddMode(!isAddMode); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsMeasuring(false); setIsPathMode(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setDraggingId(null); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isAddMode ? 'bg-cyan-500 text-slate-950 shadow-[0_0_15px_rgba(6,182,212,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-cyan-400 hover:bg-slate-800'}`} title="AR 點位建置與編輯">
                   {isAddMode ? <X className="w-5 h-5" /> : <MapPin className="w-5 h-5" />}
                 </button>
                 <button onClick={() => setBoundsModal({ isOpen: true, blX: currentBounds.blX, blY: currentBounds.blY, trX: currentBounds.trX, trY: currentBounds.trY })} className="flex shrink-0 items-center justify-center w-10 h-10 bg-slate-900/90 backdrop-blur border border-slate-700 text-blue-400 hover:bg-slate-800 rounded-xl transition-all shadow-lg" title="座標與比例尺設定">
@@ -2113,29 +2140,35 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 else if (isSelected) { borderColor = 'border-cyan-400 border-2'; shadow = 'shadow-[0_0_10px_cyan]'; }
 
                 return (
-                  <div key={wp.id} className={`waypoint-pin absolute -translate-x-1/2 -translate-y-1/2 z-30 cursor-pointer ${isSelected ? 'z-40' : ''}`} style={{ left: `${wp.x*100}%`, top: `${wp.y*100}%` }}
+                  <div key={wp.id} className={`waypoint-pin group absolute -translate-x-1/2 -translate-y-1/2 z-30 ${isPathMode || isToggleShaftMode ? 'pointer-events-auto cursor-grab active:cursor-grabbing' : 'pointer-events-none'} ${isSelected ? 'z-40' : ''}`} style={{ left: `${wp.x*100}%`, top: `${wp.y*100}%` }}
                        onPointerDown={(e) => {
                          e.stopPropagation();
                          if (e.button !== 0) return;
-                         if (isPathMode) connectToNode(wp.id);
+                         if (isPathMode) {
+                           setSelectedMarkerId(null); setSelectedWaypointId(wp.id); setDraggingId(wp.id);
+                           nodePointerStartRef.current = { nodeId: wp.id, x: e.clientX, y: e.clientY };
+                           e.currentTarget.setPointerCapture(e.pointerId);
+                         }
                          else if (isToggleShaftMode) {
                            if (!wp.isVerticalShaft) handleToggleVerticalShaft(wp, true, false);
                            setSelectedMarkerId(null); setSelectedWaypointId(wp.id);
                          }
-                         else if (!isNavTestMode && !isMeasuring && !isPanning && !isAddMode) {
-                           setSelectedMarkerId(null); setSelectedWaypointId(wp.id); setDraggingId(wp.id); e.target.setPointerCapture(e.pointerId);
-                         }
                        }}
-                       onPointerUp={(e) => { e.stopPropagation(); e.target.releasePointerCapture(e.pointerId); }}
+                       onPointerUp={(e) => finishNodePointerInteraction(e, wp.id, true)}
+                       onPointerCancel={(e) => finishNodePointerInteraction(e)}
                        onContextMenu={(e) => {
                          e.preventDefault();
                          if (isPathMode) { deleteNode(wp.id); }
                          else if (isToggleShaftMode) { if(wp.isVerticalShaft) handleToggleVerticalShaft(wp, false, false); }
-                         else if (!isNavTestMode && !isMeasuring && !isAddMode) { setSelectedMarkerId(null); setSelectedWaypointId(wp.id); }
                        }}>
                     <div className={`rounded-full transition-all flex items-center justify-center ${bgColor} ${borderColor} ${shadow}`} style={{ width: `${(isPathStart ? 14 : 10) / Math.max(0.5, mapTransform.scale)}px`, height: `${(isPathStart ? 14 : 10) / Math.max(0.5, mapTransform.scale)}px`, borderWidth: isSelected ? '2px' : '1px' }}>
                         {wp.isVerticalShaft && <ArrowUpDown className={isPathStart ? "text-slate-800" : "text-white"} style={{ width: `${6 / Math.max(0.5, mapTransform.scale)}px`, height: `${6 / Math.max(0.5, mapTransform.scale)}px` }} />}
                     </div>
+                    {wp.guideTitle && (
+                      <div className={`absolute top-full left-1/2 -translate-x-1/2 mt-2 whitespace-nowrap rounded border bg-slate-900 px-2 py-1 text-[10px] shadow-lg pointer-events-none transition-opacity ${isPathMode && (isSelected || isPathStart) ? 'border-orange-400 text-orange-100 opacity-100' : 'border-slate-700 text-slate-300 opacity-0'}`} style={{ transform: `scale(${1 / Math.max(0.5, mapTransform.scale)})`, transformOrigin: 'top center' }}>
+                        {wp.guideTitle}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -2167,25 +2200,31 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 const linkedFloorNames = marker.isVerticalShaft ? currentBuilding?.floors.filter(f => marker.linkedFloorIds?.includes(f.id)).sort((a,b) => getFloorLevel(b.name) - getFloorLevel(a.name)).map(f => f.name).join(', ') : '';
 
                 return (
-                <div key={marker.id} className={`marker-pin absolute -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing group z-50 ${selectedMarkerId === marker.id ? 'z-[60]' : ''} ${pathStartNodeId === marker.id ? 'scale-125' : ''}`} style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%` }}
+                <div key={marker.id} className={`marker-pin absolute -translate-x-1/2 -translate-y-1/2 group z-50 ${isAddMode ? 'pointer-events-auto cursor-grab active:cursor-grabbing' : (isPathMode || isToggleShaftMode ? 'pointer-events-auto cursor-pointer' : 'pointer-events-none')} ${selectedMarkerId === marker.id ? 'z-[60]' : ''} ${pathStartNodeId === marker.id ? 'scale-125' : ''}`} style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%` }}
                      onPointerDown={(e) => {
                        e.stopPropagation();
                        if (e.button !== 0) return;
-                       if(isPathMode) { connectToNode(marker.id); }
+                       if(isPathMode) {
+                         nodePointerStartRef.current = { nodeId: marker.id, x: e.clientX, y: e.clientY };
+                         e.currentTarget.setPointerCapture(e.pointerId);
+                       }
                        else if(isToggleShaftMode) {
                          if (!marker.isVerticalShaft) handleToggleVerticalShaft(marker, true, true);
                          setSelectedWaypointId(null); setSelectedMarkerId(marker.id);
                        }
-                       else if(!isNavTestMode && !isAddMode && !isMeasuring && !isPanning) {
-                         setSelectedWaypointId(null); setDraggingId(marker.id); setSelectedMarkerId(marker.id); e.target.setPointerCapture(e.pointerId);
+                       else if(isAddMode) {
+                         setSelectedWaypointId(null); setDraggingId(marker.id); setSelectedMarkerId(marker.id);
+                         nodePointerStartRef.current = { nodeId: marker.id, x: e.clientX, y: e.clientY };
+                         e.currentTarget.setPointerCapture(e.pointerId);
                        }
                      }}
-                     onPointerUp={(e) => { e.stopPropagation(); e.target.releasePointerCapture(e.pointerId); }}
+                     onPointerUp={(e) => finishNodePointerInteraction(e, marker.id, true)}
+                     onPointerCancel={(e) => finishNodePointerInteraction(e)}
                      onContextMenu={(e) => {
                        e.preventDefault();
                        if (isPathMode) { deleteNode(marker.id); }
                        else if (isToggleShaftMode) { if(marker.isVerticalShaft) handleToggleVerticalShaft(marker, false, true); }
-                       else if (!isNavTestMode && !isMeasuring && !isAddMode) { setSelectedWaypointId(null); setSelectedMarkerId(marker.id); }
+                       else if (isAddMode) { setSelectedWaypointId(null); setSelectedMarkerId(marker.id); }
                      }}>
                   <div className="relative pointer-events-none">
                     <div className={`w-7 h-7 md:w-8 md:h-8 rounded-full flex items-center justify-center border-2 transition-all shadow-lg ${selectedMarkerId === marker.id ? 'bg-cyan-500 border-white text-slate-950 scale-110 shadow-[0_0_15px_rgba(6,182,212,0.8)]' : marker.enabled ? (marker.isVerticalShaft ? 'bg-purple-600 border-purple-400 text-white' : 'bg-slate-800 border-cyan-500/50 text-slate-300 group-hover:border-cyan-400 group-hover:text-cyan-400') : 'bg-slate-900 border-slate-700 text-slate-600 opacity-70'} ${pathStartNodeId === marker.id ? 'border-orange-500 shadow-[0_0_15px_orange]' : ''}`}>
@@ -2193,7 +2232,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                     </div>
                     <div className={`absolute -bottom-1.5 md:-bottom-2 left-1/2 -translate-x-1/2 w-0 h-0 border-l-[5px] border-r-[5px] border-t-[6px] md:border-l-[6px] md:border-r-[6px] md:border-t-[8px] border-l-transparent border-r-transparent transition-all ${selectedMarkerId === marker.id ? 'border-t-white' : marker.enabled ? (marker.isVerticalShaft ? 'border-t-purple-400' : 'border-t-cyan-500/50 group-hover:border-t-cyan-400') : 'border-t-slate-700 opacity-70'} ${pathStartNodeId === marker.id ? 'border-t-orange-500' : ''}`} />
                   </div>
-                  <div className={`absolute top-full left-1/2 -translate-x-1/2 mt-2 md:mt-3 whitespace-nowrap px-1.5 py-0.5 md:px-2 md:py-1 bg-slate-900 border text-[10px] md:text-xs rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity shadow-lg ${selectedMarkerId === marker.id ? 'opacity-100 border-cyan-500 text-cyan-400' : marker.enabled ? 'border-slate-700 text-slate-300' : 'border-slate-800 text-slate-500'}`} style={{ transform: `scale(${1 / Math.max(0.5, mapTransform.scale)})`, transformOrigin: 'top center' }}>
+                  <div className={`absolute top-full left-1/2 -translate-x-1/2 mt-2 md:mt-3 whitespace-nowrap px-1.5 py-0.5 md:px-2 md:py-1 bg-slate-900 border text-[10px] md:text-xs rounded pointer-events-none transition-opacity shadow-lg ${selectedMarkerId === marker.id || (!isAddMode && !isPathMode && !isToggleShaftMode && !isNavTestMode && !isMeasuring) ? 'opacity-100 border-cyan-500/50 text-slate-200' : 'opacity-0 group-hover:opacity-100'} ${marker.enabled ? 'border-slate-700 text-slate-300' : 'border-slate-800 text-slate-500'}`} style={{ transform: `scale(${1 / Math.max(0.5, mapTransform.scale)})`, transformOrigin: 'top center' }}>
                     {marker.title || '未命名'} {marker.isVerticalShaft && <span className="text-purple-400 block mt-0.5">(貫通: {linkedFloorNames})</span>}
                   </div>
                 </div>
@@ -2214,8 +2253,18 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-orange-500/95 text-white px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(249,115,22,0.5)] flex items-center pointer-events-auto z-50">
                 <MousePointer2 className="w-5 h-5 mr-3 shrink-0" />
                 <div className="flex flex-col">
-                  <span>點擊空處建立轉折點與連線路網 (AR 標籤不須強迫連線)。</span>
-                  <span className="text-orange-200 font-normal">點擊「目前發光點」或按 ESC 中斷畫線。右鍵刪除節點。</span>
+                  <span>路徑建置模式：點擊空處建立節點，拖曳既有節點可調整位置。</span>
+                  <span className="text-orange-200 font-normal">點擊節點可編輯識別照片與轉角提示；右鍵刪除節點。</span>
+                </div>
+              </div>
+            )}
+
+            {isAddMode && (
+              <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-cyan-500/95 text-slate-950 px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(6,182,212,0.45)] flex items-center pointer-events-auto z-50">
+                <MapPin className="w-5 h-5 mr-3 shrink-0" />
+                <div className="flex flex-col">
+                  <span>AR 點位編輯模式：點擊空處新增點位。</span>
+                  <span className="font-normal opacity-80">點擊或拖曳既有點位可調整內容與位置。</span>
                 </div>
               </div>
             )}
@@ -2495,8 +2544,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
                 <div className="p-3 bg-cyan-950/20 border border-cyan-500/25 rounded-xl space-y-3 mt-4">
                   <div>
-                    <h3 className="text-xs font-semibold text-cyan-300">每段 AR 起點與轉角提示</h3>
-                    <p className="mt-1 text-[10px] leading-relaxed text-slate-400">這個轉折點會成為下一段 AR 的重新定位起點。民眾按下「下一轉角」後，前台會顯示照片與面向提示，確認方向後再顯示下一段路線。</p>
+                    <h3 className="text-xs font-semibold text-cyan-300">路徑節點識別與方向提示</h3>
+                    <p className="mt-1 text-[10px] leading-relaxed text-slate-400">為每個節點上傳現場識別照片並設定面向提示。民眾到達下一轉角時，前台會先顯示這張照片，確認方向後再開始下一段 AR 導引。</p>
                   </div>
                   <label className="block">
                     <span className="block text-[11px] text-slate-400 mb-1">轉角名稱</span>
@@ -2512,7 +2561,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                   </label>
                   <div>
                     <div className="flex items-center justify-between gap-2 mb-2">
-                      <span className="text-[11px] text-slate-400">方向參考照片</span>
+                      <span className="text-[11px] text-slate-400">節點識別／方向照片</span>
                       <div className="flex gap-2">
                         {selectedWaypoint.guideImageUrl && <button type="button" onClick={() => handleWaypointUpdate(selectedWaypoint.id, 'guideImageUrl', null)} className="text-[10px] text-red-300 bg-red-500/10 px-2.5 py-1.5 rounded border border-red-500/25">移除</button>}
                         <input type="file" ref={waypointGuideImageInputRef} onChange={handleWaypointGuideImageUpload} className="hidden" accept="image/*" />
@@ -2520,7 +2569,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                       </div>
                     </div>
                     <div className="border border-slate-800 bg-slate-950 rounded-xl p-2 flex items-center justify-center min-h-[120px]">
-                      {selectedWaypoint.guideImageUrl ? <img src={selectedWaypoint.guideImageUrl} alt="轉角方向參考" className="max-w-full max-h-48 object-contain rounded" /> : <div className="text-center text-slate-600"><ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-50" /><span className="text-xs">未上傳，前台會使用預設方向照片</span></div>}
+                      {selectedWaypoint.guideImageUrl ? <img src={selectedWaypoint.guideImageUrl} alt="節點識別與方向參考" className="max-w-full max-h-48 object-contain rounded" /> : <div className="text-center text-slate-600"><ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-50" /><span className="text-xs">尚未上傳節點識別照片</span></div>}
                     </div>
                   </div>
                 </div>
