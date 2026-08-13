@@ -14,7 +14,7 @@ import {
 // ==========================================
 // 圖片壓縮工具
 // ==========================================
-const compressImage = (base64Str, maxWidth, callback) => {
+const compressImage = (base64Str, maxWidth, callback, quality = 0.7) => {
   const img = new Image();
   img.onload = () => {
     let width = img.width;
@@ -33,7 +33,7 @@ const compressImage = (base64Str, maxWidth, callback) => {
     canvas.height = height;
     const ctx = canvas.getContext('2d');
     ctx.drawImage(img, 0, 0, width, height);
-    callback(canvas.toDataURL('image/jpeg', 0.7));
+    callback(canvas.toDataURL('image/jpeg', quality));
   };
   img.onerror = () => callback(base64Str);
   img.src = base64Str;
@@ -250,6 +250,7 @@ const createDefaultBuildings = () => [
         id: `f_${Date.now()}`,
         name: '1F',
         imageUrl: null,
+        navigationImageUrl: null,
         markers: [],
         waypoints: [],
         edges: [],
@@ -329,7 +330,7 @@ const mergePublishedProjectLists = (...sources) => {
 
 const hasPublishedFloorPlan = (project) =>
   (project?.buildings || []).some(building =>
-    (building?.floors || []).some(floor => Boolean(floor?.imageUrl))
+    (building?.floors || []).some(floor => Boolean(floor?.imageUrl || floor?.navigationImageUrl))
   );
 
 export default function ARManagerApp({ embedded = false, initialTab = 'map', publicOnly = false }) {
@@ -391,6 +392,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const [activeBuildingId, setActiveBuildingId] = useState(buildings[0]?.id);
   const [activeFloorId, setActiveFloorId] = useState(buildings[0]?.floors[0]?.id);
   const [referenceFloorId, setReferenceFloorId] = useState('');
+  const [floorImagePreviewMode, setFloorImagePreviewMode] = useState('overview');
 
   const [selectedMarkerId, setSelectedMarkerId] = useState(null);
   const [selectedWaypointId, setSelectedWaypointId] = useState(null);
@@ -418,6 +420,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const wrapperRef = useRef(null);
   const containerRef = useRef(null);
   const fileInputRef = useRef(null);
+  const navigationImageInputRef = useRef(null);
   const markerImageInputRef = useRef(null);
   const waypointGuideImageInputRef = useRef(null);
   const nodePointerStartRef = useRef(null);
@@ -623,6 +626,10 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     if (referenceFloorId === activeFloorId) setReferenceFloorId('');
   }, [activeFloorId, referenceFloorId]);
 
+  useEffect(() => {
+    setFloorImagePreviewMode('overview');
+  }, [activeFloorId]);
+
   // 注意：已移除原先會「切換樓層時清空 navTestPoints」的 useEffect，確保跨層導航測試能順利進行
 
   useEffect(() => { setIsConfirmingDelete(false); }, [selectedMarkerId, selectedWaypointId]);
@@ -650,10 +657,23 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
   const currentBuilding = buildings.find(b => b.id === activeBuildingId) || buildings[0];
   const currentFloor = currentBuilding?.floors.find(f => f.id === activeFloorId);
+  const currentFloorImageUrl = floorImagePreviewMode === 'navigation'
+    ? (currentFloor?.navigationImageUrl || currentFloor?.imageUrl)
+    : (currentFloor?.imageUrl || currentFloor?.navigationImageUrl);
+  const hasCurrentFloorPlan = Boolean(currentFloor?.imageUrl || currentFloor?.navigationImageUrl);
   const currentMarkers = currentFloor?.markers || [];
   const currentWaypoints = currentFloor?.waypoints || [];
   const currentEdges = currentFloor?.edges || [];
   const currentBounds = getFloorBounds(currentFloor);
+
+  useEffect(() => {
+    if (!currentFloor) return;
+    if (floorImagePreviewMode === 'overview' && !currentFloor.imageUrl && currentFloor.navigationImageUrl) {
+      setFloorImagePreviewMode('navigation');
+    } else if (floorImagePreviewMode === 'navigation' && !currentFloor.navigationImageUrl && currentFloor.imageUrl) {
+      setFloorImagePreviewMode('overview');
+    }
+  }, [currentFloor, floorImagePreviewMode]);
 
   const resetMapEditingState = () => {
     setSelectedMarkerId(null);
@@ -861,7 +881,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         if (!name) return;
         const newBId = `b_${Date.now()}`;
         const newFId = `f_${Date.now()}`;
-        setBuildings(prev => [...prev, { id: newBId, name, floors: [{ id: newFId, name: '1F', imageUrl: null, markers: [], waypoints: [], edges: [], bounds: { blX: 0, blY: 0, trX: 100, trY: 100 } }] }]);
+        setBuildings(prev => [...prev, { id: newBId, name, floors: [{ id: newFId, name: '1F', imageUrl: null, navigationImageUrl: null, markers: [], waypoints: [], edges: [], bounds: { blX: 0, blY: 0, trX: 100, trY: 100 } }] }]);
         setActiveBuildingId(newBId); setActiveFloorId(newFId);
       }
     });
@@ -876,7 +896,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         const newFId = `f_${Date.now()}`;
         const inheritBounds = currentFloor ? { ...getFloorBounds(currentFloor) } : { blX: 0, blY: 0, trX: 100, trY: 100 };
         setBuildings(prev => prev.map(b => b.id === activeBuildingId ? {
-          ...b, floors: [...b.floors, { id: newFId, name, imageUrl: null, markers: [], waypoints: [], edges: [], bounds: inheritBounds }]
+          ...b, floors: [...b.floors, { id: newFId, name, imageUrl: null, navigationImageUrl: null, markers: [], waypoints: [], edges: [], bounds: inheritBounds }]
         } : b));
         setActiveFloorId(newFId);
       }
@@ -959,19 +979,21 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     });
   };
 
-  const handleFloorPlanUpload = (e) => {
+  const handleFloorImageUpload = (e, field, previewMode) => {
     const file = e.target.files[0];
     const target = e.target;
     if (file && activeBuildingId && activeFloorId) {
       const currentBId = activeBuildingId; const currentFId = activeFloorId;
       const reader = new FileReader();
       reader.onload = (event) => {
-        compressImage(event.target.result, 1600, (compressedDataUrl) => {
+        const isNavigationImage = field === 'navigationImageUrl';
+        compressImage(event.target.result, isNavigationImage ? 2000 : 1600, (compressedDataUrl) => {
           setBuildings(prev => prev.map(b => b.id === currentBId ? {
-            ...b, floors: b.floors.map(f => f.id === currentFId ? { ...f, imageUrl: compressedDataUrl } : f)
+            ...b, floors: b.floors.map(f => f.id === currentFId ? { ...f, [field]: compressedDataUrl } : f)
           } : b));
+          setFloorImagePreviewMode(previewMode);
           setIsAddMode(false);
-        });
+        }, isNavigationImage ? 0.88 : 0.7);
       };
       reader.readAsDataURL(file);
     }
@@ -1291,6 +1313,9 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     target.value = '';
   };
 
+  const handleFloorPlanUpload = (e) => handleFloorImageUpload(e, 'imageUrl', 'overview');
+  const handleNavigationFloorPlanUpload = (e) => handleFloorImageUpload(e, 'navigationImageUrl', 'navigation');
+
   const handleWaypointGuideImageUpload = (e) => {
     const file = e.target.files[0]; const target = e.target;
     if (file && selectedWaypointId) {
@@ -1315,6 +1340,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     return (projectBuildings || []).reduce((stats, building) => {
       (building.floors || []).forEach((floor) => {
         if (floor.imageUrl) stats.floorPlans += 1;
+        if (floor.navigationImageUrl) stats.floorPlans += 1;
         stats.markers += (floor.markers || []).length;
         stats.waypoints += (floor.waypoints || []).length;
         stats.edges += (floor.edges || []).length;
@@ -2073,15 +2099,15 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               <span className="hidden md:inline">清除本層</span>
             </button>
             <button
-              onClick={() => { if (!currentFloor?.imageUrl) return; setIsNavTestMode(!isNavTestMode); setIsPathMode(false); setIsToggleShaftMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setHoverPos(null); setNavTestPoints([]); setNavTestPath([]); }}
-              disabled={!currentFloor?.imageUrl}
+              onClick={() => { if (!hasCurrentFloorPlan) return; setIsNavTestMode(!isNavTestMode); setIsPathMode(false); setIsToggleShaftMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setHoverPos(null); setNavTestPoints([]); setNavTestPath([]); }}
+              disabled={!hasCurrentFloorPlan}
               className={`flex shrink-0 items-center justify-center gap-2 h-10 px-3 rounded-xl transition-all shadow-lg font-bold text-xs ${isNavTestMode ? 'bg-blue-500 text-white shadow-[0_0_15px_rgba(59,130,246,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-blue-400 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed'}`}
               title="路網分析測試"
             >
               {isNavTestMode ? <X className="w-5 h-5" /> : <Activity className="w-5 h-5" />}
               <span>路網測試</span>
             </button>
-            {currentFloor?.imageUrl && (
+            {hasCurrentFloorPlan && (
               <>
                 <div className="hidden md:block w-6 h-px bg-slate-700 mx-auto my-0.5"></div>
                 <button onClick={() => { setIsToggleShaftMode(!isToggleShaftMode); setIsPathMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setDraggingId(null); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isToggleShaftMode ? 'bg-green-500 text-white shadow-[0_0_15px_rgba(34,197,94,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-green-400 hover:bg-slate-800'}`} title="指定跨樓層轉折點 (點擊節點切換)">
@@ -2104,9 +2130,37 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 </button>
               </>
             )}
+            {currentFloor && (
+              <div className="flex shrink-0 items-center h-10 rounded-xl border border-slate-700 bg-slate-900/90 p-1 shadow-lg" role="group" aria-label="切換平面圖預覽">
+                <button
+                  type="button"
+                  onClick={() => setFloorImagePreviewMode('overview')}
+                  disabled={!currentFloor.imageUrl}
+                  className={`h-8 px-2 rounded-lg text-[10px] font-bold transition-colors disabled:opacity-40 ${floorImagePreviewMode === 'overview' ? 'bg-cyan-500 text-slate-950' : 'text-slate-300 hover:bg-slate-800'}`}
+                  title="預覽無文字平面圖"
+                >
+                  無字
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFloorImagePreviewMode('navigation')}
+                  disabled={!currentFloor.navigationImageUrl}
+                  className={`h-8 px-2 rounded-lg text-[10px] font-bold transition-colors disabled:opacity-40 ${floorImagePreviewMode === 'navigation' ? 'bg-amber-400 text-slate-950' : 'text-slate-300 hover:bg-slate-800'}`}
+                  title="預覽有文字導覽圖"
+                >
+                  有字
+                </button>
+              </div>
+            )}
             <input type="file" ref={fileInputRef} onChange={handleFloorPlanUpload} className="hidden" accept="image/*" />
-            <button onClick={() => fileInputRef.current.click()} className="flex shrink-0 items-center justify-center w-10 h-10 bg-slate-900/90 backdrop-blur border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl transition-all shadow-lg" title="上傳底圖">
-              <Upload className="w-5 h-5" />
+            <button onClick={() => fileInputRef.current?.click()} className="flex shrink-0 items-center justify-center gap-1.5 h-10 px-2.5 bg-slate-900/90 backdrop-blur border border-cyan-500/40 text-cyan-200 hover:text-white hover:bg-slate-800 rounded-xl transition-all shadow-lg" title="上傳無文字平面圖，供目的地地圖與大頭針標籤使用">
+              <Upload className="w-4 h-4" />
+              <span className="text-[10px] font-bold whitespace-nowrap">無字圖</span>
+            </button>
+            <input type="file" ref={navigationImageInputRef} onChange={handleNavigationFloorPlanUpload} className="hidden" accept="image/*" />
+            <button onClick={() => navigationImageInputRef.current?.click()} className="flex shrink-0 items-center justify-center gap-1.5 h-10 px-2.5 bg-slate-900/90 backdrop-blur border border-amber-500/40 text-amber-200 hover:text-white hover:bg-slate-800 rounded-xl transition-all shadow-lg" title="上傳有文字導覽圖，供路徑導覽頁使用">
+              <ImageIcon className="w-4 h-4" />
+              <span className="text-[10px] font-bold whitespace-nowrap">有字圖</span>
             </button>
           </div>
 
@@ -2131,7 +2185,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
                 return (
                   <div className="absolute z-0 pointer-events-none" style={{ left: `${leftRatio * 100}%`, top: `${topRatio * 100}%`, width: `${wRatio * 100}%`, height: `${hRatio * 100}%`, opacity: 0.4 }}>
-                    {refF.imageUrl && <img src={refF.imageUrl} className="w-full h-full object-cover rounded-lg filter grayscale sepia" alt="reference" />}
+                    {(refF.imageUrl || refF.navigationImageUrl) && <img src={refF.imageUrl || refF.navigationImageUrl} className="w-full h-full object-cover rounded-lg filter grayscale sepia" alt="reference" />}
                     {refF.markers.map(m => (
                       <div key={m.id} className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center" style={{ left: `${m.x * 100}%`, top: `${m.y * 100}%` }}>
                         <div className="w-6 h-6 rounded-full border-2 border-dashed border-cyan-400 bg-cyan-400/20 flex items-center justify-center shadow-[0_0_10px_rgba(34,211,238,0.5)]">
@@ -2143,7 +2197,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 );
               })()}
 
-              {currentFloor?.imageUrl && ( <img id="current-map-image" src={currentFloor.imageUrl} alt="Floor Plan" onLoad={resetMapView} className={`select-none pointer-events-none block max-w-none rounded-lg relative z-10 transition-opacity ${referenceFloorId ? 'opacity-70 mix-blend-screen' : 'opacity-100'}`} /> )}
+              {currentFloorImageUrl && ( <img key={`${activeFloorId}-${floorImagePreviewMode}`} id="current-map-image" src={currentFloorImageUrl} alt={floorImagePreviewMode === 'navigation' ? '有文字導覽圖' : '無文字平面圖'} onLoad={resetMapView} className={`select-none pointer-events-none block max-w-none rounded-lg relative z-10 transition-opacity ${referenceFloorId ? 'opacity-70 mix-blend-screen' : 'opacity-100'}`} /> )}
 
               <svg className="absolute inset-0 w-full h-full z-20 pointer-events-none" style={{ overflow: 'visible' }}>
                 <defs>
@@ -2350,8 +2404,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               </div>
             )}
 
-            {!currentFloor?.imageUrl && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-center text-slate-500 pointer-events-none px-4"><Map className="w-12 h-12 mx-auto mb-3 opacity-50 text-cyan-500/30" /><p className="text-base md:text-lg mb-1">尚未載入 {currentBuilding?.name} - {currentFloor?.name} 的平面圖</p><p className="text-xs">點擊右側工具列「上傳底圖」</p></div>
+            {!currentFloorImageUrl && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center text-slate-500 pointer-events-none px-4"><Map className="w-12 h-12 mx-auto mb-3 opacity-50 text-cyan-500/30" /><p className="text-base md:text-lg mb-1">尚未載入 {currentBuilding?.name} - {currentFloor?.name} 的平面圖</p><p className="text-xs">請從工具列選擇「無字圖」或「有字圖」上傳</p></div>
             )}
 
             {currentFloor?.imageUrl && scaleBarWidthPx > 0 && (

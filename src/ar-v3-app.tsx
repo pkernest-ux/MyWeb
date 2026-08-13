@@ -49,6 +49,7 @@ type FloorData = {
   id: string;
   name: string;
   imageUrl?: string | null;
+  navigationImageUrl?: string | null;
   markers?: any[];
   waypoints?: any[];
   edges?: any[];
@@ -93,6 +94,7 @@ const MIN_REVIEW_FONT_SIZE = 13;
 const MAX_REVIEW_FONT_SIZE = 20;
 const AR_TURN_ANGLE_THRESHOLD = 18;
 const AR_SCREEN_UNITS_PER_METER = 2.4;
+const DEFAULT_GUIDE_IMAGE_URL = "./assets/ar-v3/hsinchu-city-hall-navigation-clean.png";
 
 const normalizeProjects = (raw: any) => {
   if (Array.isArray(raw?.projects)) return raw.projects;
@@ -106,7 +108,9 @@ const projectName = (data: any) =>
 const projectPreview = (data: any) => {
   for (const building of data?.buildings || []) {
     for (const floor of building?.floors || []) {
-      if (floor?.imageUrl) return floor.imageUrl;
+      if (floor?.imageUrl || floor?.navigationImageUrl) {
+        return floor.imageUrl || floor.navigationImageUrl;
+      }
     }
   }
   return "";
@@ -609,6 +613,7 @@ function MapPanel({
   reverseFlow = false,
   allowPerspective = true,
   mapView = "flat",
+  imageMode = "overview",
   labelFontSize = DEFAULT_LABEL_SIZE,
   isFullscreen = false,
   onToggleFullscreen,
@@ -627,6 +632,7 @@ function MapPanel({
   reverseFlow?: boolean;
   allowPerspective?: boolean;
   mapView?: "flat" | "perspective";
+  imageMode?: "overview" | "navigation";
   labelFontSize?: number;
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
@@ -634,6 +640,9 @@ function MapPanel({
   const [ratio, setRatio] = useState(1.25);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [mapTransform, setMapTransform] = useState({ scale: 1, x: 0, y: 0 });
+  const floorImageUrl = imageMode === "navigation"
+    ? floor?.navigationImageUrl || floor?.imageUrl
+    : floor?.imageUrl || floor?.navigationImageUrl;
   const mapPlaneRef = useRef<HTMLDivElement>(null);
   const pointerMapRef = useRef(new globalThis.Map<number, { x: number; y: number }>());
   const gestureRef = useRef({
@@ -721,7 +730,7 @@ function MapPanel({
   useEffect(() => {
     pointerMapRef.current.clear();
     setMapTransform({ scale: 1, x: 0, y: 0 });
-  }, [floor?.id]);
+  }, [floor?.id, floorImageUrl]);
 
   useEffect(() => {
     const element = mapPlaneRef.current;
@@ -888,10 +897,10 @@ function MapPanel({
           }
         >
           <div className={`v3-map-surface is-${effectiveMapView}`}>
-            {floor?.imageUrl ? (
+            {floorImageUrl ? (
               <img
-                src={floor.imageUrl}
-                alt={`${floor.name} 平面圖`}
+                src={floorImageUrl}
+                alt={`${floor?.name || "目前樓層"}${imageMode === "navigation" ? "有文字導覽圖" : "無文字平面圖"}`}
                 draggable={false}
                 onLoad={(event) => {
                   const image = event.currentTarget;
@@ -1173,6 +1182,7 @@ export default function ARNavigationV3() {
   const [segmentIndex, setSegmentIndex] = useState(0);
   const [completedSegmentIndex, setCompletedSegmentIndex] = useState(0);
   const [reviewStepIndex, setReviewStepIndex] = useState(0);
+  const [guideImageExpanded, setGuideImageExpanded] = useState(false);
   const [mapFullscreen, setMapFullscreen] = useState(false);
   const [overviewLabelFontSize, setOverviewLabelFontSize] = useState(() => {
     try {
@@ -1320,6 +1330,7 @@ export default function ARNavigationV3() {
       setOrigin(null);
       setSelectedFloorId(null);
       setReviewStepIndex(0);
+      setGuideImageExpanded(false);
       setSegmentIndex(0);
       setCompletedSegmentIndex(0);
       setScreen("destination");
@@ -1337,6 +1348,7 @@ export default function ARNavigationV3() {
     setOrigin(null);
     setSelectedFloorId(null);
     setReviewStepIndex(0);
+    setGuideImageExpanded(false);
     setSegmentIndex(0);
     setCompletedSegmentIndex(0);
     setScreen("destination");
@@ -1569,8 +1581,7 @@ export default function ARNavigationV3() {
       Math.abs((mapFloorBounds.trX ?? 100) - (mapFloorBounds.blX ?? 0) - 100) < 0.01 &&
       Math.abs((mapFloorBounds.trY ?? 100) - (mapFloorBounds.blY ?? 0) - 100) < 0.01
     );
-  const guideReferenceImage =
-    activeGuideSegment?.referenceImageUrl || "./assets/ar-v3/hsinchu-city-hall-navigation-clean.png";
+  const guideReferenceImage = activeGuideSegment?.referenceImageUrl || DEFAULT_GUIDE_IMAGE_URL;
   const guideExternalUrl = safeExternalUrl(activeGuideSegment?.externalUrl || "");
   const routeSegmentsForMap = guideSegments;
 
@@ -1591,6 +1602,7 @@ export default function ARNavigationV3() {
     setCalibrationHeading(null);
     setCameraMessage("");
     setMapExpanded(false);
+    setGuideImageExpanded(false);
     if (openCalibration) setScreen("calibrate");
   };
 
@@ -1609,6 +1621,7 @@ export default function ARNavigationV3() {
     setSegmentIndex(0);
     setCompletedSegmentIndex(0);
     setReviewStepIndex(0);
+    setGuideImageExpanded(false);
     setSelectedFloorId(fixedRouteStart.fId);
     setScreen("review");
   };
@@ -1680,6 +1693,7 @@ export default function ARNavigationV3() {
     setSegmentIndex(0);
     setCompletedSegmentIndex(0);
     setReviewStepIndex(0);
+    setGuideImageExpanded(false);
     setMapExpanded(false);
     setShowAssistMenu(false);
     setScreen("destination");
@@ -1837,6 +1851,7 @@ export default function ARNavigationV3() {
             completedRouteIndex={completedSegmentIndex}
             compact={!mapExpanded}
             allowPerspective={false}
+            imageMode="navigation"
           />
           <span className="v2-map-floor-label">{mapFloor?.name}</span>
           <span className="v2-map-toggle-label">{mapExpanded ? "縮小" : "地圖"}</span>
@@ -1974,6 +1989,7 @@ export default function ARNavigationV3() {
     const goToReviewStep = (index: number) => {
       const nextIndex = clamp(index, 0, Math.max(0, guideSegments.length - 1));
       setReviewStepIndex(nextIndex);
+      setGuideImageExpanded(false);
       setSelectedFloorId(guideSegments[nextIndex]?.floorId || selectedFloorId);
     };
     const reviewFloor =
@@ -1988,6 +2004,7 @@ export default function ARNavigationV3() {
           snapId: activeReviewStep.start.id,
         }
       : origin;
+    const reviewGuideImageUrl = activeReviewStep?.referenceImageUrl || DEFAULT_GUIDE_IMAGE_URL;
 
     return (
       <main className="v2-review-app">
@@ -2025,7 +2042,21 @@ export default function ARNavigationV3() {
               activeRouteIndex={safeReviewStepIndex}
               completedRouteIndex={completedSegmentIndex}
               compact
+              imageMode="navigation"
             />
+            <button
+              type="button"
+              className={`v3-review-guide-image ${guideImageExpanded ? "is-expanded" : ""}`}
+              onClick={() => setGuideImageExpanded((current) => !current)}
+              aria-label={guideImageExpanded ? "縮小方向提示圖片" : "放大方向提示圖片"}
+              aria-expanded={guideImageExpanded}
+            >
+              <img
+                src={reviewGuideImageUrl}
+                alt={`${activeReviewStep?.title || "目前轉角"}方向提示`}
+              />
+              <span>{guideImageExpanded ? "點一下縮小" : "方向提示"}</span>
+            </button>
             <button
               type="button"
               className="v2-review-ar-button"
@@ -2269,6 +2300,7 @@ export default function ARNavigationV3() {
             disabled={!origin?.snapId || routeIds.length === 0}
             onClick={() => {
               setReviewStepIndex(0);
+              setGuideImageExpanded(false);
               setSegmentIndex(0);
               setCompletedSegmentIndex(0);
               setScreen("review");
