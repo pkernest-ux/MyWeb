@@ -1523,7 +1523,7 @@ button:disabled {
 
 .v2-review-dock-info > div:first-child {
   color: #c8d8e7;
-  font-size: calc(var(--v3-review-font-size, 16px) - 4px);
+  font-size: 16px;
   font-weight: 800;
 }
 
@@ -1532,7 +1532,7 @@ button:disabled {
   overflow: hidden;
   margin-top: 6px;
   color: #fff2ae;
-  font-size: var(--v3-review-font-size, 16px);
+  font-size: 20px;
   line-height: 1.35;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -1545,50 +1545,8 @@ button:disabled {
 
 .v2-review-dock-meta span {
   color: #b9def7;
-  font-size: calc(var(--v3-review-font-size, 16px) - 5px);
+  font-size: 15px;
   font-weight: 800;
-}
-
-.v3-review-font-control {
-  display: inline-grid;
-  grid-template-columns: 30px 30px 30px;
-  min-height: 30px;
-  margin-left: auto;
-  overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.v3-review-font-control button,
-.v3-review-font-control output {
-  display: inline-flex;
-  width: 30px;
-  height: 30px;
-  align-items: center;
-  justify-content: center;
-  color: #ffffff;
-}
-
-.v3-review-font-control button {
-  border-inline: 1px solid rgba(255, 255, 255, 0.14);
-}
-
-.v3-review-font-control button:disabled {
-  color: rgba(255, 255, 255, 0.35);
-}
-
-.v3-review-font-control output {
-  color: #fff2ae;
-  font-size: 11px;
-  font-weight: 900;
-  font-variant-numeric: tabular-nums;
-}
-
-.v3-review-font-control svg {
-  width: 15px;
-  height: 15px;
-  stroke-width: 2.8;
 }
 
 .v2-action-bar {
