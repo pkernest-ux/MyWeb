@@ -91,9 +91,8 @@ const REVIEW_FONT_STORAGE_KEY = "ar-v3-review-font-size";
 const DEFAULT_REVIEW_FONT_SIZE = 16;
 const MIN_REVIEW_FONT_SIZE = 13;
 const MAX_REVIEW_FONT_SIZE = 20;
-const AR_MAX_LOOKAHEAD_METERS = 60;
 const AR_TURN_ANGLE_THRESHOLD = 18;
-const AR_LOOKAHEAD_SCREEN_UNITS = 72;
+const AR_SCREEN_UNITS_PER_METER = 2.4;
 
 const normalizeProjects = (raw: any) => {
   if (Array.isArray(raw?.projects)) return raw.projects;
@@ -602,6 +601,9 @@ function MapPanel({
   destinationId,
   origin,
   routePoints,
+  routeSegments,
+  activeRouteIndex = 0,
+  completedRouteIndex = activeRouteIndex,
   onOrigin,
   compact = false,
   reverseFlow = false,
@@ -617,6 +619,9 @@ function MapPanel({
   destinationId?: string | null;
   origin?: ManualOrigin | null;
   routePoints?: Array<any>;
+  routeSegments?: GuideSegment[];
+  activeRouteIndex?: number;
+  completedRouteIndex?: number;
   onOrigin?: (point: { x: number; y: number }) => void;
   compact?: boolean;
   reverseFlow?: boolean;
@@ -647,14 +652,36 @@ function MapPanel({
     (node) => node.isMarker && node.fId === floor?.id,
   );
   const floorRoute = (routePoints || []).filter((point) => point.fId === floor?.id);
-  const polyline = floorRoute.map((point) => `${clamp(point.x) * 100},${clamp(point.y) * 100}`).join(" ");
   const routePath =
     floorRoute.length > 1
       ? floorRoute
           .map((point, index) => `${index === 0 ? "M" : "L"} ${clamp(point.x) * 100} ${clamp(point.y) * 100}`)
           .join(" ")
       : "";
-  const routePathId = `v2-route-${String(floor?.id || "floor").replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+  const safeFloorId = String(floor?.id || "floor").replace(/[^a-zA-Z0-9_-]/g, "-");
+  const mapRouteSegments = routeSegments?.length
+    ? routeSegments
+        .filter((segment) => segment.floorId === floor?.id && segment.points.length > 1)
+        .map((segment) => ({
+          ...segment,
+          path: segment.points
+            .map(
+              (point, pointIndex) =>
+                `${pointIndex === 0 ? "M" : "L"} ${clamp(point.x) * 100} ${clamp(point.y) * 100}`,
+            )
+            .join(" "),
+          pathId: `v3-route-${safeFloorId}-${segment.index}`,
+        }))
+    : routePath
+      ? [
+          {
+            index: activeRouteIndex,
+            path: routePath,
+            pathId: `v3-route-${safeFloorId}-fallback`,
+          },
+        ]
+      : [];
+  const activeMapRoute = mapRouteSegments.find((segment) => segment.index === activeRouteIndex);
   const supportsPerspective = allowPerspective && mode !== "origin" && !compact;
   const effectiveMapView = supportsPerspective ? mapView : "flat";
   const fittedWorld = useMemo(() => {
@@ -878,42 +905,60 @@ function MapPanel({
               </div>
             )}
 
-            {polyline && routePath && (
+            {mapRouteSegments.length > 0 && (
               <svg
-                key={`${routePathId}-${reverseFlow ? "reverse" : "forward"}`}
+                key={`${safeFloorId}-${activeRouteIndex}-${reverseFlow ? "reverse" : "forward"}`}
                 className={`v2-route-layer ${reverseFlow ? "is-reversed" : ""}`}
                 viewBox="0 0 100 100"
                 preserveAspectRatio="none"
                 aria-hidden="true"
               >
-                <path className="v2-map-route-outline" d={routePath} />
-                <path id={routePathId} className="v2-route-base" d={routePath} />
-                {Array.from({ length: 5 }, (_, index) => (
-                  <g className="v2-flow-arrow" key={`flow-arrow-${index}`}>
-                    <path d="M -1.6 -1.35 L 1.25 0 L -1.6 1.35 Z" />
-                    <animateMotion
-                      dur="4.5s"
-                      begin={`${(-index * 0.9).toFixed(1)}s`}
-                      repeatCount="indefinite"
-                      rotate="auto"
-                    >
-                      <mpath href={`#${routePathId}`} />
-                    </animateMotion>
-                  </g>
+                {mapRouteSegments.map((segment) => (
+                  <path key={`outline-${segment.index}`} className="v3-route-network-outline" d={segment.path} />
                 ))}
-                <image
-                  className="v2-route-mascot"
-                  href="./assets/ar/mascot-walking-small.png"
-                  x="-6"
-                  y="-11"
-                  width="12"
-                  height="12"
-                  preserveAspectRatio="xMidYMid meet"
-                >
-                  <animateMotion dur="7s" repeatCount="indefinite" rotate="0">
-                    <mpath href={`#${routePathId}`} />
-                  </animateMotion>
-                </image>
+                {mapRouteSegments.map((segment) => (
+                  <path key={`base-${segment.index}`} className="v3-route-network-base" d={segment.path} />
+                ))}
+                {mapRouteSegments
+                  .filter((segment) => segment.index < completedRouteIndex)
+                  .map((segment) => (
+                    <path key={`completed-${segment.index}`} className="v3-route-completed" d={segment.path} />
+                  ))}
+                {activeMapRoute && (
+                  <>
+                    <path
+                      id={activeMapRoute.pathId}
+                      className="v3-route-active"
+                      d={activeMapRoute.path}
+                    />
+                    {Array.from({ length: 5 }, (_, index) => (
+                      <g className="v2-flow-arrow" key={`flow-arrow-${index}`}>
+                        <path d="M -1.6 -1.35 L 1.25 0 L -1.6 1.35 Z" />
+                        <animateMotion
+                          dur="4.5s"
+                          begin={`${(-index * 0.9).toFixed(1)}s`}
+                          repeatCount="indefinite"
+                          rotate="auto"
+                        >
+                          <mpath href={`#${activeMapRoute.pathId}`} />
+                        </animateMotion>
+                      </g>
+                    ))}
+                    <image
+                      className="v2-route-mascot"
+                      href="./assets/ar/mascot-walking-small.png"
+                      x="-6"
+                      y="-11"
+                      width="12"
+                      height="12"
+                      preserveAspectRatio="xMidYMid meet"
+                    >
+                      <animateMotion dur="7s" repeatCount="indefinite" rotate="0">
+                        <mpath href={`#${activeMapRoute.pathId}`} />
+                      </animateMotion>
+                    </image>
+                  </>
+                )}
               </svg>
             )}
 
@@ -1122,7 +1167,9 @@ export default function ARNavigationV3() {
   const [calibrationHeading, setCalibrationHeading] = useState<number | null>(null);
   const [cameraState, setCameraState] = useState<"idle" | "loading" | "ready" | "denied">("idle");
   const [cameraMessage, setCameraMessage] = useState("");
+  const [permissionGranted, setPermissionGranted] = useState(false);
   const [segmentIndex, setSegmentIndex] = useState(0);
+  const [completedSegmentIndex, setCompletedSegmentIndex] = useState(0);
   const [reviewStepIndex, setReviewStepIndex] = useState(0);
   const [mapFullscreen, setMapFullscreen] = useState(false);
   const [overviewLabelFontSize, setOverviewLabelFontSize] = useState(() => {
@@ -1300,6 +1347,7 @@ export default function ARNavigationV3() {
       setSelectedFloorId(null);
       setReviewStepIndex(0);
       setSegmentIndex(0);
+      setCompletedSegmentIndex(0);
       setScreen("destination");
     } catch (error: any) {
       setProjectPickError(error?.message || "無法載入此導引專案");
@@ -1315,6 +1363,7 @@ export default function ARNavigationV3() {
     setSelectedFloorId(null);
     setReviewStepIndex(0);
     setSegmentIndex(0);
+    setCompletedSegmentIndex(0);
     setScreen("destination");
   };
 
@@ -1466,31 +1515,45 @@ export default function ARNavigationV3() {
       ? segmentBearing(projectionNavigationPoints[0], projectionNavigationPoints[1])
       : currentBearing;
   const arProjectionRotation = normalizeAngle(projectionBearing - firstBearing - headingDelta);
-  const arLookaheadMeters = clamp(remainingDistance || 1, 1, AR_MAX_LOOKAHEAD_METERS);
-  const arProjectedPoints = [{ x: 50, y: 94 }];
-  let remainingArLookahead = arLookaheadMeters;
-  for (
-    let index = 0;
-    index < Math.min(projectionNavigationPoints.length - 1, 12) && remainingArLookahead > 0.01;
-    index += 1
-  ) {
+  const arRawPoints = [{ x: 0, y: 0 }];
+  for (let index = 0; index < projectionNavigationPoints.length - 1; index += 1) {
     const start = projectionNavigationPoints[index];
     const end = projectionNavigationPoints[index + 1];
     if (!start || !end || start.fId !== segmentStart?.fId || end.fId !== segmentStart?.fId) break;
     const relativeBearing = normalizeAngle(segmentBearing(start, end) - projectionBearing);
     const segmentDistance = Math.hypot(end.physX - start.physX, end.physY - start.physY);
     if (segmentDistance < 0.01) continue;
-    const visibleDistance = Math.min(segmentDistance, remainingArLookahead);
-    const projectedDistance = (visibleDistance / arLookaheadMeters) * AR_LOOKAHEAD_SCREEN_UNITS;
-    const previous = arProjectedPoints[arProjectedPoints.length - 1];
+    const previous = arRawPoints[arRawPoints.length - 1];
     const radians = (relativeBearing * Math.PI) / 180;
-    arProjectedPoints.push({
-      x: clamp(previous.x + Math.sin(radians) * projectedDistance, 8, 92),
-      y: clamp(previous.y - Math.cos(radians) * projectedDistance, 7, 94),
+    arRawPoints.push({
+      x: previous.x + Math.sin(radians) * segmentDistance,
+      y: previous.y - Math.cos(radians) * segmentDistance,
     });
-    remainingArLookahead -= visibleDistance;
   }
-  if (arProjectedPoints.length === 1) arProjectedPoints.push({ x: 50, y: 16 });
+  if (arRawPoints.length === 1) arRawPoints.push({ x: 0, y: -1 });
+  const arBounds = arRawPoints.reduce(
+    (bounds, point) => ({
+      minX: Math.min(bounds.minX, point.x),
+      maxX: Math.max(bounds.maxX, point.x),
+      minY: Math.min(bounds.minY, point.y),
+      maxY: Math.max(bounds.maxY, point.y),
+    }),
+    { minX: 0, maxX: 0, minY: 0, maxY: 0 },
+  );
+  const arFitScale = Math.min(
+    arBounds.minX < -0.01 ? 42 / Math.abs(arBounds.minX) : Number.POSITIVE_INFINITY,
+    arBounds.maxX > 0.01 ? 42 / arBounds.maxX : Number.POSITIVE_INFINITY,
+    arBounds.minY < -0.01 ? 87 / Math.abs(arBounds.minY) : Number.POSITIVE_INFINITY,
+    arBounds.maxY > 0.01 ? 4 / arBounds.maxY : Number.POSITIVE_INFINITY,
+  );
+  const arProjectionScale = Math.min(
+    AR_SCREEN_UNITS_PER_METER,
+    arFitScale,
+  );
+  const arProjectedPoints = arRawPoints.map((point) => ({
+    x: 50 + point.x * arProjectionScale,
+    y: 94 + point.y * arProjectionScale,
+  }));
   const arRoutePath = arProjectedPoints
     .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
     .join(" ");
@@ -1512,6 +1575,7 @@ export default function ARNavigationV3() {
   const guideReferenceImage =
     activeGuideSegment?.referenceImageUrl || "./assets/ar-v3/hsinchu-city-hall-navigation-clean.png";
   const guideExternalUrl = safeExternalUrl(activeGuideSegment?.externalUrl || "");
+  const routeSegmentsForMap = guideSegments;
 
   useEffect(() => {
     if (segmentStart?.fId) setMapFloorId(segmentStart.fId);
@@ -1522,6 +1586,7 @@ export default function ARNavigationV3() {
     const target = guideSegments[nextIndex];
     if (!target) return;
     setSegmentIndex(nextIndex);
+    setCompletedSegmentIndex((current) => Math.max(current, nextIndex));
     setReviewStepIndex(nextIndex);
     setSelectedFloorId(target.floorId);
     setMapFloorId(target.floorId);
@@ -1545,6 +1610,7 @@ export default function ARNavigationV3() {
       snapId: fixedRouteStart.id,
     });
     setSegmentIndex(0);
+    setCompletedSegmentIndex(0);
     setReviewStepIndex(0);
     setSelectedFloorId(fixedRouteStart.fId);
     setScreen("review");
@@ -1589,7 +1655,8 @@ export default function ARNavigationV3() {
         await videoRef.current.play();
       }
       setCameraState("ready");
-      setCameraMessage("相機與方向感測已開啟，請依照參考照片面向指定方向");
+      setPermissionGranted(true);
+      setCameraMessage("");
     } catch (error: any) {
       setCameraState("denied");
       setCameraMessage(error?.message || "無法開啟相機或方向感測");
@@ -1614,6 +1681,7 @@ export default function ARNavigationV3() {
     calibrationHeadingRef.current = null;
     setCalibrationHeading(null);
     setSegmentIndex(0);
+    setCompletedSegmentIndex(0);
     setReviewStepIndex(0);
     setMapExpanded(false);
     setShowAssistMenu(false);
@@ -1729,7 +1797,10 @@ export default function ARNavigationV3() {
             mode="route"
             destinationId={destinationId}
             origin={liveMapOrigin}
-            routePoints={activeNavigationPoints}
+            routePoints={navigationPoints}
+            routeSegments={routeSegmentsForMap}
+            activeRouteIndex={currentSegment}
+            completedRouteIndex={completedSegmentIndex}
             compact={!mapExpanded}
             allowPerspective={false}
           />
@@ -1802,6 +1873,7 @@ export default function ARNavigationV3() {
   }
 
   if (screen === "calibrate") {
+    const showPermissionStep = !permissionGranted || cameraState !== "ready";
     return (
       <main className="v3-permission-screen">
         <button type="button" className="v2-back-float" onClick={() => setScreen("review")} aria-label="返回">
@@ -1814,7 +1886,11 @@ export default function ARNavigationV3() {
         />
         <section className="v3-permission-panel">
           <div className="v2-step-label">AR 導引</div>
-          <h1>步驟1：{activeGuideSegment?.calibrationInstruction || "請面向圖片所示方向"}</h1>
+          <h1>
+            {showPermissionStep
+              ? "開啟相機與動作方向"
+              : activeGuideSegment?.calibrationInstruction || "請面向圖片所示方向"}
+          </h1>
           <p className="v3-guide-segment-summary">
             {activeGuideSegment?.title || "起點定位"} · 第 {currentSegment + 1}/{Math.max(1, guideSegments.length)} 段 · 約 {remainingDistance.toFixed(1)} 公尺
           </p>
@@ -1824,24 +1900,25 @@ export default function ARNavigationV3() {
               開啟 Google 街景參考
             </a>
           )}
-          <div className="v3-permission-list">
-            <div>
-              <Camera aria-hidden="true" />
-              <span>相機</span>
-              <strong>{cameraState === "ready" ? "已開啟" : "等待允許"}</strong>
+          {showPermissionStep && (
+            <div className="v3-permission-list">
+              <div>
+                <Camera aria-hidden="true" />
+                <span>相機</span>
+                <strong>{cameraState === "ready" ? "已開啟" : "等待允許"}</strong>
+              </div>
+              <div>
+                <Compass aria-hidden="true" />
+                <span>動作與方向</span>
+                <strong>{heading === null ? "等待允許" : `${Math.round(heading)}°`}</strong>
+              </div>
             </div>
-            <div>
-              <Compass aria-hidden="true" />
-              <span>動作與方向</span>
-              <strong>{heading === null ? "等待允許" : `${Math.round(heading)}°`}</strong>
-            </div>
-          </div>
+          )}
           {cameraMessage && <div className={`v2-message ${cameraState === "denied" ? "is-error" : ""}`}>{cameraMessage}</div>}
-          {cameraState !== "ready" ? (
+          {showPermissionStep ? (
             <button type="button" className="v2-primary-button" onClick={requestCameraAndOrientation}>
-              <span className="v3-permission-button-step">步驟2：</span>
               <Camera />
-              {cameraState === "loading" ? "正在開啟..." : "開啟相機與方向感測"}
+              {cameraState === "loading" ? "正在開啟..." : "開啟相機與動作方向"}
             </button>
           ) : (
             <button
@@ -1851,7 +1928,7 @@ export default function ARNavigationV3() {
               disabled={heading === null}
             >
               <Navigation />
-              {heading === null ? "等待方向感測..." : "重新定位並開始本段 AR"}
+              {heading === null ? "等待方向感測..." : "我已面向照片方向，開始 AR 導引"}
             </button>
           )}
         </section>
@@ -1863,7 +1940,6 @@ export default function ARNavigationV3() {
     const goToReviewStep = (index: number) => {
       const nextIndex = clamp(index, 0, Math.max(0, guideSegments.length - 1));
       setReviewStepIndex(nextIndex);
-      setSegmentIndex(nextIndex);
       setSelectedFloorId(guideSegments[nextIndex]?.floorId || selectedFloorId);
     };
     const reviewFloor =
@@ -1910,7 +1986,10 @@ export default function ARNavigationV3() {
               mode="route"
               destinationId={destinationId}
               origin={reviewOrigin}
-              routePoints={activeReviewStep?.points || navigationPoints}
+              routePoints={navigationPoints}
+              routeSegments={routeSegmentsForMap}
+              activeRouteIndex={safeReviewStepIndex}
+              completedRouteIndex={completedSegmentIndex}
               compact
             />
             <button
@@ -2156,6 +2235,8 @@ export default function ARNavigationV3() {
             disabled={!origin?.snapId || routeIds.length === 0}
             onClick={() => {
               setReviewStepIndex(0);
+              setSegmentIndex(0);
+              setCompletedSegmentIndex(0);
               setScreen("review");
               setSelectedFloorId(origin?.floorId || selectedFloorId);
             }}

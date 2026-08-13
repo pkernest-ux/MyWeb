@@ -741,11 +741,37 @@ button:disabled {
 }
 
 .v2-map-route-outline,
-.v2-route-base {
+.v2-route-base,
+.v3-route-network-outline,
+.v3-route-network-base,
+.v3-route-completed,
+.v3-route-active {
   fill: none;
   stroke-linecap: round;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
+}
+
+.v3-route-network-outline {
+  stroke: rgba(255, 255, 255, 0.96);
+  stroke-width: 8;
+  filter: drop-shadow(0 2px 3px rgba(9, 23, 36, 0.42));
+}
+
+.v3-route-network-base {
+  stroke: #7a838d;
+  stroke-width: 5.5;
+}
+
+.v3-route-completed {
+  stroke: #111820;
+  stroke-width: 5.5;
+}
+
+.v3-route-active {
+  stroke: #087cff;
+  stroke-width: 5.5;
+  filter: drop-shadow(0 1px 2px rgba(1, 44, 126, 0.62));
 }
 
 .v2-map-route-outline {

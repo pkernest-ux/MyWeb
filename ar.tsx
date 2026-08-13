@@ -2495,8 +2495,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
                 <div className="p-3 bg-cyan-950/20 border border-cyan-500/25 rounded-xl space-y-3 mt-4">
                   <div>
-                    <h3 className="text-xs font-semibold text-cyan-300">轉角導引提示</h3>
-                    <p className="mt-1 text-[10px] leading-relaxed text-slate-400">民眾抵達這個轉折點時，前台會顯示參考照片與提示，重新確認面向後再開始下一段 AR。</p>
+                    <h3 className="text-xs font-semibold text-cyan-300">每段 AR 起點與轉角提示</h3>
+                    <p className="mt-1 text-[10px] leading-relaxed text-slate-400">這個轉折點會成為下一段 AR 的重新定位起點。民眾按下「下一轉角」後，前台會顯示照片與面向提示，確認方向後再顯示下一段路線。</p>
                   </div>
                   <label className="block">
                     <span className="block text-[11px] text-slate-400 mb-1">轉角名稱</span>
@@ -2520,7 +2520,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                       </div>
                     </div>
                     <div className="border border-slate-800 bg-slate-950 rounded-xl p-2 flex items-center justify-center min-h-[120px]">
-                      {selectedWaypoint.guideImageUrl ? <img src={selectedWaypoint.guideImageUrl} alt="轉角方向參考" className="max-w-full max-h-48 object-contain rounded" /> : <div className="text-center text-slate-600"><ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-50" /><span className="text-xs">未上傳方向參考照片</span></div>}
+                      {selectedWaypoint.guideImageUrl ? <img src={selectedWaypoint.guideImageUrl} alt="轉角方向參考" className="max-w-full max-h-48 object-contain rounded" /> : <div className="text-center text-slate-600"><ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-50" /><span className="text-xs">未上傳，前台會使用預設方向照片</span></div>}
                     </div>
                   </div>
                 </div>
