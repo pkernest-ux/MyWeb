@@ -131,7 +131,7 @@ const loadProjectOption = async (option: ProjectOption) => {
   }
 
   if (!Array.isArray(selected?.buildings) || selected.buildings.length === 0) {
-    throw new Error("新竹市政府專案沒有可用的平面圖");
+    throw new Error("此場域尚未建立可用的平面圖");
   }
   return selected;
 };
@@ -1082,17 +1082,19 @@ function ProjectPicker({
   loadingId: string | null;
   error: string;
   onSelect: (option: ProjectOption) => void;
-  onBack: () => void;
+  onBack?: () => void;
 }) {
   return (
     <main className="v2-project-picker">
-      <button type="button" className="v2-project-back" onClick={onBack} aria-label="回到歡迎頁">
-        <ArrowLeft />
-      </button>
+      {onBack && (
+        <button type="button" className="v2-project-back" onClick={onBack} aria-label="返回">
+          <ArrowLeft />
+        </button>
+      )}
       <header>
-        <span>AR 導引 V3</span>
-        <h1>選擇導引專案</h1>
-        <p>請選擇這次要使用的場域平面圖。</p>
+        <span>AR 室內導引</span>
+        <h1>選擇導引場域</h1>
+        <p>請選擇這次要瀏覽與測試的場域。</p>
       </header>
 
       {error && <div className="v2-project-error">{error}</div>}
@@ -1291,17 +1293,8 @@ export default function ARNavigationV3() {
           throw new Error("雲端尚未建立可用的 AR 專案");
         }
 
-        const preferredOption =
-          options.find((option) => option.name.includes("新竹市政府")) ||
-          options.find((option) => option.id === localRaw?.activeProjectId);
-        if (!preferredOption) {
-          throw new Error("找不到新竹市政府導引專案");
-        }
-        const selected = await loadProjectOption(preferredOption);
-
         if (active) {
           setProjectOptions(options);
-          setProject(selected);
           setLoadError("");
         }
       } catch (error: any) {
@@ -1320,26 +1313,7 @@ export default function ARNavigationV3() {
     setProjectLoadingId(option.id);
     setProjectPickError("");
     try {
-      let selected = option.localData;
-      if (option.source === "cloud") {
-        try {
-          const response = await fetch(
-            `./api/ar-content?projectId=${encodeURIComponent(option.id)}&ts=${Date.now()}`,
-            { cache: "no-store" },
-          );
-          const contentType = response.headers.get("content-type") || "";
-          if (!response.ok || !contentType.includes("application/json")) {
-            throw new Error(`雲端讀取失敗 (${response.status})`);
-          }
-          selected = await response.json();
-        } catch (error) {
-          if (!selected) throw error;
-        }
-      }
-
-      if (!Array.isArray(selected?.buildings) || selected.buildings.length === 0) {
-        throw new Error("此專案尚未建立可用的平面圖");
-      }
+      const selected = await loadProjectOption(option);
 
       setProject(selected);
       setDestinationId(null);
@@ -1349,6 +1323,7 @@ export default function ARNavigationV3() {
       setSegmentIndex(0);
       setCompletedSegmentIndex(0);
       setScreen("destination");
+      setShowWelcome(true);
     } catch (error: any) {
       setProjectPickError(error?.message || "無法載入此導引專案");
     } finally {
@@ -1710,16 +1685,23 @@ export default function ARNavigationV3() {
     setScreen("destination");
   };
 
-  if (showWelcome) {
-    return <WelcomeScreen onStart={() => setShowWelcome(false)} />;
-  }
-
   if (loading) {
     return (
       <main className="v2-loading">
         <RefreshCw className="is-spinning" aria-hidden="true" />
         <strong>正在載入雲端導引資料</strong>
       </main>
+    );
+  }
+
+  if (!project && projectOptions.length > 0) {
+    return (
+      <ProjectPicker
+        options={projectOptions}
+        loadingId={projectLoadingId}
+        error={projectPickError}
+        onSelect={selectProject}
+      />
     );
   }
 
@@ -1734,6 +1716,10 @@ export default function ARNavigationV3() {
         </button>
       </main>
     );
+  }
+
+  if (showWelcome) {
+    return <WelcomeScreen onStart={() => setShowWelcome(false)} />;
   }
 
   if (screen === "navigate") {
@@ -2150,7 +2136,7 @@ export default function ARNavigationV3() {
             } else if (screen === "review") {
               setScreen("origin");
             } else {
-              setShowWelcome(true);
+              returnToProjectPicker();
             }
           }}
           aria-label="返回"

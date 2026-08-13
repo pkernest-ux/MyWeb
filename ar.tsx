@@ -298,6 +298,40 @@ const selectPublishedProjectData = (data, projectId = null) => {
   return data || {};
 };
 
+const normalizePublishedProjects = (data) => {
+  if (Array.isArray(data?.projects)) return data.projects;
+  if (data?.project || Array.isArray(data?.buildings)) return [data];
+  return [];
+};
+
+const mergePublishedProjectLists = (...sources) => {
+  const projectMap = new Map();
+
+  sources.forEach(source => {
+    normalizePublishedProjects(source).forEach(item => {
+      const projectId = item?.project?.id;
+      if (!projectId) return;
+      const existing = projectMap.get(projectId) || {};
+      const incomingHasBuildings = Array.isArray(item?.buildings) && item.buildings.length > 0;
+      projectMap.set(projectId, {
+        ...existing,
+        ...item,
+        project: { ...(existing.project || {}), ...(item.project || {}) },
+        systemConfig: { ...(existing.systemConfig || {}), ...(item.systemConfig || {}) },
+        buildings: incomingHasBuildings ? item.buildings : existing.buildings,
+        stats: item.stats || existing.stats
+      });
+    });
+  });
+
+  return Array.from(projectMap.values());
+};
+
+const hasPublishedFloorPlan = (project) =>
+  (project?.buildings || []).some(building =>
+    (building?.floors || []).some(floor => Boolean(floor?.imageUrl))
+  );
+
 export default function ARManagerApp({ embedded = false, initialTab = 'map', publicOnly = false }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -309,6 +343,15 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const [permissionsModal, setPermissionsModal] = useState(false);
   const [boundsModal, setBoundsModal] = useState({ isOpen: false, blX: 0, blY: 0, trX: 100, trY: 100 });
   const isLoadingProjectRef = useRef(false);
+  const [hadStoredProjectsOnLoad] = useState(() => {
+    if (publicOnly) return false;
+    try {
+      const storedProjects = JSON.parse(localStorage.getItem('arManager_projects') || '[]');
+      return Array.isArray(storedProjects) && storedProjects.length > 0;
+    } catch {
+      return false;
+    }
+  });
 
   const [projects, setProjects] = useState(() => {
     if (publicOnly) return [createProjectFromPublishedData({})];
@@ -382,14 +425,20 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const [mapTransform, setMapTransform] = useState({ x: 0, y: 0, scale: 1 });
   const [deleteUndo, setDeleteUndo] = useState(null);
 
-  const applyPublishedProjectData = (data, projectId = null) => {
+  const applyPublishedProjectData = (data, projectId = null, replaceProjectList = false) => {
     const selectedData = selectPublishedProjectData(data, projectId);
     if (!Array.isArray(selectedData?.buildings) || selectedData.buildings.length === 0) {
       throw new Error('雲端目前沒有可載入的 AR 平面圖資料。');
     }
 
     const project = createProjectFromPublishedData(selectedData);
-    setProjects([project]);
+    setProjects(previousProjects => {
+      if (replaceProjectList) return [project];
+      const exists = previousProjects.some(item => item.id === project.id);
+      return exists
+        ? previousProjects.map(item => item.id === project.id ? project : item)
+        : [...previousProjects, project];
+    });
     setActiveProjectId(project.id);
     setSystemConfig(cloneData(project.systemConfig));
     setBuildings(cloneData(project.buildings));
@@ -479,39 +528,44 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
   useEffect(() => {
     if (publicOnly) return;
-    if (localStorage.getItem('arManager_projects')) return;
 
     let cancelled = false;
-    const loadAdminSeedData = async () => {
-      const loadJsonIfValid = async (url) => {
-        const response = await fetch(url, { cache: 'no-store' });
+    fetch(`/ar-data.json?ts=${Date.now()}`, { cache: 'no-store' })
+      .then(async response => {
         if (!response.ok) throw new Error(`Unable to load AR data: ${response.status}`);
         const contentType = response.headers.get('content-type') || '';
         if (!contentType.includes('application/json')) throw new Error(`AR data endpoint returned ${contentType || 'unknown content type'}.`);
-        const data = await response.json();
-        const selectedData = selectPublishedProjectData(data);
-        if (!Array.isArray(selectedData?.buildings) || selectedData.buildings.length === 0) throw new Error('AR data endpoint did not include usable buildings.');
-        return data;
-      };
-
-      try {
-        return await loadJsonIfValid(`/api/ar-content?ts=${Date.now()}`);
-      } catch (apiError) {
-        console.warn("AR admin API seed unavailable; falling back to static JSON.", apiError);
-      }
-
-      return loadJsonIfValid(`/ar-data.json?ts=${Date.now()}`);
-    };
-
-    loadAdminSeedData()
+        return response.json();
+      })
       .then(data => {
         if (cancelled) return;
-        applyPublishedProjectData(data);
+        const packagedProjects = normalizePublishedProjects(data)
+          .filter(item => Array.isArray(item?.buildings) && item.buildings.length > 0)
+          .map(createProjectFromPublishedData);
+        if (packagedProjects.length === 0) return;
+
+        setProjects(previousProjects => {
+          const nextProjects = hadStoredProjectsOnLoad ? [...previousProjects] : [];
+          packagedProjects.forEach(packagedProject => {
+            const index = nextProjects.findIndex(item => item.id === packagedProject.id);
+            if (index < 0) {
+              nextProjects.push(packagedProject);
+            } else if (!hasPublishedFloorPlan(nextProjects[index]) && hasPublishedFloorPlan(packagedProject)) {
+              nextProjects[index] = packagedProject;
+            }
+          });
+          return nextProjects;
+        });
+
+        if (!hadStoredProjectsOnLoad) {
+          const preferredId = data?.activeProjectId || packagedProjects[0].id;
+          setActiveProjectId(preferredId);
+        }
       })
-      .catch(error => console.warn("Published AR admin seed unavailable", error));
+      .catch(error => console.warn("Packaged AR admin projects unavailable", error));
 
     return () => { cancelled = true; };
-  }, [publicOnly]);
+  }, [hadStoredProjectsOnLoad, publicOnly]);
 
   useEffect(() => {
     if (publicOnly) return;
@@ -1362,10 +1416,20 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const openCloudProjectList = async () => {
     setCloudProjectModal({ isOpen: true, isLoading: true, projects: [], error: '' });
     try {
-      const response = await fetch(`/api/ar-content?list=1&ts=${Date.now()}`, { cache: 'no-store' });
-      if (!response.ok) throw new Error(`Load failed: ${response.status}`);
-      const data = await response.json();
-      const cloudProjects = Array.isArray(data?.projects) ? data.projects : [];
+      const loadJson = async (url) => {
+        const response = await fetch(url, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`Load failed: ${response.status}`);
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) throw new Error('資料格式不是 JSON。');
+        return response.json();
+      };
+      const [cloudResult, packagedResult] = await Promise.allSettled([
+        loadJson(`/api/ar-content?list=1&ts=${Date.now()}`),
+        loadJson(`/ar-data.json?ts=${Date.now()}`)
+      ]);
+      const cloudData = cloudResult.status === 'fulfilled' ? cloudResult.value : null;
+      const packagedData = packagedResult.status === 'fulfilled' ? packagedResult.value : null;
+      const cloudProjects = mergePublishedProjectLists(cloudData, packagedData);
       if (cloudProjects.length === 0) throw new Error('雲端目前沒有可載入的 AR 專案。');
       setCloudProjectModal({ isOpen: true, isLoading: false, projects: cloudProjects, error: '' });
     } catch (error) {
@@ -1381,9 +1445,16 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const loadSelectedProjectFromCloud = async (projectId) => {
     setCloudProjectModal(prev => ({ ...prev, isLoading: true, error: '' }));
     try {
-      const response = await fetch(`/api/ar-content?projectId=${encodeURIComponent(projectId)}&ts=${Date.now()}`, { cache: 'no-store' });
-      if (!response.ok) throw new Error(`Load failed: ${response.status}`);
-      const data = await response.json();
+      const packagedProject = cloudProjectModal.projects.find(item => item?.project?.id === projectId);
+      let data = null;
+      try {
+        const response = await fetch(`/api/ar-content?projectId=${encodeURIComponent(projectId)}&ts=${Date.now()}`, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`Load failed: ${response.status}`);
+        data = await response.json();
+      } catch (apiError) {
+        if (!Array.isArray(packagedProject?.buildings) || packagedProject.buildings.length === 0) throw apiError;
+        data = packagedProject;
+      }
       const project = applyPublishedProjectData(data, projectId);
       setCloudProjectModal({ isOpen: false, isLoading: false, projects: [], error: '' });
       setAlertModal({
@@ -2344,7 +2415,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             <div className="flex items-start justify-between gap-4 mb-5">
               <div>
                 <h3 className="text-lg font-bold text-amber-300">選擇要載入的雲端專案</h3>
-                <p className="text-xs text-slate-400 mt-1">載入後會覆蓋目前後台顯示的本機暫存，但不會同步上架，除非你再次按「同步雲端」。</p>
+                <p className="text-xs text-slate-400 mt-1">載入後會新增或更新所選專案，其他後台專案會保留；除非再次按「同步雲端」，否則不會變更線上資料。</p>
               </div>
               <button onClick={() => setCloudProjectModal({ isOpen: false, isLoading: false, projects: [], error: '' })} className="text-slate-400 hover:text-white p-1"><X className="w-5 h-5" /></button>
             </div>
