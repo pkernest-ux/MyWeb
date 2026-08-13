@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
-  Building2,
   Camera,
   Check,
   ChevronLeft,
@@ -9,7 +8,6 @@ import {
   Compass,
   Crosshair,
   ExternalLink,
-  Layers3,
   LocateFixed,
   Map,
   MapPin,
@@ -39,6 +37,7 @@ type NodeData = {
   title?: string;
   code?: string;
   enabled?: boolean;
+  navigable?: boolean;
   guideTitle?: string;
   guideInstruction?: string;
   guideImageUrl?: string | null;
@@ -83,11 +82,7 @@ type ProjectOption = {
 };
 
 const clamp = (value: number, min = 0, max = 1) => Math.min(max, Math.max(min, value));
-const FIXED_DESTINATION_TITLE = "產業發展處工商科(工商登記)";
-const LABEL_SIZE_STORAGE_KEY = "ar-v3-map-label-size";
-const DEFAULT_LABEL_SIZE = 10;
-const MIN_LABEL_SIZE = 8;
-const MAX_LABEL_SIZE = 16;
+const DEFAULT_LABEL_SIZE = 15;
 const AR_TURN_ANGLE_THRESHOLD = 18;
 const AR_SCREEN_UNITS_PER_METER = 2.4;
 const DEFAULT_GUIDE_IMAGE_URL = "./assets/ar-v3/hsinchu-city-hall-navigation-clean.png";
@@ -398,37 +393,6 @@ const safeExternalUrl = (value: string) => {
   }
 };
 
-const findPrebuiltRouteStart = (graph: GraphData, destinationId: string) => {
-  if (!graph.nodes[destinationId] || Object.keys(graph.adjacency[destinationId] || {}).length === 0) {
-    return null;
-  }
-
-  const distances: Record<string, number> = { [destinationId]: 0 };
-  const remaining = new Set([destinationId]);
-  while (remaining.size) {
-    const current = Array.from(remaining).reduce((best, id) =>
-      distances[id] < distances[best] ? id : best,
-    );
-    remaining.delete(current);
-    Object.entries(graph.adjacency[current] || {}).forEach(([neighbor, weight]) => {
-      const nextDistance = distances[current] + weight;
-      if (distances[neighbor] === undefined || nextDistance < distances[neighbor]) {
-        distances[neighbor] = nextDistance;
-        remaining.add(neighbor);
-      }
-    });
-  }
-
-  const candidates = Object.keys(distances).filter(
-    (id) =>
-      id !== destinationId &&
-      !graph.nodes[id]?.isMarker &&
-      Object.keys(graph.adjacency[id] || {}).length <= 1,
-  );
-  const startId = candidates.sort((a, b) => distances[b] - distances[a])[0];
-  return startId ? graph.nodes[startId] : null;
-};
-
 type MapLabelPlacement = {
   left: number;
   top: number;
@@ -605,6 +569,7 @@ function MapPanel({
   activeRouteIndex = 0,
   completedRouteIndex = activeRouteIndex,
   onOrigin,
+  allowOriginSelection = false,
   compact = false,
   reverseFlow = false,
   allowPerspective = true,
@@ -624,6 +589,7 @@ function MapPanel({
   activeRouteIndex?: number;
   completedRouteIndex?: number;
   onOrigin?: (point: { x: number; y: number }) => void;
+  allowOriginSelection?: boolean;
   compact?: boolean;
   reverseFlow?: boolean;
   allowPerspective?: boolean;
@@ -654,7 +620,7 @@ function MapPanel({
     multiPointer: false,
   });
   const destinations = (Object.values(graph.nodes) as NodeData[]).filter(
-    (node) => node.isMarker && node.fId === floor?.id,
+    (node) => node.isMarker && node.navigable !== false && node.fId === floor?.id,
   );
   const floorRoute = (routePoints || []).filter((point) => point.fId === floor?.id);
   const routePath =
@@ -754,15 +720,19 @@ function MapPanel({
   };
 
   const selectOriginAtPointer = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (mode !== "origin" || !onOrigin) return;
+    if ((mode !== "origin" && !allowOriginSelection) || !onOrigin) return;
     const rect = event.currentTarget.getBoundingClientRect();
     const centerX = rect.width / 2;
     const centerY = rect.height / 2;
     const localX = (event.clientX - rect.left - centerX - mapTransform.x) / mapTransform.scale + centerX;
     const localY = (event.clientY - rect.top - centerY - mapTransform.y) / mapTransform.scale + centerY;
+    const worldLeft = (fittedWorld.left / 100) * rect.width;
+    const worldTop = (fittedWorld.top / 100) * rect.height;
+    const worldWidth = (fittedWorld.width / 100) * rect.width;
+    const worldHeight = (fittedWorld.height / 100) * rect.height;
     onOrigin({
-      x: clamp(localX / rect.width),
-      y: clamp(localY / rect.height),
+      x: clamp((localX - worldLeft) / worldWidth),
+      y: clamp((localY - worldTop) / worldHeight),
     });
   };
 
@@ -869,7 +839,7 @@ function MapPanel({
     <div className={`v2-map-frame ${compact ? "is-compact" : ""} ${mode === "destination" ? "is-browsing" : ""}`}>
       <div
         ref={mapPlaneRef}
-        className={`v2-map-plane ${mode === "origin" ? "is-selecting" : ""} ${!compact ? "is-pannable" : ""}`}
+        className={`v2-map-plane ${mode === "origin" || allowOriginSelection ? "is-selecting" : ""} ${!compact ? "is-pannable" : ""}`}
         style={{ aspectRatio: `${ratio}` }}
         onPointerDown={startPointerGesture}
         onPointerMove={movePointerGesture}
@@ -971,7 +941,7 @@ function MapPanel({
               destinations.map((node) => (
                   <div
                     key={node.id}
-                    className={`v2-destination-pin ${destinationId === node.id ? "is-selected" : ""}`}
+                    className={`v2-destination-pin ${destinationId === node.id ? "is-selected" : ""} ${origin?.snapId === node.id ? "is-origin-choice" : ""}`}
                     style={{ left: `${clamp(node.x) * 100}%`, top: `${clamp(node.y) * 100}%` }}
                     aria-label={nodeLabel(node)}
                   >
@@ -991,7 +961,7 @@ function MapPanel({
               </div>
             )}
 
-            {origin && origin.floorId === floor?.id && (
+            {origin && origin.floorId === floor?.id && !(mode === "destination" && graph.nodes[origin.snapId]?.isMarker) && (
               <div
                 className="v2-static-pin is-origin"
                 style={{ left: `${clamp(origin.x) * 100}%`, top: `${clamp(origin.y) * 100}%` }}
@@ -1027,7 +997,7 @@ function MapPanel({
           )}
         </div>
 
-        {mode === "origin" && (
+        {(mode === "origin" || allowOriginSelection) && (
           <div className="v2-map-hint">
             <Crosshair aria-hidden="true" />
             點一下你目前所在的位置
@@ -1187,6 +1157,7 @@ export default function ARNavigationV3() {
     "destination",
   );
   const [destinationId, setDestinationId] = useState<string | null>(null);
+  const [originSelection, setOriginSelection] = useState("map");
   const [selectedFloorId, setSelectedFloorId] = useState<string | null>(null);
   const [origin, setOrigin] = useState<ManualOrigin | null>(null);
   const [heading, setHeading] = useState<number | null>(null);
@@ -1199,17 +1170,6 @@ export default function ARNavigationV3() {
   const [reviewStepIndex, setReviewStepIndex] = useState(0);
   const [guideImageExpanded, setGuideImageExpanded] = useState(false);
   const [mapFullscreen, setMapFullscreen] = useState(false);
-  const [overviewLabelFontSize, setOverviewLabelFontSize] = useState(() => {
-    try {
-      return clamp(
-        Number(window.localStorage.getItem(LABEL_SIZE_STORAGE_KEY)) || DEFAULT_LABEL_SIZE,
-        MIN_LABEL_SIZE,
-        MAX_LABEL_SIZE,
-      );
-    } catch {
-      return DEFAULT_LABEL_SIZE;
-    }
-  });
   const [mapExpanded, setMapExpanded] = useState(false);
   const [mapFloorId, setMapFloorId] = useState<string | null>(null);
   const [showAssistMenu, setShowAssistMenu] = useState(false);
@@ -1217,14 +1177,6 @@ export default function ARNavigationV3() {
   const streamRef = useRef<MediaStream | null>(null);
   const headingRef = useRef<number | null>(null);
   const calibrationHeadingRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(LABEL_SIZE_STORAGE_KEY, String(overviewLabelFontSize));
-    } catch {
-      // Keep the in-memory setting when browser storage is unavailable.
-    }
-  }, [overviewLabelFontSize]);
 
   useEffect(() => {
     if (!mapFullscreen) return;
@@ -1323,6 +1275,7 @@ export default function ARNavigationV3() {
 
       setProject(selected);
       setDestinationId(null);
+      setOriginSelection("map");
       setOrigin(null);
       setSelectedFloorId(null);
       setReviewStepIndex(0);
@@ -1341,6 +1294,7 @@ export default function ARNavigationV3() {
   const returnToProjectPicker = () => {
     setProject(null);
     setDestinationId(null);
+    setOriginSelection("map");
     setOrigin(null);
     setSelectedFloorId(null);
     setReviewStepIndex(0);
@@ -1383,29 +1337,19 @@ export default function ARNavigationV3() {
   }, [screen, cameraState]);
 
   const graph = useMemo(() => buildGraph(project?.buildings || []), [project]);
-  const fixedDestination = useMemo(
+  const navigableMarkers = useMemo(
     () =>
-      (Object.values(graph.nodes) as NodeData[]).find(
-        (node) => node.isMarker && node.title === FIXED_DESTINATION_TITLE,
-      ) || null,
+      (Object.values(graph.nodes) as NodeData[])
+        .filter((node) => node.isMarker && node.navigable !== false)
+        .sort(
+          (a, b) =>
+            a.bName.localeCompare(b.bName, "zh-Hant") ||
+            a.fName.localeCompare(b.fName, "zh-Hant") ||
+            nodeLabel(a).localeCompare(nodeLabel(b), "zh-Hant"),
+        ),
     [graph],
   );
-  const fixedRouteStart = useMemo(
-    () => (fixedDestination ? findPrebuiltRouteStart(graph, fixedDestination.id) : null),
-    [fixedDestination, graph],
-  );
-  const fixedRouteIds = useMemo(
-    () =>
-      fixedDestination && fixedRouteStart
-        ? shortestPath(graph, fixedRouteStart.id, fixedDestination.id)
-        : [],
-    [fixedDestination, fixedRouteStart, graph],
-  );
-  const fixedDestinationFloor = fixedDestination
-    ? graph.floors.find((floor) => floor.id === fixedDestination.fId)
-    : null;
-  const visibleFloors =
-    screen === "destination" && fixedDestinationFloor ? [fixedDestinationFloor] : graph.floors;
+  const visibleFloors = graph.floors;
 
   useEffect(() => {
     if (!visibleFloors.length) return;
@@ -1418,17 +1362,8 @@ export default function ARNavigationV3() {
   const destination = destinationId ? graph.nodes[destinationId] : null;
   const routeIds = useMemo(() => {
     if (!origin?.snapId || !destinationId) return [];
-    if (
-      fixedDestination &&
-      fixedRouteStart &&
-      destinationId === fixedDestination.id &&
-      origin.snapId === fixedRouteStart.id &&
-      fixedRouteIds.length > 1
-    ) {
-      return fixedRouteIds;
-    }
     return shortestPath(graph, origin.snapId, destinationId);
-  }, [destinationId, fixedDestination, fixedRouteIds, fixedRouteStart, graph, origin?.snapId]);
+  }, [destinationId, graph, origin?.snapId]);
   const routeNodes = routeIds.map((id) => graph.nodes[id]).filter(Boolean);
   const snappedOriginNode = origin?.snapId ? graph.nodes[origin.snapId] : null;
   const originPoint = origin
@@ -1602,26 +1537,6 @@ export default function ARNavigationV3() {
     if (openCalibration) setScreen("calibrate");
   };
 
-  const startFixedDestinationRoute = () => {
-    if (!fixedDestination || !fixedRouteStart || fixedRouteIds.length < 2) return;
-    setDestinationId(fixedDestination.id);
-    setOrigin(null);
-    setOrigin({
-      floorId: fixedRouteStart.fId,
-      x: fixedRouteStart.x,
-      y: fixedRouteStart.y,
-      physX: fixedRouteStart.physX,
-      physY: fixedRouteStart.physY,
-      snapId: fixedRouteStart.id,
-    });
-    setSegmentIndex(0);
-    setCompletedSegmentIndex(0);
-    setReviewStepIndex(0);
-    setGuideImageExpanded(false);
-    setSelectedFloorId(fixedRouteStart.fId);
-    setScreen("review");
-  };
-
   const selectOrigin = ({ x, y }: { x: number; y: number }) => {
     if (!selectedFloor) return;
     const bounds = selectedFloor.bounds || { blX: 0, blY: 0, trX: 100, trY: 100 };
@@ -1638,6 +1553,42 @@ export default function ARNavigationV3() {
       }
     });
     setOrigin({ floorId: selectedFloor.id, x, y, physX, physY, snapId });
+  };
+
+  const selectOriginMarker = (markerId: string) => {
+    setOriginSelection(markerId);
+    if (!markerId || markerId === "map") {
+      setOrigin(null);
+      return;
+    }
+    const marker = graph.nodes[markerId];
+    if (!marker) return;
+    if (destinationId === markerId) setDestinationId(null);
+    setSelectedFloorId(marker.fId);
+    setOrigin({
+      floorId: marker.fId,
+      x: marker.x,
+      y: marker.y,
+      physX: marker.physX,
+      physY: marker.physY,
+      snapId: marker.id,
+    });
+  };
+
+  const selectDestinationMarker = (markerId: string) => {
+    setDestinationId(markerId || null);
+    const marker = graph.nodes[markerId];
+    if (marker) setSelectedFloorId(marker.fId);
+  };
+
+  const openRouteReview = () => {
+    if (!origin?.snapId || !destinationId || routeIds.length < 2) return;
+    setReviewStepIndex(0);
+    setGuideImageExpanded(false);
+    setSegmentIndex(0);
+    setCompletedSegmentIndex(0);
+    setSelectedFloorId(origin.floorId || selectedFloorId);
+    setScreen("review");
   };
 
   const requestCameraAndOrientation = async () => {
@@ -1683,6 +1634,7 @@ export default function ARNavigationV3() {
 
   const restart = () => {
     setDestinationId(null);
+    setOriginSelection("map");
     setOrigin(null);
     calibrationHeadingRef.current = null;
     setCalibrationHeading(null);
@@ -2114,170 +2066,106 @@ export default function ARNavigationV3() {
     );
   }
 
-  const pageTitle = screen === "origin" ? "標示目前位置" : "確認導航路徑";
-  const pageDescription =
-    screen === "origin" ? "切換到你所在樓層，再點擊平面圖位置" : "確認後面向第一段路徑進行方向校正";
   const selectedProjectName = projectName(project);
-  const isHsinchuProject = selectedProjectName.includes("新竹市政府");
+  const hasRouteSelection = Boolean(origin?.snapId && destinationId);
+  const canPlanRoute = hasRouteSelection && routeIds.length >= 2;
 
   return (
-    <main className={`v2-map-screen is-${screen} ${isHsinchuProject ? "is-hsinchu-project" : ""}`}>
+    <main className="v2-map-screen is-destination v3-route-setup-screen">
       <header className="v2-page-header">
         <button
           type="button"
-          onClick={() => {
-            if (screen === "origin") {
-              setDestinationId(null);
-              setOrigin(null);
-              setScreen("destination");
-            } else if (screen === "review") {
-              setScreen("origin");
-            } else {
-              returnToProjectPicker();
-            }
-          }}
+          onClick={returnToProjectPicker}
           aria-label="返回"
         >
           <ArrowLeft />
         </button>
+        <div>
+          <span>目前場景</span>
+          <strong>{selectedProjectName}</strong>
+        </div>
+        <span aria-hidden="true" />
       </header>
 
-      {screen !== "destination" && (
-        <section className="v2-intro">
-          <div className="v2-step-label">{screen === "origin" ? "STEP 2" : "路徑預覽"}</div>
-          <h1>{pageTitle}</h1>
-          <p>{pageDescription}</p>
-        </section>
-      )}
-
-      {screen !== "destination" && (
-        <section className="v2-floor-section">
-          <div className="v2-section-heading">
-            <Layers3 />
-            <strong>{screen === "review" ? "導引樓層" : "目前所在樓層"}</strong>
-          </div>
-          <FloorTabs
-            floors={visibleFloors}
-            selectedId={selectedFloor?.id || null}
-            onSelect={(id) => {
-              setSelectedFloorId(id);
-              if (screen === "origin") setOrigin(null);
-            }}
-          />
-        </section>
-      )}
-
       <section
-        className={`v2-map-card ${mapFullscreen ? "is-fullscreen" : ""}`}
+        className={`v2-map-card v3-route-setup-map ${mapFullscreen ? "is-fullscreen" : ""}`}
         role={mapFullscreen ? "dialog" : undefined}
         aria-label={mapFullscreen ? "全螢幕導引地圖" : undefined}
         aria-modal={mapFullscreen ? true : undefined}
       >
         <div className="v2-map-card-title">
-          {screen === "destination" ? (
-            <div className="v3-label-size-control" role="group" aria-label="調整地圖標籤字級">
-              <span aria-hidden="true">A</span>
-              <button
-                type="button"
-                aria-label="縮小標籤文字"
-                title="縮小標籤文字"
-                disabled={overviewLabelFontSize <= MIN_LABEL_SIZE}
-                onClick={() =>
-                  setOverviewLabelFontSize((current) => clamp(current - 1, MIN_LABEL_SIZE, MAX_LABEL_SIZE))
-                }
-              >
-                <Minus aria-hidden="true" />
-              </button>
-              <output aria-label={`目前標籤字級 ${overviewLabelFontSize}`}>{overviewLabelFontSize}</output>
-              <button
-                type="button"
-                aria-label="放大標籤文字"
-                title="放大標籤文字"
-                disabled={overviewLabelFontSize >= MAX_LABEL_SIZE}
-                onClick={() =>
-                  setOverviewLabelFontSize((current) => clamp(current + 1, MIN_LABEL_SIZE, MAX_LABEL_SIZE))
-                }
-              >
-                <Plus aria-hidden="true" />
-              </button>
-            </div>
-          ) : (
-            <div>
-              <Building2 />
-              <span>{selectedFloor?.buildingName}</span>
-            </div>
-          )}
+          <FloorTabs
+            floors={visibleFloors}
+            selectedId={selectedFloor?.id || null}
+            onSelect={(id) => {
+              setSelectedFloorId(id);
+              if (originSelection === "map") setOrigin(null);
+            }}
+          />
           <strong>{selectedFloor?.name}</strong>
         </div>
         <MapPanel
           floor={selectedFloor}
           graph={graph}
-          mode={screen === "destination" ? "destination" : screen === "origin" ? "origin" : "route"}
+          mode="destination"
           destinationId={destinationId}
           origin={origin}
           routePoints={navigationPoints}
           onOrigin={selectOrigin}
+          allowOriginSelection={originSelection === "map"}
           mapView="flat"
-          labelFontSize={overviewLabelFontSize}
+          labelFontSize={DEFAULT_LABEL_SIZE}
           isFullscreen={mapFullscreen}
           onToggleFullscreen={() => setMapFullscreen((current) => !current)}
         />
       </section>
 
-      {screen === "destination" && (
-        <section className="v2-floor-section v3-destination-section">
-          <div className="v2-section-heading">
-            <Layers3 />
-            <strong>目的地</strong>
-          </div>
-          <button
-            type="button"
-            className="v3-fixed-destination-button"
-            disabled={!fixedDestination || !fixedRouteStart || fixedRouteIds.length < 2}
-            onClick={startFixedDestinationRoute}
-          >
-            <Navigation aria-hidden="true" />
-            導航到產業發展處工商科(工商登記)
-          </button>
-          {(!fixedDestination || !fixedRouteStart || fixedRouteIds.length < 2) && (
-            <small className="v3-route-unavailable">後台尚未建立這個目的地的完整路徑</small>
-          )}
-        </section>
-      )}
-
-      {screen === "origin" && destination && (
-        <section className="v2-selection-summary">
-          <MapPin />
-          <div>
-            <span>目的地</span>
-            <strong>
-              {nodeLabel(destination)} · {destination.fName}
-            </strong>
-          </div>
-          {origin && <Check />}
-        </section>
-      )}
-
-      {screen === "origin" && (
-        <footer className="v2-action-bar">
-          <button
-            type="button"
-            className="v2-primary-button"
-            disabled={!origin?.snapId || routeIds.length === 0}
-            onClick={() => {
-              setReviewStepIndex(0);
-              setGuideImageExpanded(false);
-              setSegmentIndex(0);
-              setCompletedSegmentIndex(0);
-              setScreen("review");
-              setSelectedFloorId(origin?.floorId || selectedFloorId);
-            }}
-          >
-            <Navigation />
-            {origin ? (routeIds.length ? "確認位置並規劃路徑" : "目前位置找不到可用路徑") : "請先點選目前位置"}
-          </button>
-        </footer>
-      )}
+      <section className="v3-route-form" aria-label="設定導航起點與終點">
+        <div className="v3-route-fields">
+          <label>
+            <span><LocateFixed aria-hidden="true" />起點</span>
+            <select value={originSelection} onChange={(event) => selectOriginMarker(event.target.value)}>
+              <option value="map">直接點擊地圖位置</option>
+              {navigableMarkers.map((marker) => (
+                <option key={`origin-${marker.id}`} value={marker.id}>
+                  {marker.fName} · {nodeLabel(marker)}
+                </option>
+              ))}
+            </select>
+            {originSelection === "map" && (
+              <small>{origin ? `已定位於 ${selectedFloor?.name}` : "請在上方地圖點選目前位置"}</small>
+            )}
+          </label>
+          <label>
+            <span><MapPin aria-hidden="true" />終點</span>
+            <select value={destinationId || ""} onChange={(event) => selectDestinationMarker(event.target.value)}>
+              <option value="">請選擇導航終點</option>
+              {navigableMarkers
+                .filter((marker) => marker.id !== origin?.snapId)
+                .map((marker) => (
+                  <option key={`destination-${marker.id}`} value={marker.id}>
+                    {marker.fName} · {nodeLabel(marker)}
+                  </option>
+                ))}
+            </select>
+          </label>
+        </div>
+        <button
+          type="button"
+          className="v3-plan-route-button"
+          disabled={!canPlanRoute}
+          onClick={openRouteReview}
+        >
+          <Navigation aria-hidden="true" />
+          <span>路徑<br />規劃</span>
+        </button>
+        {hasRouteSelection && !canPlanRoute && (
+          <small className="v3-route-unavailable">目前選擇的起點與終點之間尚未建立完整路網</small>
+        )}
+        {navigableMarkers.length === 0 && (
+          <small className="v3-route-unavailable">後台尚未指定可導航的 AR 點位</small>
+        )}
+      </section>
     </main>
   );
 }

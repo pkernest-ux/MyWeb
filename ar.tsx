@@ -1262,7 +1262,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           const totalMarkersCount = buildings.reduce((acc, b) => acc + b.floors.reduce((acc2, f) => acc2 + f.markers.length, 0), 0);
           const newMarker = {
             id: `marker_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`, code: `N${totalMarkersCount + 1}`, title: '新增辨識點', description: '', arrowDirection: 'none',
-            isVerticalShaft: false, shaftId: null, linkedFloorIds: [], x, y, imageUrl: null, enabled: true, recognitionStatus: 'untested'
+            isVerticalShaft: false, shaftId: null, linkedFloorIds: [], x, y, imageUrl: null, enabled: true, navigable: true, recognitionStatus: 'untested'
           };
           setBuildings(prev => prev.map(b => b.id === activeBuildingId ? { ...b, floors: b.floors.map(f => f.id === activeFloorId ? { ...f, markers: [...f.markers, newMarker] } : f) } : b));
           setSelectedMarkerId(newMarker.id); setSelectedWaypointId(null);
@@ -1836,6 +1836,15 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                     <span className={`px-2.5 py-1 rounded text-xs font-medium ${marker.enabled ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-slate-800 text-slate-400 border border-slate-700'}`}>
                       {marker.enabled ? '已啟用' : '未啟用'}
                     </span>
+                    <label className="inline-flex items-center gap-2 text-xs font-bold text-amber-300">
+                      <input
+                        type="checkbox"
+                        checked={marker.navigable !== false}
+                        onChange={(event) => handleMarkerUpdate(marker.id, 'navigable', event.target.checked)}
+                        className="h-4 w-4 rounded accent-amber-400"
+                      />
+                      可導航
+                    </label>
                     <button onClick={() => handleEditFromList(marker.bId, marker.fId, marker.id)} className="inline-flex items-center gap-2 px-3 py-2 text-blue-400 bg-blue-400/10 hover:bg-blue-400/20 rounded-lg transition-colors text-sm">
                       <Edit className="w-4 h-4" />編輯
                     </button>
@@ -1845,7 +1854,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             </div>
             <div className="hidden md:block bg-slate-900 border border-slate-800 rounded-xl shadow-xl overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm text-slate-300 min-w-[900px]">
+                <table className="w-full text-left text-sm text-slate-300 min-w-[980px]">
                   <thead className="bg-slate-950/80 border-b border-slate-800 text-slate-400 whitespace-nowrap">
                     <tr>
                       <th className="px-4 py-4 font-semibold w-24">所在位置</th>
@@ -1853,6 +1862,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                       <th className="px-4 py-4 font-semibold w-28">代號 & 類型</th>
                       <th className="px-4 py-4 font-semibold">標題 & 描述</th>
                       <th className="px-4 py-4 font-semibold w-28">啟用狀態</th>
+                      <th className="px-4 py-4 font-semibold w-28">前台導航</th>
                       <th className="px-4 py-4 font-semibold w-36">測試狀態</th>
                       <th className="px-4 py-4 font-semibold w-24 text-right">操作</th>
                     </tr>
@@ -1882,6 +1892,17 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap">
                             {marker.enabled ? <span className="px-2.5 py-1 bg-green-500/10 text-green-400 border border-green-500/20 rounded text-xs font-medium">已啟用</span> : <span className="px-2.5 py-1 bg-slate-800 text-slate-400 border border-slate-700 rounded text-xs font-medium">已停用</span>}
+                          </td>
+                          <td className="px-4 py-4 whitespace-nowrap">
+                            <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-bold text-amber-300">
+                              <input
+                                type="checkbox"
+                                checked={marker.navigable !== false}
+                                onChange={(event) => handleMarkerUpdate(marker.id, 'navigable', event.target.checked)}
+                                className="h-4 w-4 rounded accent-amber-400"
+                              />
+                              {marker.navigable !== false ? '可選擇' : '不顯示'}
+                            </label>
                           </td>
                           <td className="px-4 py-4 whitespace-nowrap"><StatusBadge status={marker.recognitionStatus} /></td>
                           <td className="px-4 py-4 text-right">
@@ -2709,6 +2730,16 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input type="checkbox" id="toggle-enable-m" checked={selectedMarker.enabled} onChange={(e) => handleMarkerUpdate(selectedMarker.id, 'enabled', e.target.checked)} className="sr-only peer" />
                     <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-cyan-500 peer-checked:after:bg-white shadow-inner"></div>
+                  </label>
+                </div>
+                <div className="flex items-center justify-between pt-1">
+                  <div>
+                    <label className="text-xs font-medium text-amber-300 cursor-pointer" htmlFor="toggle-navigable-m">顯示於前台導航選單</label>
+                    <p className="mt-1 text-[10px] text-slate-500">開啟後，此點位可作為前台的起點或終點。</p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="toggle-navigable-m" checked={selectedMarker.navigable !== false} onChange={(e) => handleMarkerUpdate(selectedMarker.id, 'navigable', e.target.checked)} className="sr-only peer" />
+                    <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-400 peer-checked:after:bg-white shadow-inner"></div>
                   </label>
                 </div>
               </div>
