@@ -1515,22 +1515,33 @@ export default function ARNavigationV3() {
       ? segmentBearing(projectionNavigationPoints[0], projectionNavigationPoints[1])
       : currentBearing;
   const arProjectionRotation = normalizeAngle(projectionBearing - firstBearing - headingDelta);
-  const arRawPoints = [{ x: 0, y: 0 }];
-  for (let index = 0; index < projectionNavigationPoints.length - 1; index += 1) {
-    const start = projectionNavigationPoints[index];
-    const end = projectionNavigationPoints[index + 1];
-    if (!start || !end || start.fId !== segmentStart?.fId || end.fId !== segmentStart?.fId) break;
-    const relativeBearing = normalizeAngle(segmentBearing(start, end) - projectionBearing);
-    const segmentDistance = Math.hypot(end.physX - start.physX, end.physY - start.physY);
-    if (segmentDistance < 0.01) continue;
-    const previous = arRawPoints[arRawPoints.length - 1];
+  const toArRawPoint = (point: any) => {
+    if (!segmentStart || !point) return { x: 0, y: 0 };
+    const distance = Math.hypot(point.physX - segmentStart.physX, point.physY - segmentStart.physY);
+    if (distance < 0.01) return { x: 0, y: 0 };
+    const relativeBearing = normalizeAngle(segmentBearing(segmentStart, point) - projectionBearing);
     const radians = (relativeBearing * Math.PI) / 180;
-    arRawPoints.push({
-      x: previous.x + Math.sin(radians) * segmentDistance,
-      y: previous.y - Math.cos(radians) * segmentDistance,
-    });
-  }
-  if (arRawPoints.length === 1) arRawPoints.push({ x: 0, y: -1 });
+    return {
+      x: Math.sin(radians) * distance,
+      y: -Math.cos(radians) * distance,
+    };
+  };
+  const arSourceSegments = guideSegments.filter(
+    (segment) => segment.floorId === segmentStart?.fId && segment.points.length > 1,
+  );
+  const arRawSegments = (arSourceSegments.length
+    ? arSourceSegments
+    : [
+        {
+          index: currentSegment,
+          points: projectionNavigationPoints,
+        },
+      ]
+  ).map((segment) => ({
+    index: segment.index,
+    points: segment.points.map(toArRawPoint),
+  }));
+  const arRawPoints = arRawSegments.flatMap((segment) => segment.points);
   const arBounds = arRawPoints.reduce(
     (bounds, point) => ({
       minX: Math.min(bounds.minX, point.x),
@@ -1541,22 +1552,33 @@ export default function ARNavigationV3() {
     { minX: 0, maxX: 0, minY: 0, maxY: 0 },
   );
   const arFitScale = Math.min(
-    arBounds.minX < -0.01 ? 42 / Math.abs(arBounds.minX) : Number.POSITIVE_INFINITY,
-    arBounds.maxX > 0.01 ? 42 / arBounds.maxX : Number.POSITIVE_INFINITY,
-    arBounds.minY < -0.01 ? 87 / Math.abs(arBounds.minY) : Number.POSITIVE_INFINITY,
-    arBounds.maxY > 0.01 ? 4 / arBounds.maxY : Number.POSITIVE_INFINITY,
+    arBounds.maxX - arBounds.minX > 0.01
+      ? 84 / (arBounds.maxX - arBounds.minX)
+      : Number.POSITIVE_INFINITY,
+    arBounds.maxY - arBounds.minY > 0.01
+      ? 87 / (arBounds.maxY - arBounds.minY)
+      : Number.POSITIVE_INFINITY,
   );
-  const arProjectionScale = Math.min(
-    AR_SCREEN_UNITS_PER_METER,
-    arFitScale,
-  );
-  const arProjectedPoints = arRawPoints.map((point) => ({
-    x: 50 + point.x * arProjectionScale,
-    y: 94 + point.y * arProjectionScale,
+  const arProjectionScale = Math.min(AR_SCREEN_UNITS_PER_METER, arFitScale);
+  const arOriginMinX = 8 - arBounds.minX * arProjectionScale;
+  const arOriginMaxX = 92 - arBounds.maxX * arProjectionScale;
+  const arOriginMinY = 7 - arBounds.minY * arProjectionScale;
+  const arOriginMaxY = 94 - arBounds.maxY * arProjectionScale;
+  const arOriginX =
+    arOriginMinX <= arOriginMaxX ? clamp(50, arOriginMinX, arOriginMaxX) : 50;
+  const arOriginY =
+    arOriginMinY <= arOriginMaxY ? clamp(94, arOriginMinY, arOriginMaxY) : 94;
+  const arProjectedSegments = arRawSegments.map((segment) => ({
+    index: segment.index,
+    pathId: `v3-ar-camera-route-${segment.index}`,
+    path: segment.points
+      .map(
+        (point, index) =>
+          `${index === 0 ? "M" : "L"} ${(arOriginX + point.x * arProjectionScale).toFixed(2)} ${(arOriginY + point.y * arProjectionScale).toFixed(2)}`,
+      )
+      .join(" "),
   }));
-  const arRoutePath = arProjectedPoints
-    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
-    .join(" ");
+  const activeArRoute = arProjectedSegments.find((segment) => segment.index === currentSegment);
   const arDirectionLabel = Math.abs(arrowRotation) < 18
     ? "方向已對準"
     : arrowRotation > 0
@@ -1758,34 +1780,60 @@ export default function ARNavigationV3() {
                 </feMerge>
               </filter>
             </defs>
-            <path className="v2-ar-route-shadow" d={arRoutePath} />
-            <path id="v2-ar-camera-route" className="v2-ar-route-line" d={arRoutePath} />
-            {Array.from({ length: 7 }, (_, index) => (
-              <g className="v2-ar-flow-arrow" key={`ar-flow-arrow-${index}`}>
-                <path d="M -2.4 -2 L 0 0 L -2.4 2" />
-                <animateMotion
-                  dur="4.2s"
-                  begin={`${(-index * 0.6).toFixed(1)}s`}
-                  repeatCount="indefinite"
-                  rotate="auto"
-                >
-                  <mpath href="#v2-ar-camera-route" />
-                </animateMotion>
-              </g>
+            {arProjectedSegments.map((segment) => (
+              <path
+                key={`ar-outline-${segment.index}`}
+                className="v3-ar-route-network-outline"
+                d={segment.path}
+              />
             ))}
-            <image
-              className="v2-ar-route-mascot"
-              href="./assets/ar/mascot-walking-small.png"
-              x="-6.5"
-              y="-12"
-              width="13"
-              height="13"
-              preserveAspectRatio="xMidYMid meet"
-            >
-              <animateMotion dur="6.4s" repeatCount="indefinite" rotate="0">
-                <mpath href="#v2-ar-camera-route" />
-              </animateMotion>
-            </image>
+            {arProjectedSegments.map((segment) => (
+              <path
+                key={`ar-base-${segment.index}`}
+                className="v3-ar-route-network-base"
+                d={segment.path}
+              />
+            ))}
+            {arProjectedSegments
+              .filter((segment) => segment.index < completedSegmentIndex)
+              .map((segment) => (
+                <path
+                  key={`ar-completed-${segment.index}`}
+                  className="v3-ar-route-completed"
+                  d={segment.path}
+                />
+              ))}
+            {activeArRoute && (
+              <>
+                <path id={activeArRoute.pathId} className="v2-ar-route-line" d={activeArRoute.path} />
+                {Array.from({ length: 7 }, (_, index) => (
+                  <g className="v2-ar-flow-arrow" key={`ar-flow-arrow-${index}`}>
+                    <path d="M -2.4 -2 L 0 0 L -2.4 2" />
+                    <animateMotion
+                      dur="4.2s"
+                      begin={`${(-index * 0.6).toFixed(1)}s`}
+                      repeatCount="indefinite"
+                      rotate="auto"
+                    >
+                      <mpath href={`#${activeArRoute.pathId}`} />
+                    </animateMotion>
+                  </g>
+                ))}
+                <image
+                  className="v2-ar-route-mascot"
+                  href="./assets/ar/mascot-walking-small.png"
+                  x="-6.5"
+                  y="-12"
+                  width="13"
+                  height="13"
+                  preserveAspectRatio="xMidYMid meet"
+                >
+                  <animateMotion dur="6.4s" repeatCount="indefinite" rotate="0">
+                    <mpath href={`#${activeArRoute.pathId}`} />
+                  </animateMotion>
+                </image>
+              </>
+            )}
           </svg>
           <span className="v2-ar-route-direction">{arDirectionLabel}</span>
         </div>

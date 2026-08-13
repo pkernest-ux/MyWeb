@@ -1989,11 +1989,30 @@ button:disabled {
 }
 
 .v2-ar-route-shadow,
-.v2-ar-route-line {
+.v2-ar-route-line,
+.v3-ar-route-network-outline,
+.v3-ar-route-network-base,
+.v3-ar-route-completed {
   fill: none;
   stroke-linecap: round;
   stroke-linejoin: round;
   vector-effect: non-scaling-stroke;
+}
+
+.v3-ar-route-network-outline {
+  stroke: rgba(255, 255, 255, 0.96);
+  stroke-width: 13;
+  filter: drop-shadow(0 3px 3px rgba(2, 12, 22, 0.82));
+}
+
+.v3-ar-route-network-base {
+  stroke: rgba(112, 123, 134, 0.96);
+  stroke-width: 8;
+}
+
+.v3-ar-route-completed {
+  stroke: #101820;
+  stroke-width: 8;
 }
 
 .v2-ar-route-shadow {
