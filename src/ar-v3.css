@@ -1005,7 +1005,7 @@ button:disabled {
   align-items: center;
   justify-content: center;
   padding: 4px 7px;
-  transform: scale(var(--v2-pin-scale, 1));
+  transform: scale(var(--v2-label-scale, var(--v2-pin-scale, 1)));
   transform-origin: 0 0;
   box-sizing: border-box;
   border: 1px solid rgba(27, 67, 104, 0.12);
@@ -2166,8 +2166,12 @@ button:disabled {
   width: 100%;
   height: 100%;
   overflow: visible;
+}
+
+.v2-ar-route-rotation {
+  transform-box: view-box;
   transform: rotate(var(--v2-route-rotation, 0deg));
-  transform-origin: 50% 94%;
+  transform-origin: var(--v2-route-origin-x, 50%) var(--v2-route-origin-y, 94%);
   transition: transform 160ms linear;
 }
 

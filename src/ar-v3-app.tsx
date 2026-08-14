@@ -576,6 +576,7 @@ function MapPanel({
   mapView = "flat",
   imageMode = "overview",
   labelFontSize = DEFAULT_LABEL_SIZE,
+  scaleMarkersWithMap = false,
   isFullscreen = false,
   onToggleFullscreen,
 }: {
@@ -596,6 +597,7 @@ function MapPanel({
   mapView?: "flat" | "perspective";
   imageMode?: "overview" | "navigation";
   labelFontSize?: number;
+  scaleMarkersWithMap?: boolean;
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
 }) {
@@ -852,7 +854,8 @@ function MapPanel({
           style={
             {
               transform: `translate3d(${mapTransform.x}px, ${mapTransform.y}px, 0) scale(${mapTransform.scale})`,
-              "--v2-pin-scale": String(1 / mapTransform.scale),
+              "--v2-pin-scale": String(scaleMarkersWithMap ? 1 : 1 / mapTransform.scale),
+              "--v2-label-scale": String(1 / mapTransform.scale),
               left: `${fittedWorld.left}%`,
               top: `${fittedWorld.top}%`,
               width: `${fittedWorld.width}%`,
@@ -1444,8 +1447,13 @@ export default function ARNavigationV3() {
       y: -Math.cos(radians) * distance,
     };
   };
-  const arSourceSegments = guideSegments.filter(
-    (segment) => segment.floorId === segmentStart?.fId && segment.points.length > 1,
+  const arSourceSegments = [activeGuideSegment, nextGuideSegment].filter(
+    (segment): segment is GuideSegment =>
+      Boolean(
+        segment &&
+          segment.floorId === segmentStart?.fId &&
+          segment.points.length > 1,
+      ),
   );
   const arRawSegments = (arSourceSegments.length
     ? arSourceSegments
@@ -1469,23 +1477,21 @@ export default function ARNavigationV3() {
     }),
     { minX: 0, maxX: 0, minY: 0, maxY: 0 },
   );
+  const arMaxHorizontalDistance = Math.max(Math.abs(arBounds.minX), Math.abs(arBounds.maxX));
   const arFitScale = Math.min(
-    arBounds.maxX - arBounds.minX > 0.01
-      ? 84 / (arBounds.maxX - arBounds.minX)
+    arMaxHorizontalDistance > 0.01
+      ? 42 / arMaxHorizontalDistance
       : Number.POSITIVE_INFINITY,
-    arBounds.maxY - arBounds.minY > 0.01
-      ? 87 / (arBounds.maxY - arBounds.minY)
+    arBounds.minY < -0.01
+      ? 87 / Math.abs(arBounds.minY)
+      : Number.POSITIVE_INFINITY,
+    arBounds.maxY > 0.01
+      ? 5 / arBounds.maxY
       : Number.POSITIVE_INFINITY,
   );
   const arProjectionScale = Math.min(AR_SCREEN_UNITS_PER_METER, arFitScale);
-  const arOriginMinX = 8 - arBounds.minX * arProjectionScale;
-  const arOriginMaxX = 92 - arBounds.maxX * arProjectionScale;
-  const arOriginMinY = 7 - arBounds.minY * arProjectionScale;
-  const arOriginMaxY = 94 - arBounds.maxY * arProjectionScale;
-  const arOriginX =
-    arOriginMinX <= arOriginMaxX ? clamp(50, arOriginMinX, arOriginMaxX) : 50;
-  const arOriginY =
-    arOriginMinY <= arOriginMaxY ? clamp(94, arOriginMinY, arOriginMaxY) : 94;
+  const arOriginX = 50;
+  const arOriginY = 94;
   const arProjectedSegments = arRawSegments.map((segment) => ({
     index: segment.index,
     pathId: `v3-ar-camera-route-${segment.index}`,
@@ -1497,6 +1503,7 @@ export default function ARNavigationV3() {
       .join(" "),
   }));
   const activeArRoute = arProjectedSegments.find((segment) => segment.index === currentSegment);
+  const nextArRoute = arProjectedSegments.find((segment) => segment.index === currentSegment + 1);
   const arDirectionLabel = Math.abs(arrowRotation) < 18
     ? "方向已對準"
     : arrowRotation > 0
@@ -1714,7 +1721,6 @@ export default function ARNavigationV3() {
           <svg
             key={`ar-guide-segment-${currentSegment}`}
             className="v2-ar-route-projection"
-            style={{ "--v2-route-rotation": `${arProjectionRotation}deg` } as React.CSSProperties}
             viewBox="0 0 100 100"
             preserveAspectRatio="xMidYMid meet"
             aria-label={`第 ${currentSegment + 1} 段 AR 導引路線，方向 ${Math.round(arProjectionRotation)} 度`}
@@ -1728,60 +1734,55 @@ export default function ARNavigationV3() {
                 </feMerge>
               </filter>
             </defs>
-            {arProjectedSegments.map((segment) => (
-              <path
-                key={`ar-outline-${segment.index}`}
-                className="v3-ar-route-network-outline"
-                d={segment.path}
-              />
-            ))}
-            {arProjectedSegments.map((segment) => (
-              <path
-                key={`ar-base-${segment.index}`}
-                className="v3-ar-route-network-base"
-                d={segment.path}
-              />
-            ))}
-            {arProjectedSegments
-              .filter((segment) => segment.index < completedSegmentIndex)
-              .map((segment) => (
-                <path
-                  key={`ar-completed-${segment.index}`}
-                  className="v3-ar-route-completed"
-                  d={segment.path}
-                />
-              ))}
-            {activeArRoute && (
-              <>
-                <path id={activeArRoute.pathId} className="v2-ar-route-line" d={activeArRoute.path} />
-                {Array.from({ length: 7 }, (_, index) => (
-                  <g className="v2-ar-flow-arrow" key={`ar-flow-arrow-${index}`}>
-                    <path d="M -2.4 -2 L 0 0 L -2.4 2" />
-                    <animateMotion
-                      dur="4.2s"
-                      begin={`${(-index * 0.6).toFixed(1)}s`}
-                      repeatCount="indefinite"
-                      rotate="auto"
-                    >
+            <g
+              className="v2-ar-route-rotation"
+              style={
+                {
+                  "--v2-route-rotation": `${arProjectionRotation}deg`,
+                  "--v2-route-origin-x": `${arOriginX}%`,
+                  "--v2-route-origin-y": `${arOriginY}%`,
+                } as React.CSSProperties
+              }
+            >
+              {nextArRoute && (
+                <>
+                  <path className="v3-ar-route-network-outline" d={nextArRoute.path} />
+                  <path className="v3-ar-route-network-base" d={nextArRoute.path} />
+                </>
+              )}
+              {activeArRoute && (
+                <>
+                  <path className="v3-ar-route-network-outline" d={activeArRoute.path} />
+                  <path id={activeArRoute.pathId} className="v2-ar-route-line" d={activeArRoute.path} />
+                  {Array.from({ length: 7 }, (_, index) => (
+                    <g className="v2-ar-flow-arrow" key={`ar-flow-arrow-${index}`}>
+                      <path d="M -2.4 -2 L 0 0 L -2.4 2" />
+                      <animateMotion
+                        dur="4.2s"
+                        begin={`${(-index * 0.6).toFixed(1)}s`}
+                        repeatCount="indefinite"
+                        rotate="auto"
+                      >
+                        <mpath href={`#${activeArRoute.pathId}`} />
+                      </animateMotion>
+                    </g>
+                  ))}
+                  <image
+                    className="v2-ar-route-mascot"
+                    href="./assets/ar/mascot-walking-small.png"
+                    x="-6.5"
+                    y="-12"
+                    width="13"
+                    height="13"
+                    preserveAspectRatio="xMidYMid meet"
+                  >
+                    <animateMotion dur="6.4s" repeatCount="indefinite" rotate="0">
                       <mpath href={`#${activeArRoute.pathId}`} />
                     </animateMotion>
-                  </g>
-                ))}
-                <image
-                  className="v2-ar-route-mascot"
-                  href="./assets/ar/mascot-walking-small.png"
-                  x="-6.5"
-                  y="-12"
-                  width="13"
-                  height="13"
-                  preserveAspectRatio="xMidYMid meet"
-                >
-                  <animateMotion dur="6.4s" repeatCount="indefinite" rotate="0">
-                    <mpath href={`#${activeArRoute.pathId}`} />
-                  </animateMotion>
-                </image>
-              </>
-            )}
+                  </image>
+                </>
+              )}
+            </g>
           </svg>
           <span className="v2-ar-route-direction">{arDirectionLabel}</span>
         </div>
@@ -2115,6 +2116,7 @@ export default function ARNavigationV3() {
           allowOriginSelection={originSelection === "map"}
           mapView="flat"
           labelFontSize={DEFAULT_LABEL_SIZE}
+          scaleMarkersWithMap
           isFullscreen={mapFullscreen}
           onToggleFullscreen={() => setMapFullscreen((current) => !current)}
         />
