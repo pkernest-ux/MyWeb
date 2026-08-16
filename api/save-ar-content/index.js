@@ -57,13 +57,17 @@ module.exports = async function (context, req) {
   const headers = {
     Accept: "application/vnd.github+json",
     Authorization: `Bearer ${token}`,
+    "Cache-Control": "no-cache",
     "Content-Type": "application/json",
     "User-Agent": "myweb-ar-admin",
     "X-GitHub-Api-Version": "2022-11-28"
   };
 
   try {
-    const currentResponse = await fetch(`${apiUrl}?ref=${encodeURIComponent(branch)}`, { headers });
+    const currentResponse = await fetch(
+      `${apiUrl}?ref=${encodeURIComponent(branch)}&t=${Date.now()}`,
+      { headers, cache: "no-store" }
+    );
 
     if (!currentResponse.ok) {
       throw new Error(`Unable to read AR content file from GitHub: ${currentResponse.status}`);
