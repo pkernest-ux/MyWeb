@@ -26,6 +26,7 @@ const summarizeProject = (item) => {
   const floorStats = (item.buildings || []).reduce((stats, building) => {
     (building.floors || []).forEach((floor) => {
       if (floor.imageUrl) stats.floorPlans += 1;
+      if (floor.navigationImageUrl) stats.floorPlans += 1;
       stats.markers += (floor.markers || []).length;
       stats.waypoints += (floor.waypoints || []).length;
       stats.edges += (floor.edges || []).length;

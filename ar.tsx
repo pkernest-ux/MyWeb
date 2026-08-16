@@ -14,7 +14,7 @@ import {
 // ==========================================
 // 圖片壓縮工具
 // ==========================================
-const compressImage = (base64Str, maxWidth, callback) => {
+const compressImage = (base64Str, maxWidth, callback, quality = 0.7) => {
   const img = new Image();
   img.onload = () => {
     let width = img.width;
@@ -33,7 +33,7 @@ const compressImage = (base64Str, maxWidth, callback) => {
     canvas.height = height;
     const ctx = canvas.getContext('2d');
     ctx.drawImage(img, 0, 0, width, height);
-    callback(canvas.toDataURL('image/jpeg', 0.7));
+    callback(canvas.toDataURL('image/jpeg', quality));
   };
   img.onerror = () => callback(base64Str);
   img.src = base64Str;
@@ -238,7 +238,10 @@ const updateFlowArrowGroup = (group, elapsedMs) => {
 
 const createDefaultConfig = (name = '新導引專案') => ({
   projectName: name,
-  lerpFactor: 15
+  lerpFactor: 15,
+  welcomeImageUrl: null,
+  welcomeButtonText: '開始體驗',
+  welcomeButtonTop: 60
 });
 
 const createDefaultBuildings = () => [
@@ -250,6 +253,7 @@ const createDefaultBuildings = () => [
         id: `f_${Date.now()}`,
         name: '1F',
         imageUrl: null,
+        navigationImageUrl: null,
         markers: [],
         waypoints: [],
         edges: [],
@@ -298,6 +302,40 @@ const selectPublishedProjectData = (data, projectId = null) => {
   return data || {};
 };
 
+const normalizePublishedProjects = (data) => {
+  if (Array.isArray(data?.projects)) return data.projects;
+  if (data?.project || Array.isArray(data?.buildings)) return [data];
+  return [];
+};
+
+const mergePublishedProjectLists = (...sources) => {
+  const projectMap = new globalThis.Map();
+
+  sources.forEach(source => {
+    normalizePublishedProjects(source).forEach(item => {
+      const projectId = item?.project?.id;
+      if (!projectId) return;
+      const existing = projectMap.get(projectId) || {};
+      const incomingHasBuildings = Array.isArray(item?.buildings) && item.buildings.length > 0;
+      projectMap.set(projectId, {
+        ...existing,
+        ...item,
+        project: { ...(existing.project || {}), ...(item.project || {}) },
+        systemConfig: { ...(existing.systemConfig || {}), ...(item.systemConfig || {}) },
+        buildings: incomingHasBuildings ? item.buildings : existing.buildings,
+        stats: item.stats || existing.stats
+      });
+    });
+  });
+
+  return Array.from(projectMap.values());
+};
+
+const hasPublishedFloorPlan = (project) =>
+  (project?.buildings || []).some(building =>
+    (building?.floors || []).some(floor => Boolean(floor?.imageUrl || floor?.navigationImageUrl))
+  );
+
 export default function ARManagerApp({ embedded = false, initialTab = 'map', publicOnly = false }) {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
@@ -309,6 +347,15 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const [permissionsModal, setPermissionsModal] = useState(false);
   const [boundsModal, setBoundsModal] = useState({ isOpen: false, blX: 0, blY: 0, trX: 100, trY: 100 });
   const isLoadingProjectRef = useRef(false);
+  const [hadStoredProjectsOnLoad] = useState(() => {
+    if (publicOnly) return false;
+    try {
+      const storedProjects = JSON.parse(localStorage.getItem('arManager_projects') || '[]');
+      return Array.isArray(storedProjects) && storedProjects.length > 0;
+    } catch {
+      return false;
+    }
+  });
 
   const [projects, setProjects] = useState(() => {
     if (publicOnly) return [createProjectFromPublishedData({})];
@@ -348,6 +395,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const [activeBuildingId, setActiveBuildingId] = useState(buildings[0]?.id);
   const [activeFloorId, setActiveFloorId] = useState(buildings[0]?.floors[0]?.id);
   const [referenceFloorId, setReferenceFloorId] = useState('');
+  const [floorImagePreviewMode, setFloorImagePreviewMode] = useState('overview');
 
   const [selectedMarkerId, setSelectedMarkerId] = useState(null);
   const [selectedWaypointId, setSelectedWaypointId] = useState(null);
@@ -375,19 +423,29 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const wrapperRef = useRef(null);
   const containerRef = useRef(null);
   const fileInputRef = useRef(null);
+  const navigationImageInputRef = useRef(null);
+  const welcomeImageInputRef = useRef(null);
   const markerImageInputRef = useRef(null);
+  const waypointGuideImageInputRef = useRef(null);
+  const nodePointerStartRef = useRef(null);
 
   const [mapTransform, setMapTransform] = useState({ x: 0, y: 0, scale: 1 });
   const [deleteUndo, setDeleteUndo] = useState(null);
 
-  const applyPublishedProjectData = (data, projectId = null) => {
+  const applyPublishedProjectData = (data, projectId = null, replaceProjectList = false) => {
     const selectedData = selectPublishedProjectData(data, projectId);
     if (!Array.isArray(selectedData?.buildings) || selectedData.buildings.length === 0) {
       throw new Error('雲端目前沒有可載入的 AR 平面圖資料。');
     }
 
     const project = createProjectFromPublishedData(selectedData);
-    setProjects([project]);
+    setProjects(previousProjects => {
+      if (replaceProjectList) return [project];
+      const exists = previousProjects.some(item => item.id === project.id);
+      return exists
+        ? previousProjects.map(item => item.id === project.id ? project : item)
+        : [...previousProjects, project];
+    });
     setActiveProjectId(project.id);
     setSystemConfig(cloneData(project.systemConfig));
     setBuildings(cloneData(project.buildings));
@@ -477,39 +535,44 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
   useEffect(() => {
     if (publicOnly) return;
-    if (localStorage.getItem('arManager_projects')) return;
 
     let cancelled = false;
-    const loadAdminSeedData = async () => {
-      const loadJsonIfValid = async (url) => {
-        const response = await fetch(url, { cache: 'no-store' });
+    fetch(`/ar-data.json?ts=${Date.now()}`, { cache: 'no-store' })
+      .then(async response => {
         if (!response.ok) throw new Error(`Unable to load AR data: ${response.status}`);
         const contentType = response.headers.get('content-type') || '';
         if (!contentType.includes('application/json')) throw new Error(`AR data endpoint returned ${contentType || 'unknown content type'}.`);
-        const data = await response.json();
-        const selectedData = selectPublishedProjectData(data);
-        if (!Array.isArray(selectedData?.buildings) || selectedData.buildings.length === 0) throw new Error('AR data endpoint did not include usable buildings.');
-        return data;
-      };
-
-      try {
-        return await loadJsonIfValid(`/api/ar-content?ts=${Date.now()}`);
-      } catch (apiError) {
-        console.warn("AR admin API seed unavailable; falling back to static JSON.", apiError);
-      }
-
-      return loadJsonIfValid(`/ar-data.json?ts=${Date.now()}`);
-    };
-
-    loadAdminSeedData()
+        return response.json();
+      })
       .then(data => {
         if (cancelled) return;
-        applyPublishedProjectData(data);
+        const packagedProjects = normalizePublishedProjects(data)
+          .filter(item => Array.isArray(item?.buildings) && item.buildings.length > 0)
+          .map(createProjectFromPublishedData);
+        if (packagedProjects.length === 0) return;
+
+        setProjects(previousProjects => {
+          const nextProjects = hadStoredProjectsOnLoad ? [...previousProjects] : [];
+          packagedProjects.forEach(packagedProject => {
+            const index = nextProjects.findIndex(item => item.id === packagedProject.id);
+            if (index < 0) {
+              nextProjects.push(packagedProject);
+            } else if (!hasPublishedFloorPlan(nextProjects[index]) && hasPublishedFloorPlan(packagedProject)) {
+              nextProjects[index] = packagedProject;
+            }
+          });
+          return nextProjects;
+        });
+
+        if (!hadStoredProjectsOnLoad) {
+          const preferredId = data?.activeProjectId || packagedProjects[0].id;
+          setActiveProjectId(preferredId);
+        }
       })
-      .catch(error => console.warn("Published AR admin seed unavailable", error));
+      .catch(error => console.warn("Packaged AR admin projects unavailable", error));
 
     return () => { cancelled = true; };
-  }, [publicOnly]);
+  }, [hadStoredProjectsOnLoad, publicOnly]);
 
   useEffect(() => {
     if (publicOnly) return;
@@ -567,6 +630,10 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     if (referenceFloorId === activeFloorId) setReferenceFloorId('');
   }, [activeFloorId, referenceFloorId]);
 
+  useEffect(() => {
+    setFloorImagePreviewMode('overview');
+  }, [activeFloorId]);
+
   // 注意：已移除原先會「切換樓層時清空 navTestPoints」的 useEffect，確保跨層導航測試能順利進行
 
   useEffect(() => { setIsConfirmingDelete(false); }, [selectedMarkerId, selectedWaypointId]);
@@ -594,6 +661,10 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
   const currentBuilding = buildings.find(b => b.id === activeBuildingId) || buildings[0];
   const currentFloor = currentBuilding?.floors.find(f => f.id === activeFloorId);
+  const currentFloorImageUrl = floorImagePreviewMode === 'navigation'
+    ? currentFloor?.navigationImageUrl
+    : currentFloor?.imageUrl;
+  const hasCurrentFloorPlan = Boolean(currentFloor?.imageUrl || currentFloor?.navigationImageUrl);
   const currentMarkers = currentFloor?.markers || [];
   const currentWaypoints = currentFloor?.waypoints || [];
   const currentEdges = currentFloor?.edges || [];
@@ -605,6 +676,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     setReferenceFloorId('');
     setIsAddMode(false);
     setIsPathMode(false);
+    setDraggingId(null);
+    nodePointerStartRef.current = null;
     setIsToggleShaftMode(false);
     setIsMeasuring(false);
     setMeasurePoints([]);
@@ -663,7 +736,10 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
       const effectiveShaftId = updates.shaftId !== undefined ? updates.shaftId : targetNode.shaftId;
       const effectiveIsVerticalShaft = updates.isVerticalShaft !== undefined ? updates.isVerticalShaft : targetNode.isVerticalShaft;
-      const isShaftSync = effectiveIsVerticalShaft && effectiveShaftId;
+      const isGuideUpdate = Object.keys(updates).some(field =>
+        ['guideTitle', 'guideInstruction', 'guideImageUrl', 'guideExternalUrl'].includes(field)
+      );
+      const isShaftSync = effectiveIsVerticalShaft && effectiveShaftId && !isGuideUpdate;
       const sourceBounds = getFloorBounds(sourceFloor);
 
       return prev.map(b => {
@@ -800,7 +876,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         if (!name) return;
         const newBId = `b_${Date.now()}`;
         const newFId = `f_${Date.now()}`;
-        setBuildings(prev => [...prev, { id: newBId, name, floors: [{ id: newFId, name: '1F', imageUrl: null, markers: [], waypoints: [], edges: [], bounds: { blX: 0, blY: 0, trX: 100, trY: 100 } }] }]);
+        setBuildings(prev => [...prev, { id: newBId, name, floors: [{ id: newFId, name: '1F', imageUrl: null, navigationImageUrl: null, markers: [], waypoints: [], edges: [], bounds: { blX: 0, blY: 0, trX: 100, trY: 100 } }] }]);
         setActiveBuildingId(newBId); setActiveFloorId(newFId);
       }
     });
@@ -815,7 +891,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         const newFId = `f_${Date.now()}`;
         const inheritBounds = currentFloor ? { ...getFloorBounds(currentFloor) } : { blX: 0, blY: 0, trX: 100, trY: 100 };
         setBuildings(prev => prev.map(b => b.id === activeBuildingId ? {
-          ...b, floors: [...b.floors, { id: newFId, name, imageUrl: null, markers: [], waypoints: [], edges: [], bounds: inheritBounds }]
+          ...b, floors: [...b.floors, { id: newFId, name, imageUrl: null, navigationImageUrl: null, markers: [], waypoints: [], edges: [], bounds: inheritBounds }]
         } : b));
         setActiveFloorId(newFId);
       }
@@ -898,19 +974,21 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     });
   };
 
-  const handleFloorPlanUpload = (e) => {
+  const handleFloorImageUpload = (e, field, previewMode) => {
     const file = e.target.files[0];
     const target = e.target;
     if (file && activeBuildingId && activeFloorId) {
       const currentBId = activeBuildingId; const currentFId = activeFloorId;
       const reader = new FileReader();
       reader.onload = (event) => {
-        compressImage(event.target.result, 1600, (compressedDataUrl) => {
+        const isNavigationImage = field === 'navigationImageUrl';
+        compressImage(event.target.result, isNavigationImage ? 2000 : 1600, (compressedDataUrl) => {
           setBuildings(prev => prev.map(b => b.id === currentBId ? {
-            ...b, floors: b.floors.map(f => f.id === currentFId ? { ...f, imageUrl: compressedDataUrl } : f)
+            ...b, floors: b.floors.map(f => f.id === currentFId ? { ...f, [field]: compressedDataUrl } : f)
           } : b));
+          setFloorImagePreviewMode(previewMode);
           setIsAddMode(false);
-        });
+        }, isNavigationImage ? 0.88 : 0.7);
       };
       reader.readAsDataURL(file);
     }
@@ -922,7 +1000,19 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   // ==========================================
   const addWaypointAndEdge = (x, y) => {
     const wpId = `wp_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-    const newWp = { id: wpId, x, y, isVerticalShaft: false, shaftId: null, linkedFloorIds: [], sourceFloorId: activeFloorId };
+    const newWp = {
+      id: wpId,
+      x,
+      y,
+      isVerticalShaft: false,
+      shaftId: null,
+      linkedFloorIds: [],
+      sourceFloorId: activeFloorId,
+      guideTitle: '',
+      guideInstruction: '',
+      guideImageUrl: null,
+      guideExternalUrl: ''
+    };
     setBuildings(prev => prev.map(b => b.id === activeBuildingId ? {
       ...b, floors: b.floors.map(f => {
         if (f.id !== activeFloorId) return f;
@@ -1123,26 +1213,33 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const handleMapPointerMove = (e) => {
     if (isPanning) {
         setMapTransform(prev => ({ ...prev, x: e.clientX - panStart.x, y: e.clientY - panStart.y }));
+    } else if (draggingId && containerRef.current) {
+        const canDragMarker = isAddMode && currentMarkers.some(marker => marker.id === draggingId);
+        const canDragWaypoint = isPathMode && currentWaypoints.some(waypoint => waypoint.id === draggingId);
+        if (!canDragMarker && !canDragWaypoint) {
+          setDraggingId(null);
+          return;
+        }
+        const rect = containerRef.current.getBoundingClientRect();
+        let x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        let y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+        if (canDragMarker) {
+            handleMarkerUpdate(draggingId, 'x', x);
+            handleMarkerUpdate(draggingId, 'y', y);
+        } else if (canDragWaypoint) {
+            handleWaypointUpdate(draggingId, 'x', x);
+            handleWaypointUpdate(draggingId, 'y', y);
+        }
     } else if (isPathMode && pathStartNodeId && containerRef.current) {
         const rect = containerRef.current.getBoundingClientRect();
         let x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
         let y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
         setHoverPos({x, y});
-    } else if (draggingId && containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        let x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-        let y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
-        if (draggingId.startsWith('marker_')) {
-            handleMarkerUpdate(draggingId, 'x', x);
-            handleMarkerUpdate(draggingId, 'y', y);
-        } else if (draggingId.startsWith('wp_')) {
-            handleWaypointUpdate(draggingId, 'x', x);
-            handleWaypointUpdate(draggingId, 'y', y);
-        }
     }
   };
 
   const handleMapPointerUp = (e) => {
+    if (draggingId) setDraggingId(null);
     if (isPanning) {
       setIsPanning(false); e.target.releasePointerCapture(e.pointerId);
       const dist = Math.hypot(e.clientX - panStartClient.x, e.clientY - panStartClient.y);
@@ -1165,10 +1262,10 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           const totalMarkersCount = buildings.reduce((acc, b) => acc + b.floors.reduce((acc2, f) => acc2 + f.markers.length, 0), 0);
           const newMarker = {
             id: `marker_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`, code: `N${totalMarkersCount + 1}`, title: '新增辨識點', description: '', arrowDirection: 'none',
-            isVerticalShaft: false, shaftId: null, linkedFloorIds: [], x, y, imageUrl: null, enabled: true, recognitionStatus: 'untested'
+            isVerticalShaft: false, shaftId: null, linkedFloorIds: [], x, y, imageUrl: null, enabled: true, navigable: true, recognitionStatus: 'untested'
           };
           setBuildings(prev => prev.map(b => b.id === activeBuildingId ? { ...b, floors: b.floors.map(f => f.id === activeFloorId ? { ...f, markers: [...f.markers, newMarker] } : f) } : b));
-          setSelectedMarkerId(newMarker.id); setSelectedWaypointId(null); setIsAddMode(false);
+          setSelectedMarkerId(newMarker.id); setSelectedWaypointId(null);
         } else if (isMeasuring) {
           setMeasurePoints(prev => prev.length >= 2 ? [{x, y}] : [...prev, {x, y}]);
         } else {
@@ -1176,6 +1273,22 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           setSelectedWaypointId(null);
         }
       }
+    }
+  };
+
+  const finishNodePointerInteraction = (e, nodeId = null, connectOnTap = false) => {
+    e.stopPropagation();
+    const pointerStart = nodePointerStartRef.current;
+    const pointerDistance = pointerStart
+      ? Math.hypot(e.clientX - pointerStart.x, e.clientY - pointerStart.y)
+      : Number.POSITIVE_INFINITY;
+    setDraggingId(null);
+    nodePointerStartRef.current = null;
+    if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    }
+    if (connectOnTap && isPathMode && pointerStart?.nodeId === nodeId && pointerDistance < 5) {
+      connectToNode(nodeId);
     }
   };
 
@@ -1195,14 +1308,49 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     target.value = '';
   };
 
+  const handleFloorPlanUpload = (e) => handleFloorImageUpload(e, 'imageUrl', 'overview');
+  const handleNavigationFloorPlanUpload = (e) => handleFloorImageUpload(e, 'navigationImageUrl', 'navigation');
+
+  const handleWelcomeImageUpload = (e) => {
+    const file = e.target.files[0];
+    const target = e.target;
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        compressImage(event.target.result, 1600, (compressedDataUrl) => {
+          setSystemConfig(prev => ({ ...prev, welcomeImageUrl: compressedDataUrl }));
+        }, 0.82);
+      };
+      reader.readAsDataURL(file);
+    }
+    target.value = '';
+  };
+
+  const handleWaypointGuideImageUpload = (e) => {
+    const file = e.target.files[0]; const target = e.target;
+    if (file && selectedWaypointId) {
+      const currentWaypointId = selectedWaypointId;
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        compressImage(event.target.result, 1200, (compressedDataUrl) => {
+          handleWaypointUpdate(currentWaypointId, 'guideImageUrl', compressedDataUrl);
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+    target.value = '';
+  };
+
   const handleEditFromList = (bId, fId, mId) => {
     setActiveBuildingId(bId); setActiveFloorId(fId); setSelectedMarkerId(mId); setSelectedWaypointId(null); setActiveTab('map');
+    setIsAddMode(true); setIsPathMode(false); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsMeasuring(false); setDraggingId(null);
   };
 
   const getProjectContentStats = (projectBuildings) => {
     return (projectBuildings || []).reduce((stats, building) => {
       (building.floors || []).forEach((floor) => {
         if (floor.imageUrl) stats.floorPlans += 1;
+        if (floor.navigationImageUrl) stats.floorPlans += 1;
         stats.markers += (floor.markers || []).length;
         stats.waypoints += (floor.waypoints || []).length;
         stats.edges += (floor.edges || []).length;
@@ -1304,10 +1452,20 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const openCloudProjectList = async () => {
     setCloudProjectModal({ isOpen: true, isLoading: true, projects: [], error: '' });
     try {
-      const response = await fetch(`/api/ar-content?list=1&ts=${Date.now()}`, { cache: 'no-store' });
-      if (!response.ok) throw new Error(`Load failed: ${response.status}`);
-      const data = await response.json();
-      const cloudProjects = Array.isArray(data?.projects) ? data.projects : [];
+      const loadJson = async (url) => {
+        const response = await fetch(url, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`Load failed: ${response.status}`);
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) throw new Error('資料格式不是 JSON。');
+        return response.json();
+      };
+      const [cloudResult, packagedResult] = await Promise.allSettled([
+        loadJson(`/api/ar-content?list=1&ts=${Date.now()}`),
+        loadJson(`/ar-data.json?ts=${Date.now()}`)
+      ]);
+      const cloudData = cloudResult.status === 'fulfilled' ? cloudResult.value : null;
+      const packagedData = packagedResult.status === 'fulfilled' ? packagedResult.value : null;
+      const cloudProjects = mergePublishedProjectLists(cloudData, packagedData);
       if (cloudProjects.length === 0) throw new Error('雲端目前沒有可載入的 AR 專案。');
       setCloudProjectModal({ isOpen: true, isLoading: false, projects: cloudProjects, error: '' });
     } catch (error) {
@@ -1323,9 +1481,16 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const loadSelectedProjectFromCloud = async (projectId) => {
     setCloudProjectModal(prev => ({ ...prev, isLoading: true, error: '' }));
     try {
-      const response = await fetch(`/api/ar-content?projectId=${encodeURIComponent(projectId)}&ts=${Date.now()}`, { cache: 'no-store' });
-      if (!response.ok) throw new Error(`Load failed: ${response.status}`);
-      const data = await response.json();
+      const packagedProject = cloudProjectModal.projects.find(item => item?.project?.id === projectId);
+      let data = null;
+      try {
+        const response = await fetch(`/api/ar-content?projectId=${encodeURIComponent(projectId)}&ts=${Date.now()}`, { cache: 'no-store' });
+        if (!response.ok) throw new Error(`Load failed: ${response.status}`);
+        data = await response.json();
+      } catch (apiError) {
+        if (!Array.isArray(packagedProject?.buildings) || packagedProject.buildings.length === 0) throw apiError;
+        data = packagedProject;
+      }
       const project = applyPublishedProjectData(data, projectId);
       setCloudProjectModal({ isOpen: false, isLoading: false, projects: [], error: '' });
       setAlertModal({
@@ -1413,9 +1578,93 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     setAlertModal({ isOpen: true, message: '\u76ee\u524d\u5c08\u6848\u7684 AR \u8cc7\u6599\u5df2\u6e05\u9664\u3002\u5982\u679c\u662f\u8aa4\u64cd\u4f5c\uff0c\u53ef\u4f7f\u7528\u300c\u5fa9\u539f\u300d\u9084\u539f\u3002' });
   };
 
+  const resetFloorEditingState = () => {
+    setSelectedMarkerId(null);
+    setSelectedWaypointId(null);
+    setIsAddMode(false);
+    setIsPathMode(false);
+    setIsToggleShaftMode(false);
+    setPathStartNodeId(null);
+    setHoverPos(null);
+    setIsNavTestMode(false);
+    setNavTestPoints([]);
+    setNavTestPath([]);
+    setIsMeasuring(false);
+    setMeasurePoints([]);
+    setIsConfirmingDelete(false);
+  };
+
+  const clearCurrentFloorDrawing = () => {
+    if (!currentFloor) return;
+    const floorId = currentFloor.id;
+
+    setBuildings(prev => prev.map(building => {
+      if (building.id !== activeBuildingId) return building;
+
+      return {
+        ...building,
+        floors: building.floors.map(floor => {
+          if (floor.id === floorId) {
+            return {
+              ...floor,
+              markers: [],
+              waypoints: [],
+              edges: []
+            };
+          }
+
+          const removeFloorFromShaft = (node) => {
+            if (!Array.isArray(node.linkedFloorIds) || !node.linkedFloorIds.includes(floorId)) return node;
+            const linkedFloorIds = node.linkedFloorIds.filter(linkedId => linkedId !== floorId);
+            return {
+              ...node,
+              linkedFloorIds,
+              sourceFloorId: node.sourceFloorId === floorId
+                ? (linkedFloorIds[0] || floor.id)
+                : node.sourceFloorId
+            };
+          };
+
+          return {
+            ...floor,
+            markers: (floor.markers || []).map(removeFloorFromShaft),
+            waypoints: (floor.waypoints || []).map(removeFloorFromShaft)
+          };
+        })
+      };
+    }));
+
+    resetFloorEditingState();
+    setAlertModal({
+      isOpen: true,
+      message: `「${currentBuilding?.name || '目前場域'} / ${currentFloor.name || '目前樓層'}」的繪製內容已從後台草稿清除；平面圖、比例尺與其他樓層資料均已保留。如需套用到民眾端，請再按「同步雲端」。`
+    });
+  };
+
+  const requestClearCurrentFloorDrawing = () => {
+    if (!currentFloor) return;
+    const markerCount = currentMarkers.length;
+    const waypointCount = currentWaypoints.length;
+    const edgeCount = currentEdges.length;
+
+    if (markerCount + waypointCount + edgeCount === 0) {
+      setAlertModal({ isOpen: true, message: '目前樓層沒有可清除的 AR 點位或路網資料。' });
+      return;
+    }
+
+    setConfirmModal({
+      isOpen: true,
+      title: '清除目前樓層繪製內容',
+      message: `確定要清除「${currentBuilding?.name || '目前場域'} / ${currentFloor.name || '目前樓層'}」的 ${markerCount} 個 AR 點位、${waypointCount} 個路網節點及 ${edgeCount} 條連線嗎？平面圖、比例尺、其他樓層與其他專案不會被刪除。`,
+      onConfirm: clearCurrentFloorDrawing
+    });
+  };
+
   const exportJSON = () => {
     const exportName = (systemConfig.projectName || activeProject?.name || 'ar_project').replace(/[^\w\u4e00-\u9fff-]+/g, '_');
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({
+    const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-');
+    const fileName = `${exportName}_ar_config_v7_${timestamp}.json`;
+    const payload = {
       version: '7.0',
       project: {
         id: activeProjectId,
@@ -1425,12 +1674,20 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       },
       systemConfig,
       buildings
-    }, null, 2));
+    };
+    const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], {
+      type: 'application/json;charset=utf-8'
+    });
+    const downloadUrl = URL.createObjectURL(blob);
     const downloadAnchorNode = document.createElement('a');
-    downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", `${exportName}_ar_config_v7.json`);
+    downloadAnchorNode.href = downloadUrl;
+    downloadAnchorNode.download = fileName;
+    downloadAnchorNode.style.display = 'none';
     document.body.appendChild(downloadAnchorNode);
-    downloadAnchorNode.click(); downloadAnchorNode.remove();
+    downloadAnchorNode.click();
+    downloadAnchorNode.remove();
+    window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+    setAlertModal({ isOpen: true, message: `已建立「${fileName}」，請查看瀏覽器的下載項目。` });
   };
 
   const resetMapView = () => {
@@ -1579,6 +1836,15 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                     <span className={`px-2.5 py-1 rounded text-xs font-medium ${marker.enabled ? 'bg-green-500/10 text-green-400 border border-green-500/20' : 'bg-slate-800 text-slate-400 border border-slate-700'}`}>
                       {marker.enabled ? '已啟用' : '未啟用'}
                     </span>
+                    <label className="inline-flex items-center gap-2 text-xs font-bold text-amber-300">
+                      <input
+                        type="checkbox"
+                        checked={marker.navigable !== false}
+                        onChange={(event) => handleMarkerUpdate(marker.id, 'navigable', event.target.checked)}
+                        className="h-4 w-4 rounded accent-amber-400"
+                      />
+                      可導航
+                    </label>
                     <button onClick={() => handleEditFromList(marker.bId, marker.fId, marker.id)} className="inline-flex items-center gap-2 px-3 py-2 text-blue-400 bg-blue-400/10 hover:bg-blue-400/20 rounded-lg transition-colors text-sm">
                       <Edit className="w-4 h-4" />編輯
                     </button>
@@ -1588,7 +1854,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             </div>
             <div className="hidden md:block bg-slate-900 border border-slate-800 rounded-xl shadow-xl overflow-hidden">
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm text-slate-300 min-w-[900px]">
+                <table className="w-full text-left text-sm text-slate-300 min-w-[980px]">
                   <thead className="bg-slate-950/80 border-b border-slate-800 text-slate-400 whitespace-nowrap">
                     <tr>
                       <th className="px-4 py-4 font-semibold w-24">所在位置</th>
@@ -1596,6 +1862,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                       <th className="px-4 py-4 font-semibold w-28">代號 & 類型</th>
                       <th className="px-4 py-4 font-semibold">標題 & 描述</th>
                       <th className="px-4 py-4 font-semibold w-28">啟用狀態</th>
+                      <th className="px-4 py-4 font-semibold w-28">前台導航</th>
                       <th className="px-4 py-4 font-semibold w-36">測試狀態</th>
                       <th className="px-4 py-4 font-semibold w-24 text-right">操作</th>
                     </tr>
@@ -1626,6 +1893,17 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                           <td className="px-4 py-4 whitespace-nowrap">
                             {marker.enabled ? <span className="px-2.5 py-1 bg-green-500/10 text-green-400 border border-green-500/20 rounded text-xs font-medium">已啟用</span> : <span className="px-2.5 py-1 bg-slate-800 text-slate-400 border border-slate-700 rounded text-xs font-medium">已停用</span>}
                           </td>
+                          <td className="px-4 py-4 whitespace-nowrap">
+                            <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-bold text-amber-300">
+                              <input
+                                type="checkbox"
+                                checked={marker.navigable !== false}
+                                onChange={(event) => handleMarkerUpdate(marker.id, 'navigable', event.target.checked)}
+                                className="h-4 w-4 rounded accent-amber-400"
+                              />
+                              {marker.navigable !== false ? '可選擇' : '不顯示'}
+                            </label>
+                          </td>
                           <td className="px-4 py-4 whitespace-nowrap"><StatusBadge status={marker.recognitionStatus} /></td>
                           <td className="px-4 py-4 text-right">
                             <button onClick={() => handleEditFromList(marker.bId, marker.fId, marker.id)} className="p-2 text-blue-400 hover:bg-blue-400/10 rounded transition-colors" title="前往此樓層編輯"><Edit className="w-4 h-4" /></button>
@@ -1653,7 +1931,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             <button className="md:hidden mr-3 text-slate-400 hover:text-white shrink-0" onClick={() => setIsMobileMenuOpen(true)}><Menu className="w-6 h-6" /></button>
             <h2 className="text-xl md:text-2xl font-bold text-slate-200 flex items-center"><Settings className="mr-2 md:mr-3 text-cyan-400" /> 系統設定</h2>
           </div>
-          <p className="text-slate-500 text-xs md:text-sm">匯出目前 AR 導引資料，包含大樓、樓層、平面圖、點位、路徑與設定資料。</p>
+          <p className="text-slate-500 text-xs md:text-sm">設定目前專案的名稱、歡迎頁與 AR 導引參數；儲存後會跟著專案同步到雲端。</p>
         </div>
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 md:p-6 shadow-lg">
           <h3 className="text-base md:text-lg font-bold text-slate-300 mb-4 md:mb-6 flex items-center"><HardDrive className="w-5 h-5 mr-2 text-blue-400" /> 基礎環境參數</h3>
@@ -1665,6 +1943,70 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             <div className="pt-2 border-t border-slate-800">
               <label className="block text-xs md:text-sm font-medium text-slate-400 mb-1.5 mt-2">防抖強度預設值 (Lerp Factor)</label>
               <input type="range" min="5" max="50" value={systemConfig.lerpFactor} onChange={(e) => setSystemConfig({...systemConfig, lerpFactor: parseInt(e.target.value)})} className="w-full accent-cyan-500" />
+            </div>
+          </div>
+        </div>
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 md:p-6 shadow-lg">
+          <h3 className="text-base md:text-lg font-bold text-slate-300 mb-2 flex items-center"><ImageIcon className="w-5 h-5 mr-2 text-amber-300" /> 歡迎頁設定</h3>
+          <p className="text-xs md:text-sm text-slate-500 mb-5">此設定只套用到目前選擇的專案；民眾選好場域後會先看到這個畫面。</p>
+          <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_230px] gap-5 md:gap-7 items-start">
+            <div className="space-y-5">
+              <div>
+                <label className="block text-xs md:text-sm font-medium text-slate-400 mb-2">歡迎頁封面圖</label>
+                <input type="file" ref={welcomeImageInputRef} onChange={handleWelcomeImageUpload} className="hidden" accept="image/*" />
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" onClick={() => welcomeImageInputRef.current?.click()} className="inline-flex items-center gap-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-200 border border-amber-500/30 px-3 py-2 rounded-lg text-xs font-bold transition-colors">
+                    <Upload className="w-4 h-4" />上傳／更換封面
+                  </button>
+                  {systemConfig.welcomeImageUrl && (
+                    <button type="button" onClick={() => setSystemConfig(prev => ({ ...prev, welcomeImageUrl: null }))} className="inline-flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-3 py-2 rounded-lg text-xs font-bold transition-colors">
+                      <Undo2 className="w-4 h-4" />恢復預設封面
+                    </button>
+                  )}
+                </div>
+                <p className="mt-2 text-[11px] leading-relaxed text-slate-500">建議使用手機直式圖片；上傳後會壓縮並儲存在目前專案資料中。</p>
+              </div>
+              <div>
+                <label className="block text-xs md:text-sm font-medium text-slate-400 mb-1.5">開始按鈕文字</label>
+                <input
+                  type="text"
+                  value={systemConfig.welcomeButtonText || '開始體驗'}
+                  maxLength={8}
+                  onChange={(e) => setSystemConfig(prev => ({ ...prev, welcomeButtonText: e.target.value }))}
+                  className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
+                />
+              </div>
+              <div>
+                <div className="flex items-center justify-between gap-3 mb-1.5">
+                  <label className="text-xs md:text-sm font-medium text-slate-400">按鈕垂直位置</label>
+                  <output className="text-xs font-bold text-cyan-300">{Number(systemConfig.welcomeButtonTop ?? 60)}%</output>
+                </div>
+                <input
+                  type="range"
+                  min="42"
+                  max="76"
+                  step="1"
+                  value={Number(systemConfig.welcomeButtonTop ?? 60)}
+                  onChange={(e) => setSystemConfig(prev => ({ ...prev, welcomeButtonTop: parseInt(e.target.value) }))}
+                  className="w-full accent-cyan-500"
+                />
+              </div>
+            </div>
+            <div className="mx-auto w-[210px]">
+              <div className="relative aspect-[9/16] overflow-hidden rounded-lg border border-slate-700 bg-[#f4ecdf] shadow-xl">
+                <img
+                  src={systemConfig.welcomeImageUrl || './assets/ar-v3/welcome-portal.png'}
+                  alt="歡迎頁預覽"
+                  className="absolute inset-0 w-full h-full object-cover object-top"
+                />
+                <div
+                  className="absolute left-1/2 flex h-[58px] w-[58px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-[3px] border-white/90 bg-blue-600 px-1 text-center text-[11px] font-black leading-tight text-white shadow-lg"
+                  style={{ top: `${Number(systemConfig.welcomeButtonTop ?? 60)}%` }}
+                >
+                  {systemConfig.welcomeButtonText || '開始體驗'}
+                </div>
+              </div>
+              <p className="mt-2 text-center text-[11px] text-slate-500">歡迎頁預覽</p>
             </div>
           </div>
         </div>
@@ -1820,7 +2162,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               title="從雲端載入已上架的 AR 資料"
             >
               <Download className="w-5 h-5" />
-              <span>載入雲端</span>
+              <span className="md:hidden">載入</span>
+              <span className="hidden md:inline">載入雲端</span>
             </button>
             <button
               onClick={saveActiveProject}
@@ -1828,30 +2171,50 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               title="把目前這台裝置的 AR 資料同步到雲端"
             >
               <HardDrive className="w-5 h-5" />
-              <span>同步雲端</span>
+              <span className="md:hidden">同步</span>
+              <span className="hidden md:inline">同步雲端</span>
             </button>
             <button
-              onClick={() => { if (!currentFloor?.imageUrl) return; setIsNavTestMode(!isNavTestMode); setIsPathMode(false); setIsToggleShaftMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setHoverPos(null); setNavTestPoints([]); setNavTestPath([]); }}
-              disabled={!currentFloor?.imageUrl}
+              onClick={exportJSON}
+              className="flex shrink-0 items-center justify-center gap-2 h-10 px-3 rounded-xl transition-all shadow-lg font-bold text-xs bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30"
+              title="下載目前專案的 AR JSON 配置檔"
+            >
+              <Download className="w-5 h-5" />
+              <span className="md:hidden">JSON</span>
+              <span className="hidden md:inline">下載JSON</span>
+            </button>
+            <button
+              onClick={requestClearCurrentFloorDrawing}
+              disabled={!currentFloor || currentMarkers.length + currentWaypoints.length + currentEdges.length === 0}
+              className="flex shrink-0 items-center justify-center gap-2 h-10 px-3 rounded-xl transition-all shadow-lg font-bold text-xs bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/30 disabled:opacity-40 disabled:cursor-not-allowed"
+              title="清除目前樓層的 AR 點位、路網節點與連線，保留平面圖"
+            >
+              <Trash2 className="w-5 h-5" />
+              <span className="md:hidden">清除</span>
+              <span className="hidden md:inline">清除本層</span>
+            </button>
+            <button
+              onClick={() => { if (!hasCurrentFloorPlan) return; setIsNavTestMode(!isNavTestMode); setIsPathMode(false); setIsToggleShaftMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setHoverPos(null); setNavTestPoints([]); setNavTestPath([]); }}
+              disabled={!hasCurrentFloorPlan}
               className={`flex shrink-0 items-center justify-center gap-2 h-10 px-3 rounded-xl transition-all shadow-lg font-bold text-xs ${isNavTestMode ? 'bg-blue-500 text-white shadow-[0_0_15px_rgba(59,130,246,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-blue-400 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed'}`}
               title="路網分析測試"
             >
               {isNavTestMode ? <X className="w-5 h-5" /> : <Activity className="w-5 h-5" />}
               <span>路網測試</span>
             </button>
-            {currentFloor?.imageUrl && (
+            {hasCurrentFloorPlan && (
               <>
                 <div className="hidden md:block w-6 h-px bg-slate-700 mx-auto my-0.5"></div>
-                <button onClick={() => { setIsToggleShaftMode(!isToggleShaftMode); setIsPathMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isToggleShaftMode ? 'bg-green-500 text-white shadow-[0_0_15px_rgba(34,197,94,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-green-400 hover:bg-slate-800'}`} title="指定跨樓層轉折點 (點擊節點切換)">
+                <button onClick={() => { setIsToggleShaftMode(!isToggleShaftMode); setIsPathMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setDraggingId(null); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isToggleShaftMode ? 'bg-green-500 text-white shadow-[0_0_15px_rgba(34,197,94,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-green-400 hover:bg-slate-800'}`} title="指定跨樓層轉折點 (點擊節點切換)">
                   {isToggleShaftMode ? <X className="w-5 h-5" /> : <ArrowUpDown className="w-5 h-5" />}
                 </button>
-                <button onClick={() => { setIsPathMode(!isPathMode); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isPathMode ? 'bg-orange-500 text-white shadow-[0_0_15px_rgba(249,115,22,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-orange-400 hover:bg-slate-800'}`} title="路徑建置 (一般轉折點與連線)">
+                <button onClick={() => { setIsPathMode(!isPathMode); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setDraggingId(null); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isPathMode ? 'bg-orange-500 text-white shadow-[0_0_15px_rgba(249,115,22,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-orange-400 hover:bg-slate-800'}`} title="路徑建置與節點編輯">
                   {isPathMode ? <X className="w-5 h-5" /> : <Route className="w-5 h-5" />}
                 </button>
                 <button onClick={() => { setIsMeasuring(!isMeasuring); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsPathMode(false); setMeasurePoints([]); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isMeasuring ? 'bg-purple-500 text-white shadow-[0_0_15px_rgba(168,85,247,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-purple-400 hover:bg-slate-800'}`} title="尺規量測">
                   {isMeasuring ? <X className="w-5 h-5" /> : <Ruler className="w-5 h-5" />}
                 </button>
-                <button onClick={() => { setIsAddMode(!isAddMode); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsMeasuring(false); setIsPathMode(false); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isAddMode ? 'bg-cyan-500 text-slate-950 shadow-[0_0_15px_rgba(6,182,212,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-cyan-400 hover:bg-slate-800'}`} title="新增 AR 點位">
+                <button onClick={() => { setIsAddMode(!isAddMode); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsMeasuring(false); setIsPathMode(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setDraggingId(null); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isAddMode ? 'bg-cyan-500 text-slate-950 shadow-[0_0_15px_rgba(6,182,212,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-cyan-400 hover:bg-slate-800'}`} title="AR 點位建置與編輯">
                   {isAddMode ? <X className="w-5 h-5" /> : <MapPin className="w-5 h-5" />}
                 </button>
                 <button onClick={() => setBoundsModal({ isOpen: true, blX: currentBounds.blX, blY: currentBounds.blY, trX: currentBounds.trX, trY: currentBounds.trY })} className="flex shrink-0 items-center justify-center w-10 h-10 bg-slate-900/90 backdrop-blur border border-slate-700 text-blue-400 hover:bg-slate-800 rounded-xl transition-all shadow-lg" title="座標與比例尺設定">
@@ -1862,10 +2225,6 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 </button>
               </>
             )}
-            <input type="file" ref={fileInputRef} onChange={handleFloorPlanUpload} className="hidden" accept="image/*" />
-            <button onClick={() => fileInputRef.current.click()} className="flex shrink-0 items-center justify-center w-10 h-10 bg-slate-900/90 backdrop-blur border border-slate-700 text-slate-300 hover:text-white hover:bg-slate-800 rounded-xl transition-all shadow-lg" title="上傳底圖">
-              <Upload className="w-5 h-5" />
-            </button>
           </div>
 
           <div ref={wrapperRef} className={`flex-1 relative overflow-hidden bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-900 to-slate-950 touch-none select-none ${isPathMode ? 'cursor-crosshair' : (isToggleShaftMode ? 'cursor-pointer' : (isAddMode ? 'cursor-crosshair' : (isMeasuring ? 'cursor-crosshair' : (isNavTestMode ? 'cursor-crosshair' : (isPanning ? 'cursor-grabbing' : 'cursor-grab')))))}`} onPointerDown={handleMapPointerDown} onPointerMove={handleMapPointerMove} onPointerUp={handleMapPointerUp} onPointerCancel={handleMapPointerUp}>
@@ -1889,7 +2248,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
                 return (
                   <div className="absolute z-0 pointer-events-none" style={{ left: `${leftRatio * 100}%`, top: `${topRatio * 100}%`, width: `${wRatio * 100}%`, height: `${hRatio * 100}%`, opacity: 0.4 }}>
-                    {refF.imageUrl && <img src={refF.imageUrl} className="w-full h-full object-cover rounded-lg filter grayscale sepia" alt="reference" />}
+                    {(refF.imageUrl || refF.navigationImageUrl) && <img src={refF.imageUrl || refF.navigationImageUrl} className="w-full h-full object-cover rounded-lg filter grayscale sepia" alt="reference" />}
                     {refF.markers.map(m => (
                       <div key={m.id} className="absolute -translate-x-1/2 -translate-y-1/2 flex flex-col items-center" style={{ left: `${m.x * 100}%`, top: `${m.y * 100}%` }}>
                         <div className="w-6 h-6 rounded-full border-2 border-dashed border-cyan-400 bg-cyan-400/20 flex items-center justify-center shadow-[0_0_10px_rgba(34,211,238,0.5)]">
@@ -1901,7 +2260,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 );
               })()}
 
-              {currentFloor?.imageUrl && ( <img id="current-map-image" src={currentFloor.imageUrl} alt="Floor Plan" onLoad={resetMapView} className={`select-none pointer-events-none block max-w-none rounded-lg relative z-10 transition-opacity ${referenceFloorId ? 'opacity-70 mix-blend-screen' : 'opacity-100'}`} /> )}
+              {currentFloorImageUrl && ( <img key={`${activeFloorId}-${floorImagePreviewMode}`} id="current-map-image" src={currentFloorImageUrl} alt={floorImagePreviewMode === 'navigation' ? '有文字導覽圖' : '無文字平面圖'} onLoad={resetMapView} className={`select-none pointer-events-none block max-w-none rounded-lg relative z-10 transition-opacity ${referenceFloorId ? 'opacity-70 mix-blend-screen' : 'opacity-100'}`} /> )}
 
               <svg className="absolute inset-0 w-full h-full z-20 pointer-events-none" style={{ overflow: 'visible' }}>
                 <defs>
@@ -1969,29 +2328,35 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 else if (isSelected) { borderColor = 'border-cyan-400 border-2'; shadow = 'shadow-[0_0_10px_cyan]'; }
 
                 return (
-                  <div key={wp.id} className={`waypoint-pin absolute -translate-x-1/2 -translate-y-1/2 z-30 cursor-pointer ${isSelected ? 'z-40' : ''}`} style={{ left: `${wp.x*100}%`, top: `${wp.y*100}%` }}
+                  <div key={wp.id} className={`waypoint-pin group absolute -translate-x-1/2 -translate-y-1/2 z-30 ${isPathMode || isToggleShaftMode ? 'pointer-events-auto cursor-grab active:cursor-grabbing' : 'pointer-events-none'} ${isSelected ? 'z-40' : ''}`} style={{ left: `${wp.x*100}%`, top: `${wp.y*100}%` }}
                        onPointerDown={(e) => {
                          e.stopPropagation();
                          if (e.button !== 0) return;
-                         if (isPathMode) connectToNode(wp.id);
+                         if (isPathMode) {
+                           setSelectedMarkerId(null); setSelectedWaypointId(wp.id); setDraggingId(wp.id);
+                           nodePointerStartRef.current = { nodeId: wp.id, x: e.clientX, y: e.clientY };
+                           e.currentTarget.setPointerCapture(e.pointerId);
+                         }
                          else if (isToggleShaftMode) {
                            if (!wp.isVerticalShaft) handleToggleVerticalShaft(wp, true, false);
                            setSelectedMarkerId(null); setSelectedWaypointId(wp.id);
                          }
-                         else if (!isNavTestMode && !isMeasuring && !isPanning && !isAddMode) {
-                           setSelectedMarkerId(null); setSelectedWaypointId(wp.id); setDraggingId(wp.id); e.target.setPointerCapture(e.pointerId);
-                         }
                        }}
-                       onPointerUp={(e) => { e.stopPropagation(); e.target.releasePointerCapture(e.pointerId); }}
+                       onPointerUp={(e) => finishNodePointerInteraction(e, wp.id, true)}
+                       onPointerCancel={(e) => finishNodePointerInteraction(e)}
                        onContextMenu={(e) => {
                          e.preventDefault();
                          if (isPathMode) { deleteNode(wp.id); }
                          else if (isToggleShaftMode) { if(wp.isVerticalShaft) handleToggleVerticalShaft(wp, false, false); }
-                         else if (!isNavTestMode && !isMeasuring && !isAddMode) { setSelectedMarkerId(null); setSelectedWaypointId(wp.id); }
                        }}>
                     <div className={`rounded-full transition-all flex items-center justify-center ${bgColor} ${borderColor} ${shadow}`} style={{ width: `${(isPathStart ? 14 : 10) / Math.max(0.5, mapTransform.scale)}px`, height: `${(isPathStart ? 14 : 10) / Math.max(0.5, mapTransform.scale)}px`, borderWidth: isSelected ? '2px' : '1px' }}>
                         {wp.isVerticalShaft && <ArrowUpDown className={isPathStart ? "text-slate-800" : "text-white"} style={{ width: `${6 / Math.max(0.5, mapTransform.scale)}px`, height: `${6 / Math.max(0.5, mapTransform.scale)}px` }} />}
                     </div>
+                    {wp.guideTitle && (
+                      <div className={`absolute top-full left-1/2 -translate-x-1/2 mt-2 whitespace-nowrap rounded border bg-slate-900 px-2 py-1 text-[10px] shadow-lg pointer-events-none transition-opacity ${isPathMode && (isSelected || isPathStart) ? 'border-orange-400 text-orange-100 opacity-100' : 'border-slate-700 text-slate-300 opacity-0'}`} style={{ transform: `scale(${1 / Math.max(0.5, mapTransform.scale)})`, transformOrigin: 'top center' }}>
+                        {wp.guideTitle}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -2023,25 +2388,31 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 const linkedFloorNames = marker.isVerticalShaft ? currentBuilding?.floors.filter(f => marker.linkedFloorIds?.includes(f.id)).sort((a,b) => getFloorLevel(b.name) - getFloorLevel(a.name)).map(f => f.name).join(', ') : '';
 
                 return (
-                <div key={marker.id} className={`marker-pin absolute -translate-x-1/2 -translate-y-1/2 cursor-grab active:cursor-grabbing group z-50 ${selectedMarkerId === marker.id ? 'z-[60]' : ''} ${pathStartNodeId === marker.id ? 'scale-125' : ''}`} style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%` }}
+                <div key={marker.id} className={`marker-pin absolute -translate-x-1/2 -translate-y-1/2 group z-50 ${isAddMode ? 'pointer-events-auto cursor-grab active:cursor-grabbing' : (isPathMode || isToggleShaftMode ? 'pointer-events-auto cursor-pointer' : 'pointer-events-none')} ${selectedMarkerId === marker.id ? 'z-[60]' : ''} ${pathStartNodeId === marker.id ? 'scale-125' : ''}`} style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%` }}
                      onPointerDown={(e) => {
                        e.stopPropagation();
                        if (e.button !== 0) return;
-                       if(isPathMode) { connectToNode(marker.id); }
+                       if(isPathMode) {
+                         nodePointerStartRef.current = { nodeId: marker.id, x: e.clientX, y: e.clientY };
+                         e.currentTarget.setPointerCapture(e.pointerId);
+                       }
                        else if(isToggleShaftMode) {
                          if (!marker.isVerticalShaft) handleToggleVerticalShaft(marker, true, true);
                          setSelectedWaypointId(null); setSelectedMarkerId(marker.id);
                        }
-                       else if(!isNavTestMode && !isAddMode && !isMeasuring && !isPanning) {
-                         setSelectedWaypointId(null); setDraggingId(marker.id); setSelectedMarkerId(marker.id); e.target.setPointerCapture(e.pointerId);
+                       else if(isAddMode) {
+                         setSelectedWaypointId(null); setDraggingId(marker.id); setSelectedMarkerId(marker.id);
+                         nodePointerStartRef.current = { nodeId: marker.id, x: e.clientX, y: e.clientY };
+                         e.currentTarget.setPointerCapture(e.pointerId);
                        }
                      }}
-                     onPointerUp={(e) => { e.stopPropagation(); e.target.releasePointerCapture(e.pointerId); }}
+                     onPointerUp={(e) => finishNodePointerInteraction(e, marker.id, true)}
+                     onPointerCancel={(e) => finishNodePointerInteraction(e)}
                      onContextMenu={(e) => {
                        e.preventDefault();
                        if (isPathMode) { deleteNode(marker.id); }
                        else if (isToggleShaftMode) { if(marker.isVerticalShaft) handleToggleVerticalShaft(marker, false, true); }
-                       else if (!isNavTestMode && !isMeasuring && !isAddMode) { setSelectedWaypointId(null); setSelectedMarkerId(marker.id); }
+                       else if (isAddMode) { setSelectedWaypointId(null); setSelectedMarkerId(marker.id); }
                      }}>
                   <div className="relative pointer-events-none">
                     <div className={`w-7 h-7 md:w-8 md:h-8 rounded-full flex items-center justify-center border-2 transition-all shadow-lg ${selectedMarkerId === marker.id ? 'bg-cyan-500 border-white text-slate-950 scale-110 shadow-[0_0_15px_rgba(6,182,212,0.8)]' : marker.enabled ? (marker.isVerticalShaft ? 'bg-purple-600 border-purple-400 text-white' : 'bg-slate-800 border-cyan-500/50 text-slate-300 group-hover:border-cyan-400 group-hover:text-cyan-400') : 'bg-slate-900 border-slate-700 text-slate-600 opacity-70'} ${pathStartNodeId === marker.id ? 'border-orange-500 shadow-[0_0_15px_orange]' : ''}`}>
@@ -2049,7 +2420,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                     </div>
                     <div className={`absolute -bottom-1.5 md:-bottom-2 left-1/2 -translate-x-1/2 w-0 h-0 border-l-[5px] border-r-[5px] border-t-[6px] md:border-l-[6px] md:border-r-[6px] md:border-t-[8px] border-l-transparent border-r-transparent transition-all ${selectedMarkerId === marker.id ? 'border-t-white' : marker.enabled ? (marker.isVerticalShaft ? 'border-t-purple-400' : 'border-t-cyan-500/50 group-hover:border-t-cyan-400') : 'border-t-slate-700 opacity-70'} ${pathStartNodeId === marker.id ? 'border-t-orange-500' : ''}`} />
                   </div>
-                  <div className={`absolute top-full left-1/2 -translate-x-1/2 mt-2 md:mt-3 whitespace-nowrap px-1.5 py-0.5 md:px-2 md:py-1 bg-slate-900 border text-[10px] md:text-xs rounded opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity shadow-lg ${selectedMarkerId === marker.id ? 'opacity-100 border-cyan-500 text-cyan-400' : marker.enabled ? 'border-slate-700 text-slate-300' : 'border-slate-800 text-slate-500'}`} style={{ transform: `scale(${1 / Math.max(0.5, mapTransform.scale)})`, transformOrigin: 'top center' }}>
+                  <div className={`absolute top-full left-1/2 -translate-x-1/2 mt-2 md:mt-3 whitespace-nowrap px-1.5 py-0.5 md:px-2 md:py-1 bg-slate-900 border text-[10px] md:text-xs rounded pointer-events-none transition-opacity shadow-lg ${selectedMarkerId === marker.id || (!isAddMode && !isPathMode && !isToggleShaftMode && !isNavTestMode && !isMeasuring) ? 'opacity-100 border-cyan-500/50 text-slate-200' : 'opacity-0 group-hover:opacity-100'} ${marker.enabled ? 'border-slate-700 text-slate-300' : 'border-slate-800 text-slate-500'}`} style={{ transform: `scale(${1 / Math.max(0.5, mapTransform.scale)})`, transformOrigin: 'top center' }}>
                     {marker.title || '未命名'} {marker.isVerticalShaft && <span className="text-purple-400 block mt-0.5">(貫通: {linkedFloorNames})</span>}
                   </div>
                 </div>
@@ -2070,8 +2441,18 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-orange-500/95 text-white px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(249,115,22,0.5)] flex items-center pointer-events-auto z-50">
                 <MousePointer2 className="w-5 h-5 mr-3 shrink-0" />
                 <div className="flex flex-col">
-                  <span>點擊空處建立轉折點與連線路網 (AR 標籤不須強迫連線)。</span>
-                  <span className="text-orange-200 font-normal">點擊「目前發光點」或按 ESC 中斷畫線。右鍵刪除節點。</span>
+                  <span>路徑建置模式：點擊空處建立節點，拖曳既有節點可調整位置。</span>
+                  <span className="text-orange-200 font-normal">點擊節點可編輯識別照片與轉角提示；右鍵刪除節點。</span>
+                </div>
+              </div>
+            )}
+
+            {isAddMode && (
+              <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-cyan-500/95 text-slate-950 px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(6,182,212,0.45)] flex items-center pointer-events-auto z-50">
+                <MapPin className="w-5 h-5 mr-3 shrink-0" />
+                <div className="flex flex-col">
+                  <span>AR 點位編輯模式：點擊空處新增點位。</span>
+                  <span className="font-normal opacity-80">點擊或拖曳既有點位可調整內容與位置。</span>
                 </div>
               </div>
             )}
@@ -2086,22 +2467,61 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               </div>
             )}
 
-            {!currentFloor?.imageUrl && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-center text-slate-500 pointer-events-none px-4"><Map className="w-12 h-12 mx-auto mb-3 opacity-50 text-cyan-500/30" /><p className="text-base md:text-lg mb-1">尚未載入 {currentBuilding?.name} - {currentFloor?.name} 的平面圖</p><p className="text-xs">點擊右側工具列「上傳底圖」</p></div>
+            {!currentFloorImageUrl && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center text-slate-500 pointer-events-none px-4 pb-28 md:pb-16">
+                <Map className="w-12 h-12 mx-auto mb-3 opacity-50 text-cyan-500/30" />
+                <p className="text-base md:text-lg mb-1">尚未上傳{floorImagePreviewMode === 'navigation' ? '有文字導覽圖' : '無文字平面圖'}</p>
+                <p className="text-xs">請使用左下角的「上傳{floorImagePreviewMode === 'navigation' ? '有字圖' : '無字圖'}」按鈕</p>
+              </div>
             )}
 
-            {currentFloor?.imageUrl && scaleBarWidthPx > 0 && (
+            {currentFloor && (
+              <div className="absolute bottom-20 left-3 z-50 flex max-w-[calc(100%-5.25rem)] flex-wrap items-center gap-2 rounded-xl border border-slate-700 bg-slate-950/90 p-2 shadow-xl backdrop-blur-md md:bottom-4 md:left-4 md:max-w-[calc(100%-12rem)]" aria-label="平面圖顯示與上傳">
+                <div className="flex h-10 shrink-0 items-center rounded-lg border border-slate-700 bg-slate-900 p-1" role="group" aria-label="切換平面圖預覽">
+                  <button
+                    type="button"
+                    onClick={() => setFloorImagePreviewMode('overview')}
+                    aria-pressed={floorImagePreviewMode === 'overview'}
+                    className={`h-8 min-w-12 rounded-md px-2 text-xs font-bold transition-colors ${floorImagePreviewMode === 'overview' ? 'bg-cyan-500 text-slate-950' : 'text-slate-300 hover:bg-slate-800'}`}
+                    title={currentFloor.imageUrl ? '顯示無文字平面圖' : '尚未上傳無文字平面圖'}
+                  >
+                    無字{!currentFloor.imageUrl && <span className="ml-1 text-[9px] font-medium opacity-70">未上傳</span>}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFloorImagePreviewMode('navigation')}
+                    aria-pressed={floorImagePreviewMode === 'navigation'}
+                    className={`h-8 min-w-12 rounded-md px-2 text-xs font-bold transition-colors ${floorImagePreviewMode === 'navigation' ? 'bg-amber-400 text-slate-950' : 'text-slate-300 hover:bg-slate-800'}`}
+                    title={currentFloor.navigationImageUrl ? '顯示有文字導覽圖' : '尚未上傳有文字導覽圖'}
+                  >
+                    有字{!currentFloor.navigationImageUrl && <span className="ml-1 text-[9px] font-medium opacity-70">未上傳</span>}
+                  </button>
+                </div>
+                <input type="file" ref={fileInputRef} onChange={handleFloorPlanUpload} className="hidden" accept="image/*" />
+                <button type="button" onClick={() => fileInputRef.current?.click()} className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-cyan-500/40 bg-slate-900 px-2.5 text-cyan-200 shadow-lg transition-colors hover:bg-slate-800 hover:text-white" title="上傳無文字平面圖，供目的地地圖與大頭針標籤使用">
+                  <Upload className="h-4 w-4" />
+                  <span className="whitespace-nowrap text-[11px] font-bold">上傳無字圖</span>
+                </button>
+                <input type="file" ref={navigationImageInputRef} onChange={handleNavigationFloorPlanUpload} className="hidden" accept="image/*" />
+                <button type="button" onClick={() => navigationImageInputRef.current?.click()} className="flex h-10 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-amber-500/40 bg-slate-900 px-2.5 text-amber-200 shadow-lg transition-colors hover:bg-slate-800 hover:text-white" title="上傳有文字導覽圖，供路徑導覽頁使用">
+                  <ImageIcon className="h-4 w-4" />
+                  <span className="whitespace-nowrap text-[11px] font-bold">上傳有字圖</span>
+                </button>
+              </div>
+            )}
+
+            {currentFloorImageUrl && scaleBarWidthPx > 0 && (
               <div onClick={() => setBoundsModal({ isOpen: true, blX: currentBounds.blX, blY: currentBounds.blY, trX: currentBounds.trX, trY: currentBounds.trY })} className="absolute top-20 right-3 md:top-4 md:right-20 z-40 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2.5 rounded-lg shadow-lg cursor-pointer hover:bg-slate-800 transition-colors" title="點擊校正全域座標">
                 <span className="text-[10px] text-cyan-400 font-bold mb-1.5 flex items-center"><Target className="w-3 h-3 mr-1"/> 比例尺: {scaleBarMeters} m</span>
                 <div className="h-1.5 bg-cyan-500/50 border-x-2 border-cyan-400" style={{ width: `${scaleBarWidthPx}px` }}></div>
               </div>
             )}
 
-            {currentFloor?.imageUrl && (
-              <div className="absolute bottom-28 right-3 md:bottom-4 md:right-4 flex flex-col space-y-2 z-40">
-                <button onClick={() => setMapTransform(prev => ({...prev, scale: Math.min(10, prev.scale * 1.2)}))} className="p-2 bg-slate-900/90 backdrop-blur border border-slate-700 hover:bg-slate-800 text-slate-200 rounded-xl shadow-lg transition-colors"><ZoomIn className="w-5 h-5"/></button>
-                <button onClick={() => setMapTransform(prev => ({...prev, scale: Math.max(0.1, prev.scale / 1.2)}))} className="p-2 bg-slate-900/90 backdrop-blur border border-slate-700 hover:bg-slate-800 text-slate-200 rounded-xl shadow-lg transition-colors"><ZoomOut className="w-5 h-5"/></button>
-                <button onClick={resetMapView} className="p-2 bg-slate-900/90 backdrop-blur border border-slate-700 hover:bg-slate-800 text-slate-200 rounded-xl shadow-lg transition-colors mt-1"><Maximize className="w-5 h-5"/></button>
+            {currentFloorImageUrl && (
+              <div className="absolute bottom-20 right-3 z-50 flex flex-col space-y-2 md:bottom-4 md:right-32">
+                <button type="button" onClick={() => setMapTransform(prev => ({...prev, scale: Math.min(10, prev.scale * 1.2)}))} className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-slate-900/95 text-slate-100 shadow-lg backdrop-blur transition-colors hover:bg-slate-800" title="放大平面圖" aria-label="放大平面圖"><ZoomIn className="h-5 w-5"/></button>
+                <button type="button" onClick={() => setMapTransform(prev => ({...prev, scale: Math.max(0.1, prev.scale / 1.2)}))} className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-slate-900/95 text-slate-100 shadow-lg backdrop-blur transition-colors hover:bg-slate-800" title="縮小平面圖" aria-label="縮小平面圖"><ZoomOut className="h-5 w-5"/></button>
+                <button type="button" onClick={resetMapView} className="mt-1 flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-slate-900/95 text-slate-100 shadow-lg backdrop-blur transition-colors hover:bg-slate-800" title="顯示完整平面圖" aria-label="顯示完整平面圖"><Maximize className="h-5 w-5"/></button>
               </div>
             )}
           </div>
@@ -2151,7 +2571,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             <div className="flex items-start justify-between gap-4 mb-5">
               <div>
                 <h3 className="text-lg font-bold text-amber-300">選擇要載入的雲端專案</h3>
-                <p className="text-xs text-slate-400 mt-1">載入後會覆蓋目前後台顯示的本機暫存，但不會同步上架，除非你再次按「同步雲端」。</p>
+                <p className="text-xs text-slate-400 mt-1">載入後會新增或更新所選專案，其他後台專案會保留；除非再次按「同步雲端」，否則不會變更線上資料。</p>
               </div>
               <button onClick={() => setCloudProjectModal({ isOpen: false, isLoading: false, projects: [], error: '' })} className="text-slate-400 hover:text-white p-1"><X className="w-5 h-5" /></button>
             </div>
@@ -2161,7 +2581,12 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             )}
 
             {!cloudProjectModal.isLoading && cloudProjectModal.error && (
-              <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">{cloudProjectModal.error}</div>
+              <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
+                <p>{cloudProjectModal.error}</p>
+                <button type="button" onClick={openCloudProjectList} className="mt-3 inline-flex items-center gap-2 rounded-lg border border-red-300/30 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-100 transition-colors hover:bg-red-500/20">
+                  <RefreshCw className="h-4 w-4" />重新整理列表
+                </button>
+              </div>
             )}
 
             {!cloudProjectModal.isLoading && !cloudProjectModal.error && (
@@ -2307,6 +2732,16 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                     <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-cyan-500 peer-checked:after:bg-white shadow-inner"></div>
                   </label>
                 </div>
+                <div className="flex items-center justify-between pt-1">
+                  <div>
+                    <label className="text-xs font-medium text-amber-300 cursor-pointer" htmlFor="toggle-navigable-m">顯示於前台導航選單</label>
+                    <p className="mt-1 text-[10px] text-slate-500">開啟後，此點位可作為前台的起點或終點。</p>
+                  </div>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="toggle-navigable-m" checked={selectedMarker.navigable !== false} onChange={(e) => handleMarkerUpdate(selectedMarker.id, 'navigable', e.target.checked)} className="sr-only peer" />
+                    <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-400 peer-checked:after:bg-white shadow-inner"></div>
+                  </label>
+                </div>
               </div>
 
               <hr className="border-slate-800" />
@@ -2347,6 +2782,38 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 <div className="flex space-x-3">
                   <div className="flex-1"><label className="block text-[11px] text-slate-400 mb-1">相對 X (%)</label><input type="number" step="0.1" value={+(selectedWaypoint.x * 100).toFixed(1)} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'x', Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)) / 100)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200" /></div>
                   <div className="flex-1"><label className="block text-[11px] text-slate-400 mb-1">相對 Y (%)</label><input type="number" step="0.1" value={+(selectedWaypoint.y * 100).toFixed(1)} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'y', Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)) / 100)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200" /></div>
+                </div>
+
+                <div className="p-3 bg-cyan-950/20 border border-cyan-500/25 rounded-xl space-y-3 mt-4">
+                  <div>
+                    <h3 className="text-xs font-semibold text-cyan-300">路徑節點識別與方向提示</h3>
+                    <p className="mt-1 text-[10px] leading-relaxed text-slate-400">為每個節點上傳現場識別照片並設定面向提示。民眾到達下一轉角時，前台會先顯示這張照片，確認方向後再開始下一段 AR 導引。</p>
+                  </div>
+                  <label className="block">
+                    <span className="block text-[11px] text-slate-400 mb-1">轉角名稱</span>
+                    <input type="text" value={selectedWaypoint.guideTitle || ''} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'guideTitle', e.target.value)} placeholder="例如：一樓中央樓梯前" className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600" />
+                  </label>
+                  <label className="block">
+                    <span className="block text-[11px] text-slate-400 mb-1">面向提示</span>
+                    <textarea rows="3" value={selectedWaypoint.guideInstruction || ''} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'guideInstruction', e.target.value)} placeholder="例如：站在樓梯前，面向左側走廊" className="w-full resize-none bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600" />
+                  </label>
+                  <label className="block">
+                    <span className="block text-[11px] text-slate-400 mb-1">Google Street View 或外部參考網址</span>
+                    <input type="url" value={selectedWaypoint.guideExternalUrl || ''} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'guideExternalUrl', e.target.value)} placeholder="https://..." className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600" />
+                  </label>
+                  <div>
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <span className="text-[11px] text-slate-400">節點識別／方向照片</span>
+                      <div className="flex gap-2">
+                        {selectedWaypoint.guideImageUrl && <button type="button" onClick={() => handleWaypointUpdate(selectedWaypoint.id, 'guideImageUrl', null)} className="text-[10px] text-red-300 bg-red-500/10 px-2.5 py-1.5 rounded border border-red-500/25">移除</button>}
+                        <input type="file" ref={waypointGuideImageInputRef} onChange={handleWaypointGuideImageUpload} className="hidden" accept="image/*" />
+                        <button type="button" onClick={() => waypointGuideImageInputRef.current?.click()} className="text-[10px] text-cyan-200 bg-cyan-500/10 px-2.5 py-1.5 rounded border border-cyan-500/25">上傳/更換</button>
+                      </div>
+                    </div>
+                    <div className="border border-slate-800 bg-slate-950 rounded-xl p-2 flex items-center justify-center min-h-[120px]">
+                      {selectedWaypoint.guideImageUrl ? <img src={selectedWaypoint.guideImageUrl} alt="節點識別與方向參考" className="max-w-full max-h-48 object-contain rounded" /> : <div className="text-center text-slate-600"><ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-50" /><span className="text-xs">尚未上傳節點識別照片</span></div>}
+                    </div>
+                  </div>
                 </div>
 
                 <div className="p-3 bg-slate-950/50 border border-slate-800 rounded-xl space-y-3 mt-4">
