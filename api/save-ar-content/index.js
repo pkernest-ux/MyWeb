@@ -1,6 +1,7 @@
 const repo = process.env.GITHUB_REPO || "pkernest-ux/MyWeb";
 const branch = process.env.GITHUB_BRANCH || "main";
 const path = "ar-data.json";
+const saveContract = "ar-project-collection-v2";
 
 const normalizeCollection = (json) => {
   if (Array.isArray(json?.projects)) {
@@ -44,11 +45,34 @@ module.exports = async function (context, req) {
   }
 
   const body = req.body;
+  const requestContract = req.headers["x-ar-save-contract"];
 
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     context.res = {
       status: 400,
       body: { error: "Invalid AR content payload." }
+    };
+    return;
+  }
+
+  if (requestContract !== saveContract) {
+    context.res = {
+      status: 428,
+      body: { error: "Please reload the AR admin before syncing cloud data." }
+    };
+    return;
+  }
+
+  const payload = body.payload;
+  const expectedProjectIds = Array.from(new Set(
+    (Array.isArray(body.expectedProjectIds) ? body.expectedProjectIds : [])
+      .filter(id => typeof id === "string" && id.trim())
+  ));
+
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    context.res = {
+      status: 400,
+      body: { error: "Invalid AR project payload." }
     };
     return;
   }
@@ -94,14 +118,29 @@ module.exports = async function (context, req) {
     const currentText = Buffer.from(current.content || "", "base64").toString("utf8");
     const currentJson = currentText ? JSON.parse(currentText) : {};
     const collection = normalizeCollection(currentJson);
-    const projectId = body.project?.id;
+    const currentProjectIds = collection.projects
+      .map(item => item?.project?.id)
+      .filter(Boolean);
+    const missingProjectIds = expectedProjectIds.filter(id => !currentProjectIds.includes(id));
+    const projectId = payload.project?.id;
 
     if (!projectId) {
       throw new Error("Missing AR project id.");
     }
 
+    if (missingProjectIds.length > 0) {
+      context.res = {
+        status: 409,
+        body: {
+          error: "雲端專案清單不完整，已停止同步以避免其他專案消失。請重新載入雲端專案後再試一次。",
+          missingProjectIds
+        }
+      };
+      return;
+    }
+
     const nextProjects = collection.projects.filter(item => item?.project?.id !== projectId);
-    nextProjects.push(body);
+    nextProjects.push(payload);
     nextProjects.sort((a, b) => (b?.project?.updatedAt || "").localeCompare(a?.project?.updatedAt || ""));
 
     const nextContent = {
@@ -132,6 +171,7 @@ module.exports = async function (context, req) {
       status: 200,
       body: {
         ok: true,
+        contract: saveContract,
         commit: result.commit?.html_url,
         sourceCommit: headCommitSha,
         projectIds: nextProjects.map(item => item?.project?.id).filter(Boolean)

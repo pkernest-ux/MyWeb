@@ -669,6 +669,25 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const currentWaypoints = currentFloor?.waypoints || [];
   const currentEdges = currentFloor?.edges || [];
   const currentBounds = getFloorBounds(currentFloor);
+  const sortedCurrentFloors = currentBuilding?.floors
+    .slice()
+    .sort((a, b) => getFloorLevel(b.name) - getFloorLevel(a.name)) || [];
+  const activeFloorIndex = sortedCurrentFloors.findIndex(floor => floor.id === activeFloorId);
+  const higherFloor = activeFloorIndex > 0 ? sortedCurrentFloors[activeFloorIndex - 1] : null;
+  const lowerFloor = activeFloorIndex >= 0 && activeFloorIndex < sortedCurrentFloors.length - 1
+    ? sortedCurrentFloors[activeFloorIndex + 1]
+    : null;
+
+  const switchEditingFloor = (floorId) => {
+    if (!floorId || floorId === activeFloorId) return;
+    setSelectedMarkerId(null);
+    setSelectedWaypointId(null);
+    setDraggingId(null);
+    setPathStartNodeId(null);
+    setHoverPos(null);
+    setReferenceFloorId('');
+    setActiveFloorId(floorId);
+  };
 
   const resetMapEditingState = () => {
     setSelectedMarkerId(null);
@@ -1394,10 +1413,28 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     } : project));
 
     try {
+      const cloudListResponse = await fetch(`/api/ar-content?list=1&ts=${Date.now()}`, {
+        cache: 'no-store'
+      });
+      const cloudList = await cloudListResponse.json().catch(() => ({}));
+      if (!cloudListResponse.ok) {
+        throw new Error(cloudList.error || `Cloud project list failed: ${cloudListResponse.status}`);
+      }
+      const expectedProjectIds = Array.from(new Set([
+        ...projects.map(project => project.id),
+        ...(Array.isArray(cloudList.projects)
+          ? cloudList.projects.map(item => item?.project?.id).filter(Boolean)
+          : []),
+        activeProjectId
+      ].filter(Boolean)));
+
       const response = await fetch('/api/save-ar-content', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        headers: {
+          'Content-Type': 'application/json',
+          'X-AR-Save-Contract': 'ar-project-collection-v2'
+        },
+        body: JSON.stringify({ payload, expectedProjectIds })
       });
       const result = await response.json().catch(() => ({}));
 
@@ -1407,7 +1444,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
       localStorage.setItem('arManager_lastCloudSyncAt', payload.project.updatedAt);
 
-      setAlertModal({ isOpen: true, message: `「${payload.project.name}」已儲存到 Web 端。民眾端會透過 /api/ar-content 讀取最新平面圖、AR 點位與路網資料。` });
+      const preservedCount = Array.isArray(result.projectIds) ? result.projectIds.length : expectedProjectIds.length;
+      setAlertModal({ isOpen: true, message: `「${payload.project.name}」已儲存到 Web 端，雲端共保留 ${preservedCount} 個專案。民眾端會透過 /api/ar-content 讀取最新資料。` });
     } catch (error) {
       setAlertModal({ isOpen: true, message: `已儲存在後台暫存，但發布到網站失敗：${error.message}` });
     }
@@ -1426,7 +1464,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     setConfirmModal({
       isOpen: true,
       title: '確認同步到雲端',
-      message: `即將把「${systemConfig.projectName || activeProject?.name || 'AR 專案'}」同步到雲端，並覆蓋目前網站使用的 AR 資料。內容包含 ${stats.floorPlans} 張平面圖、${stats.markers} 個 AR 點位、${stats.waypoints} 個路網節點、${stats.edges} 條路線連線。確定要同步嗎？`,
+      message: `即將更新雲端的「${systemConfig.projectName || activeProject?.name || 'AR 專案'}」，其他專案會保留。內容包含 ${stats.floorPlans} 張平面圖、${stats.markers} 個 AR 點位、${stats.waypoints} 個路網節點、${stats.edges} 條路線連線。確定要同步嗎？`,
       onConfirm: performCloudSync
     });
   };
@@ -2136,9 +2174,11 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             {currentBuilding && (
               <div className="flex items-center">
                 <Layers className="w-4 h-4 text-slate-500 mr-2"/>
-                <select className="bg-transparent text-cyan-400 font-bold text-sm focus:outline-none max-w-[100px] truncate" value={activeFloorId} onChange={(e) => setActiveFloorId(e.target.value)}>
-                  {currentBuilding.floors.slice().sort((a,b) => getFloorLevel(b.name) - getFloorLevel(a.name)).map(f => <option key={f.id} value={f.id} className="bg-slate-900">{f.name}</option>)}
+                <button type="button" onClick={() => higherFloor && switchEditingFloor(higherFloor.id)} disabled={!higherFloor} className="p-1 text-cyan-300 hover:bg-cyan-500/10 rounded disabled:text-slate-700 disabled:cursor-not-allowed" title={higherFloor ? `切換到 ${higherFloor.name}` : '已是最高樓層'} aria-label="切換到上一層"><ArrowUp className="w-4 h-4" /></button>
+                <select aria-label="切換目前編輯樓層" title="切換目前編輯樓層" className="bg-slate-950/80 border border-cyan-500/30 rounded-lg px-2 py-1.5 text-cyan-300 font-bold text-sm focus:outline-none max-w-[110px] truncate" value={activeFloorId} onChange={(e) => switchEditingFloor(e.target.value)}>
+                  {sortedCurrentFloors.map(f => <option key={f.id} value={f.id} className="bg-slate-900">{f.name}</option>)}
                 </select>
+                <button type="button" onClick={() => lowerFloor && switchEditingFloor(lowerFloor.id)} disabled={!lowerFloor} className="p-1 text-cyan-300 hover:bg-cyan-500/10 rounded disabled:text-slate-700 disabled:cursor-not-allowed" title={lowerFloor ? `切換到 ${lowerFloor.name}` : '已是最低樓層'} aria-label="切換到下一層"><ArrowDown className="w-4 h-4" /></button>
                 <button onClick={addFloor} className="ml-1 px-1 text-cyan-400 hover:text-cyan-300 transition-colors" title="新增樓層"><Plus className="w-4 h-4"/></button>
                 <button onClick={requestDeleteCurrentFloor} disabled={!currentFloor || currentBuilding.floors.length <= 1} className="px-1 text-red-400 hover:text-red-300 transition-colors disabled:text-slate-700 disabled:cursor-not-allowed" title={currentBuilding.floors.length <= 1 ? '每棟至少保留一個樓層' : '刪除目前樓層'}><Trash2 className="w-4 h-4"/></button>
               </div>
