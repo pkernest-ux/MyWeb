@@ -8,7 +8,7 @@
         "id": "project_1782139426551_fe4cq",
         "name": "Geox",
         "description": "",
-        "updatedAt": "2026-08-17T05:18:06.176Z"
+        "updatedAt": "2026-08-17T05:19:10.573Z"
       },
       "systemConfig": {
         "projectName": "Geox",
@@ -265,8 +265,8 @@
                 },
                 {
                   "id": "wp_1786943764396_7qxhj",
-                  "x": 0.32830530661849927,
-                  "y": 0.4227403593896314,
+                  "x": 0.30474185567839357,
+                  "y": 0.4378497823631466,
                   "isVerticalShaft": false,
                   "shaftId": null,
                   "linkedFloorIds": [],
@@ -278,8 +278,8 @@
                 },
                 {
                   "id": "wp_1786943767962_xabhd",
-                  "x": 0.33367855268944047,
-                  "y": 0.8219643874496647,
+                  "x": 0.34295261230766705,
+                  "y": 0.6760531201977816,
                   "isVerticalShaft": false,
                   "shaftId": null,
                   "linkedFloorIds": [],
