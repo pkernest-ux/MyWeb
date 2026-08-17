@@ -8,7 +8,7 @@
         "id": "project_1782139426551_fe4cq",
         "name": "Geox",
         "description": "",
-        "updatedAt": "2026-08-17T00:56:36.038Z"
+        "updatedAt": "2026-08-17T01:01:29.967Z"
       },
       "systemConfig": {
         "projectName": "Geox",
@@ -85,54 +85,6 @@
                   "y": 0.4879882670665474,
                   "imageUrl": null,
                   "enabled": true,
-                  "recognitionStatus": "untested"
-                },
-                {
-                  "id": "marker_1786928074340_srpq1",
-                  "code": "N6",
-                  "title": "新增辨識點",
-                  "description": "",
-                  "arrowDirection": "none",
-                  "isVerticalShaft": false,
-                  "shaftId": null,
-                  "linkedFloorIds": [],
-                  "x": 0,
-                  "y": 0.9979344913419226,
-                  "imageUrl": null,
-                  "enabled": true,
-                  "navigable": true,
-                  "recognitionStatus": "untested"
-                },
-                {
-                  "id": "marker_1786928081956_1qswx",
-                  "code": "N7",
-                  "title": "新增辨識點",
-                  "description": "",
-                  "arrowDirection": "none",
-                  "isVerticalShaft": false,
-                  "shaftId": null,
-                  "linkedFloorIds": [],
-                  "x": 0,
-                  "y": 0.9907819732923554,
-                  "imageUrl": null,
-                  "enabled": true,
-                  "navigable": true,
-                  "recognitionStatus": "untested"
-                },
-                {
-                  "id": "marker_1786928082940_okx3e",
-                  "code": "N8",
-                  "title": "新增辨識點",
-                  "description": "",
-                  "arrowDirection": "none",
-                  "isVerticalShaft": false,
-                  "shaftId": null,
-                  "linkedFloorIds": [],
-                  "x": 0,
-                  "y": 0.9898824899618794,
-                  "imageUrl": null,
-                  "enabled": true,
-                  "navigable": true,
                   "recognitionStatus": "untested"
                 },
                 {
