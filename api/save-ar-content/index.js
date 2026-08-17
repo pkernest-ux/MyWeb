@@ -54,6 +54,7 @@ module.exports = async function (context, req) {
   }
 
   const apiUrl = `https://api.github.com/repos/${repo}/contents/${path}`;
+  const branchApiUrl = `https://api.github.com/repos/${repo}/branches/${encodeURIComponent(branch)}`;
   const headers = {
     Accept: "application/vnd.github+json",
     Authorization: `Bearer ${token}`,
@@ -64,8 +65,24 @@ module.exports = async function (context, req) {
   };
 
   try {
+    const branchResponse = await fetch(`${branchApiUrl}?t=${Date.now()}`, {
+      headers,
+      cache: "no-store"
+    });
+
+    if (!branchResponse.ok) {
+      throw new Error(`Unable to read GitHub branch head: ${branchResponse.status}`);
+    }
+
+    const branchInfo = await branchResponse.json();
+    const headCommitSha = branchInfo.commit?.sha;
+
+    if (!headCommitSha) {
+      throw new Error("GitHub branch head did not include a commit SHA.");
+    }
+
     const currentResponse = await fetch(
-      `${apiUrl}?ref=${encodeURIComponent(branch)}&t=${Date.now()}`,
+      `${apiUrl}?ref=${encodeURIComponent(headCommitSha)}&t=${Date.now()}`,
       { headers, cache: "no-store" }
     );
 
@@ -115,7 +132,9 @@ module.exports = async function (context, req) {
       status: 200,
       body: {
         ok: true,
-        commit: result.commit?.html_url
+        commit: result.commit?.html_url,
+        sourceCommit: headCommitSha,
+        projectIds: nextProjects.map(item => item?.project?.id).filter(Boolean)
       }
     };
   } catch (error) {
