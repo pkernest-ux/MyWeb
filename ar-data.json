@@ -8,7 +8,7 @@
         "id": "project_1782139426551_fe4cq",
         "name": "Geox",
         "description": "",
-        "updatedAt": "2026-08-16T14:10:46.776Z"
+        "updatedAt": "2026-08-17T00:56:36.038Z"
       },
       "systemConfig": {
         "projectName": "Geox",
@@ -29,7 +29,7 @@
               "markers": [
                 {
                   "id": "marker_1786615184339_8ct1b",
-                  "code": "N1",
+                  "code": "A6",
                   "title": "跨界策略顧問",
                   "description": "",
                   "arrowDirection": "none",
@@ -44,7 +44,7 @@
                 },
                 {
                   "id": "marker_1786615219056_vszrs",
-                  "code": "N2",
+                  "code": "B6",
                   "title": "巨鷗科技",
                   "description": "",
                   "arrowDirection": "none",
@@ -59,7 +59,7 @@
                 },
                 {
                   "id": "marker_1786615263456_tqsga",
-                  "code": "N3",
+                  "code": "WC",
                   "title": "女生廁所",
                   "description": "",
                   "arrowDirection": "none",
@@ -74,7 +74,7 @@
                 },
                 {
                   "id": "marker_1786615276256_aueti",
-                  "code": "N4",
+                  "code": "WC",
                   "title": "男生廁所",
                   "description": "",
                   "arrowDirection": "none",
@@ -88,18 +88,67 @@
                   "recognitionStatus": "untested"
                 },
                 {
-                  "id": "marker_1786615310955_koc0x",
-                  "code": "N5",
+                  "id": "marker_1786928074340_srpq1",
+                  "code": "N6",
+                  "title": "新增辨識點",
+                  "description": "",
+                  "arrowDirection": "none",
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "x": 0,
+                  "y": 0.9979344913419226,
+                  "imageUrl": null,
+                  "enabled": true,
+                  "navigable": true,
+                  "recognitionStatus": "untested"
+                },
+                {
+                  "id": "marker_1786928081956_1qswx",
+                  "code": "N7",
+                  "title": "新增辨識點",
+                  "description": "",
+                  "arrowDirection": "none",
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "x": 0,
+                  "y": 0.9907819732923554,
+                  "imageUrl": null,
+                  "enabled": true,
+                  "navigable": true,
+                  "recognitionStatus": "untested"
+                },
+                {
+                  "id": "marker_1786928082940_okx3e",
+                  "code": "N8",
+                  "title": "新增辨識點",
+                  "description": "",
+                  "arrowDirection": "none",
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "x": 0,
+                  "y": 0.9898824899618794,
+                  "imageUrl": null,
+                  "enabled": true,
+                  "navigable": true,
+                  "recognitionStatus": "untested"
+                },
+                {
+                  "id": "marker_1786928167322_0ldfe",
+                  "code": "T",
                   "title": "電梯",
                   "description": "",
                   "arrowDirection": "none",
                   "isVerticalShaft": false,
                   "shaftId": null,
                   "linkedFloorIds": [],
-                  "x": 0.13096995596672983,
-                  "y": 0.3323585126110496,
+                  "x": 0.12196237054158227,
+                  "y": 0.3782067323668798,
                   "imageUrl": null,
                   "enabled": true,
+                  "navigable": true,
                   "recognitionStatus": "untested"
                 }
               ],
@@ -313,19 +362,6 @@
                   "guideExternalUrl": ""
                 },
                 {
-                  "id": "wp_1786615574152_89lr2",
-                  "x": 0.12877498764669645,
-                  "y": 0.38066540609597,
-                  "isVerticalShaft": false,
-                  "shaftId": null,
-                  "linkedFloorIds": [],
-                  "sourceFloorId": "f_1782139426551",
-                  "guideTitle": "",
-                  "guideInstruction": "",
-                  "guideImageUrl": null,
-                  "guideExternalUrl": ""
-                },
-                {
                   "id": "wp_1786889346471_cw410",
                   "x": 0.24631055156384077,
                   "y": 0.3810830768613472,
@@ -422,16 +458,6 @@
                   "id": "edge_1786615503123_oe25g",
                   "start": "wp_1786615449138_rynna",
                   "end": "wp_1786615503123_z8pgx"
-                },
-                {
-                  "id": "edge_1786615574152_yor9a",
-                  "start": "wp_1786615559801_462ku",
-                  "end": "wp_1786615574152_89lr2"
-                },
-                {
-                  "id": "edge_1786615575435_jx9mw",
-                  "start": "wp_1786615574152_89lr2",
-                  "end": "marker_1786615310955_koc0x"
                 },
                 {
                   "id": "edge_1786889346471_j0wgk",
