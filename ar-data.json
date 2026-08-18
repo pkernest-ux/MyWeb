@@ -8,7 +8,7 @@
         "id": "project_1783262670309_v8ykg",
         "name": "新竹市政府",
         "description": "",
-        "updatedAt": "2026-08-18T03:28:02.739Z"
+        "updatedAt": "2026-08-18T03:29:26.688Z"
       },
       "systemConfig": {
         "projectName": "新竹市政府",
@@ -400,26 +400,8 @@
                 },
                 {
                   "id": "wp_1785912017619_lsz9o",
-                  "x": 0.4794548130568561,
-                  "y": 0.6981948819577583,
-                  "isVerticalShaft": false,
-                  "shaftId": null,
-                  "linkedFloorIds": [],
-                  "sourceFloorId": "f_1783262670309"
-                },
-                {
-                  "id": "wp_1785912030784_9msrb",
-                  "x": 0.27693797033158063,
-                  "y": 0.6981948819577583,
-                  "isVerticalShaft": false,
-                  "shaftId": null,
-                  "linkedFloorIds": [],
-                  "sourceFloorId": "f_1783262670309"
-                },
-                {
-                  "id": "wp_1785912036638_fv63d",
-                  "x": 0.274981285860805,
-                  "y": 0.4091352491453664,
+                  "x": 0.47902453996289013,
+                  "y": 0.7051150494808425,
                   "isVerticalShaft": false,
                   "shaftId": null,
                   "linkedFloorIds": [],
@@ -427,12 +409,38 @@
                 },
                 {
                   "id": "wp_1785912039218_lv4mr",
-                  "x": 0.16247192879120753,
-                  "y": 0.4091352491453664,
+                  "x": 0.16450076033426805,
+                  "y": 0.410877958850027,
                   "isVerticalShaft": false,
                   "shaftId": null,
                   "linkedFloorIds": [],
                   "sourceFloorId": "f_1783262670309"
+                },
+                {
+                  "id": "wp_1787023724021_iymg4",
+                  "x": 0.4984653803764003,
+                  "y": 0.6819921039358575,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309",
+                  "guideTitle": "",
+                  "guideInstruction": "",
+                  "guideImageUrl": null,
+                  "guideExternalUrl": ""
+                },
+                {
+                  "id": "wp_1787023733888_lmoww",
+                  "x": 0.4953542878667392,
+                  "y": 0.41475642207419516,
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "sourceFloorId": "f_1783262670309",
+                  "guideTitle": "",
+                  "guideInstruction": "",
+                  "guideImageUrl": null,
+                  "guideExternalUrl": ""
                 }
               ],
               "edges": [
@@ -442,24 +450,24 @@
                   "end": "wp_1785912017619_lsz9o"
                 },
                 {
-                  "id": "edge_1785912030785_q21kg",
-                  "start": "wp_1785912017619_lsz9o",
-                  "end": "wp_1785912030784_9msrb"
-                },
-                {
-                  "id": "edge_1785912036638_5x5dn",
-                  "start": "wp_1785912030784_9msrb",
-                  "end": "wp_1785912036638_fv63d"
-                },
-                {
-                  "id": "edge_1785912039218_0fxi1",
-                  "start": "wp_1785912036638_fv63d",
-                  "end": "wp_1785912039218_lv4mr"
-                },
-                {
                   "id": "edge_1785912041901_ctpyv",
                   "start": "wp_1785912039218_lv4mr",
                   "end": "marker_1785908911374_zwnlz"
+                },
+                {
+                  "id": "edge_1787023724021_pw2uy",
+                  "start": "wp_1785912017619_lsz9o",
+                  "end": "wp_1787023724021_iymg4"
+                },
+                {
+                  "id": "edge_1787023733888_dj907",
+                  "start": "wp_1787023724021_iymg4",
+                  "end": "wp_1787023733888_lmoww"
+                },
+                {
+                  "id": "edge_1787023742988_7gps3",
+                  "start": "wp_1787023733888_lmoww",
+                  "end": "wp_1785912039218_lv4mr"
                 }
               ],
               "bounds": {
