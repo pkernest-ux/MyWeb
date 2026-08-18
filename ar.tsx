@@ -1422,19 +1422,13 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       }
       // Only cloud-confirmed IDs belong in the preservation contract. Local storage
       // can contain drafts or deleted project IDs that have never existed remotely.
-      const expectedProjectIds = Array.from(new Set(
-        Array.isArray(cloudList.projects)
-          ? cloudList.projects.map(item => item?.project?.id).filter(Boolean)
-          : []
-      ));
-
       const response = await fetch('/api/save-ar-content', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-AR-Save-Contract': 'ar-project-collection-v3'
+          'X-AR-Save-Contract': 'ar-project-collection-v4'
         },
-        body: JSON.stringify({ payload, expectedProjectIds })
+        body: JSON.stringify({ payload })
       });
       const result = await response.json().catch(() => ({}));
 
@@ -1444,7 +1438,9 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
       localStorage.setItem('arManager_lastCloudSyncAt', payload.project.updatedAt);
 
-      const preservedCount = Array.isArray(result.projectIds) ? result.projectIds.length : expectedProjectIds.length;
+      const preservedCount = Array.isArray(result.projectIds)
+        ? result.projectIds.length
+        : (Array.isArray(cloudList.projects) ? cloudList.projects.length : 1);
       setAlertModal({ isOpen: true, message: `「${payload.project.name}」已儲存到 Web 端，雲端共保留 ${preservedCount} 個專案。民眾端會透過 /api/ar-content 讀取最新資料。` });
     } catch (error) {
       setAlertModal({ isOpen: true, message: `已儲存在後台暫存，但發布到網站失敗：${error.message}` });

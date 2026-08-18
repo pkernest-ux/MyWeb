@@ -1,7 +1,7 @@
 const repo = process.env.GITHUB_REPO || "pkernest-ux/MyWeb";
 const branch = process.env.GITHUB_BRANCH || "main";
 const path = "ar-data.json";
-const saveContract = "ar-project-collection-v3";
+const saveContract = "ar-project-collection-v4";
 
 const normalizeCollection = (json) => {
   if (Array.isArray(json?.projects)) {
@@ -64,11 +64,6 @@ module.exports = async function (context, req) {
   }
 
   const payload = body.payload;
-  const expectedProjectIds = Array.from(new Set(
-    (Array.isArray(body.expectedProjectIds) ? body.expectedProjectIds : [])
-      .filter(id => typeof id === "string" && id.trim())
-  ));
-
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     context.res = {
       status: 400,
@@ -121,34 +116,11 @@ module.exports = async function (context, req) {
       return { current, collection: normalizeCollection(currentJson), headCommitSha };
     };
 
-    let { current, collection, headCommitSha } = await readLatestCollection();
-    const currentProjectIds = collection.projects
-      .map(item => item?.project?.id)
-      .filter(Boolean);
-    let missingProjectIds = expectedProjectIds.filter(id => !currentProjectIds.includes(id));
+    const { current, collection, headCommitSha } = await readLatestCollection();
     const projectId = payload.project?.id;
 
     if (!projectId) {
       throw new Error("Missing AR project id.");
-    }
-
-    if (missingProjectIds.length > 0) {
-      ({ current, collection, headCommitSha } = await readLatestCollection());
-      const refreshedProjectIds = collection.projects
-        .map(item => item?.project?.id)
-        .filter(Boolean);
-      missingProjectIds = expectedProjectIds.filter(id => !refreshedProjectIds.includes(id));
-    }
-
-    if (missingProjectIds.length > 0) {
-      context.res = {
-        status: 409,
-        body: {
-          error: "雲端專案清單不完整，已停止同步以避免其他專案消失。請重新載入雲端專案後再試一次。",
-          missingProjectIds
-        }
-      };
-      return;
     }
 
     const nextProjects = collection.projects.filter(item => item?.project?.id !== projectId);
