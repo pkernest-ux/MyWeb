@@ -1,6 +1,36 @@
 {
   "routes": [
     {
+      "route": "/ar-v3.html",
+      "headers": {
+        "Cache-Control": "no-cache, no-store, must-revalidate"
+      }
+    },
+    {
+      "route": "/assets/ar-v3/ar-v3-app.js",
+      "headers": {
+        "Cache-Control": "no-cache, no-store, must-revalidate"
+      }
+    },
+    {
+      "route": "/assets/ar-v3/ar-v3-app.css",
+      "headers": {
+        "Cache-Control": "no-cache, no-store, must-revalidate"
+      }
+    },
+    {
+      "route": "/assets/ar/ar-app.js",
+      "headers": {
+        "Cache-Control": "no-cache, no-store, must-revalidate"
+      }
+    },
+    {
+      "route": "/assets/ar/ar-app.css",
+      "headers": {
+        "Cache-Control": "no-cache, no-store, must-revalidate"
+      }
+    },
+    {
       "route": "/admin-dashboard.html",
       "allowedRoles": ["authenticated"]
     },
