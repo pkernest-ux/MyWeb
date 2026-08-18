@@ -8,7 +8,7 @@
         "id": "project_1783262670309_v8ykg",
         "name": "新竹市政府",
         "description": "",
-        "updatedAt": "2026-08-18T03:33:29.772Z"
+        "updatedAt": "2026-08-18T03:34:13.356Z"
       },
       "systemConfig": {
         "projectName": "新竹市政府",
@@ -40,6 +40,22 @@
                   "y": 0.46371179524462575,
                   "imageUrl": null,
                   "enabled": true,
+                  "recognitionStatus": "untested"
+                },
+                {
+                  "id": "marker_1787024035905_m7htc",
+                  "code": "N2",
+                  "title": "大門",
+                  "description": "",
+                  "arrowDirection": "none",
+                  "isVerticalShaft": false,
+                  "shaftId": null,
+                  "linkedFloorIds": [],
+                  "x": 0.48167199913968894,
+                  "y": 0.9025625293163183,
+                  "imageUrl": null,
+                  "enabled": true,
+                  "navigable": true,
                   "recognitionStatus": "untested"
                 }
               ],
