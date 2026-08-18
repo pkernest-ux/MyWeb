@@ -1432,7 +1432,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-AR-Save-Contract': 'ar-project-collection-v2'
+          'X-AR-Save-Contract': 'ar-project-collection-v3'
         },
         body: JSON.stringify({ payload, expectedProjectIds })
       });

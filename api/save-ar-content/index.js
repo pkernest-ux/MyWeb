@@ -1,7 +1,7 @@
 const repo = process.env.GITHUB_REPO || "pkernest-ux/MyWeb";
 const branch = process.env.GITHUB_BRANCH || "main";
 const path = "ar-data.json";
-const saveContract = "ar-project-collection-v2";
+const saveContract = "ar-project-collection-v3";
 
 const normalizeCollection = (json) => {
   if (Array.isArray(json?.projects)) {
@@ -78,7 +78,7 @@ module.exports = async function (context, req) {
   }
 
   const apiUrl = `https://api.github.com/repos/${repo}/contents/${path}`;
-  const branchApiUrl = `https://api.github.com/repos/${repo}/branches/${encodeURIComponent(branch)}`;
+  const refApiUrl = `https://api.github.com/repos/${repo}/git/ref/heads/${branch.split("/").map(encodeURIComponent).join("/")}`;
   const headers = {
     Accept: "application/vnd.github+json",
     Authorization: `Bearer ${token}`,
@@ -89,43 +89,55 @@ module.exports = async function (context, req) {
   };
 
   try {
-    const branchResponse = await fetch(`${branchApiUrl}?t=${Date.now()}`, {
-      headers,
-      cache: "no-store"
-    });
+    const readLatestCollection = async () => {
+      const refResponse = await fetch(`${refApiUrl}?t=${Date.now()}`, {
+        headers,
+        cache: "no-store"
+      });
 
-    if (!branchResponse.ok) {
-      throw new Error(`Unable to read GitHub branch head: ${branchResponse.status}`);
-    }
+      if (!refResponse.ok) {
+        throw new Error(`Unable to read GitHub branch ref: ${refResponse.status}`);
+      }
 
-    const branchInfo = await branchResponse.json();
-    const headCommitSha = branchInfo.commit?.sha;
+      const refInfo = await refResponse.json();
+      const headCommitSha = refInfo.object?.sha;
 
-    if (!headCommitSha) {
-      throw new Error("GitHub branch head did not include a commit SHA.");
-    }
+      if (!headCommitSha) {
+        throw new Error("GitHub branch ref did not include a commit SHA.");
+      }
 
-    const currentResponse = await fetch(
-      `${apiUrl}?ref=${encodeURIComponent(headCommitSha)}&t=${Date.now()}`,
-      { headers, cache: "no-store" }
-    );
+      const currentResponse = await fetch(
+        `${apiUrl}?ref=${encodeURIComponent(headCommitSha)}&t=${Date.now()}`,
+        { headers, cache: "no-store" }
+      );
 
-    if (!currentResponse.ok) {
-      throw new Error(`Unable to read AR content file from GitHub: ${currentResponse.status}`);
-    }
+      if (!currentResponse.ok) {
+        throw new Error(`Unable to read AR content file from GitHub: ${currentResponse.status}`);
+      }
 
-    const current = await currentResponse.json();
-    const currentText = Buffer.from(current.content || "", "base64").toString("utf8");
-    const currentJson = currentText ? JSON.parse(currentText) : {};
-    const collection = normalizeCollection(currentJson);
+      const current = await currentResponse.json();
+      const currentText = Buffer.from(current.content || "", "base64").toString("utf8");
+      const currentJson = currentText ? JSON.parse(currentText) : {};
+      return { current, collection: normalizeCollection(currentJson), headCommitSha };
+    };
+
+    let { current, collection, headCommitSha } = await readLatestCollection();
     const currentProjectIds = collection.projects
       .map(item => item?.project?.id)
       .filter(Boolean);
-    const missingProjectIds = expectedProjectIds.filter(id => !currentProjectIds.includes(id));
+    let missingProjectIds = expectedProjectIds.filter(id => !currentProjectIds.includes(id));
     const projectId = payload.project?.id;
 
     if (!projectId) {
       throw new Error("Missing AR project id.");
+    }
+
+    if (missingProjectIds.length > 0) {
+      ({ current, collection, headCommitSha } = await readLatestCollection());
+      const refreshedProjectIds = collection.projects
+        .map(item => item?.project?.id)
+        .filter(Boolean);
+      missingProjectIds = expectedProjectIds.filter(id => !refreshedProjectIds.includes(id));
     }
 
     if (missingProjectIds.length > 0) {
