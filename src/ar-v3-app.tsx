@@ -86,6 +86,8 @@ const DEFAULT_LABEL_SIZE = 15;
 const AR_TURN_ANGLE_THRESHOLD = 18;
 const AR_SCREEN_UNITS_PER_METER = 2.4;
 const DEFAULT_GUIDE_IMAGE_URL = "./assets/ar-v3/hsinchu-city-hall-navigation-clean.png";
+const DEFAULT_DESTINATION_LABEL = "產業發展處工商科(工商登記)";
+const DEFAULT_ORIGIN_LABELS = ["大門", "入口", "正門"];
 
 const normalizeProjects = (raw: any) => {
   if (Array.isArray(raw?.projects)) return raw.projects;
@@ -1180,6 +1182,7 @@ export default function ARNavigationV3() {
   const streamRef = useRef<MediaStream | null>(null);
   const headingRef = useRef<number | null>(null);
   const calibrationHeadingRef = useRef<number | null>(null);
+  const defaultsAppliedProjectRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!mapFullscreen) return;
@@ -1276,6 +1279,7 @@ export default function ARNavigationV3() {
     try {
       const selected = await loadProjectOption(option);
 
+      defaultsAppliedProjectRef.current = null;
       setProject(selected);
       setDestinationId(null);
       setOriginSelection("map");
@@ -1295,6 +1299,7 @@ export default function ARNavigationV3() {
   };
 
   const returnToProjectPicker = () => {
+    defaultsAppliedProjectRef.current = null;
     setProject(null);
     setDestinationId(null);
     setOriginSelection("map");
@@ -1352,6 +1357,42 @@ export default function ARNavigationV3() {
         ),
     [graph],
   );
+  const defaultDestination = useMemo(
+    () => navigableMarkers.find((node) => nodeLabel(node).trim() === DEFAULT_DESTINATION_LABEL) || null,
+    [navigableMarkers],
+  );
+  const defaultOrigin = useMemo(() => {
+    if (!defaultDestination) return null;
+
+    const namedOrigin = navigableMarkers.find((node) =>
+      DEFAULT_ORIGIN_LABELS.some((label) => nodeLabel(node).trim().includes(label)),
+    );
+    if (namedOrigin) return namedOrigin;
+
+    return (Object.values(graph.nodes) as NodeData[])
+      .filter(
+        (node) =>
+          node.id !== defaultDestination.id &&
+          Object.keys(graph.adjacency[node.id] || {}).length === 1,
+      )
+      .map((node) => {
+        const path = shortestPath(graph, node.id, defaultDestination.id);
+        return {
+          node,
+          distance: routeLength(path.map((id) => graph.nodes[id]).filter(Boolean)),
+          connected: path.length >= 2,
+        };
+      })
+      .filter((candidate) => candidate.connected)
+      .sort((a, b) => b.distance - a.distance)[0]?.node || null;
+  }, [defaultDestination, graph, navigableMarkers]);
+  const originOptions = useMemo(() => {
+    const options = navigableMarkers.map((node) => ({ node, label: nodeLabel(node) }));
+    if (defaultOrigin && !options.some((option) => option.node.id === defaultOrigin.id)) {
+      options.unshift({ node: defaultOrigin, label: "大門" });
+    }
+    return options;
+  }, [defaultOrigin, navigableMarkers]);
   const visibleFloors = graph.floors;
 
   useEffect(() => {
@@ -1360,6 +1401,29 @@ export default function ARNavigationV3() {
       setSelectedFloorId(visibleFloors[0].id);
     }
   }, [selectedFloorId, visibleFloors]);
+
+  useEffect(() => {
+    const projectId = project?.project?.id;
+    if (
+      !projectId ||
+      defaultsAppliedProjectRef.current === projectId ||
+      !defaultOrigin ||
+      !defaultDestination
+    ) return;
+
+    defaultsAppliedProjectRef.current = projectId;
+    setDestinationId(defaultDestination.id);
+    setOriginSelection(defaultOrigin.id);
+    setOrigin({
+      floorId: defaultOrigin.fId,
+      x: defaultOrigin.x,
+      y: defaultOrigin.y,
+      physX: defaultOrigin.physX,
+      physY: defaultOrigin.physY,
+      snapId: defaultOrigin.id,
+    });
+    setSelectedFloorId(defaultOrigin.fId);
+  }, [defaultDestination, defaultOrigin, project]);
 
   const selectedFloor = graph.floors.find((floor) => floor.id === selectedFloorId) || visibleFloors[0];
   const destination = destinationId ? graph.nodes[destinationId] : null;
@@ -2128,9 +2192,9 @@ export default function ARNavigationV3() {
             <span><LocateFixed aria-hidden="true" />起點</span>
             <select value={originSelection} onChange={(event) => selectOriginMarker(event.target.value)}>
               <option value="map">直接點擊地圖位置</option>
-              {navigableMarkers.map((marker) => (
-                <option key={`origin-${marker.id}`} value={marker.id}>
-                  {marker.fName} · {nodeLabel(marker)}
+              {originOptions.map(({ node, label }) => (
+                <option key={`origin-${node.id}`} value={node.id}>
+                  {node.fName} · {label}
                 </option>
               ))}
             </select>
