@@ -1420,13 +1420,13 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       if (!cloudListResponse.ok) {
         throw new Error(cloudList.error || `Cloud project list failed: ${cloudListResponse.status}`);
       }
-      const expectedProjectIds = Array.from(new Set([
-        ...projects.map(project => project.id),
-        ...(Array.isArray(cloudList.projects)
+      // Only cloud-confirmed IDs belong in the preservation contract. Local storage
+      // can contain drafts or deleted project IDs that have never existed remotely.
+      const expectedProjectIds = Array.from(new Set(
+        Array.isArray(cloudList.projects)
           ? cloudList.projects.map(item => item?.project?.id).filter(Boolean)
-          : []),
-        activeProjectId
-      ].filter(Boolean)));
+          : []
+      ));
 
       const response = await fetch('/api/save-ar-content', {
         method: 'POST',
