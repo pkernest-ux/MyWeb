@@ -1133,7 +1133,7 @@ function WelcomeScreen({ config, onStart }: { config?: any; onStart: () => void 
     <main className="v2-welcome">
       <img
         className="v2-welcome-background"
-        src={config?.welcomeImageUrl || "./assets/ar-v3/welcome-portal-trial.png"}
+        src={config?.welcomeImageUrl || "./assets/ar-v3/welcome-portal-trial-smart.png"}
         alt=""
         aria-hidden="true"
       />
