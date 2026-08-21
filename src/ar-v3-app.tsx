@@ -98,17 +98,6 @@ const normalizeProjects = (raw: any) => {
 const projectName = (data: any) =>
   data?.project?.name || data?.systemConfig?.projectName || "未命名導引專案";
 
-const projectPreview = (data: any) => {
-  for (const building of data?.buildings || []) {
-    for (const floor of building?.floors || []) {
-      if (floor?.imageUrl || floor?.navigationImageUrl) {
-        return floor.imageUrl || floor.navigationImageUrl;
-      }
-    }
-  }
-  return "";
-};
-
 const loadProjectOption = async (option: ProjectOption) => {
   let selected = option.localData;
   if (option.source === "cloud") {
@@ -1051,74 +1040,6 @@ function MapPanel({
   );
 }
 
-function ProjectPicker({
-  options,
-  loadingId,
-  error,
-  onSelect,
-  onBack,
-}: {
-  options: ProjectOption[];
-  loadingId: string | null;
-  error: string;
-  onSelect: (option: ProjectOption) => void;
-  onBack?: () => void;
-}) {
-  return (
-    <main className="v2-project-picker">
-      {onBack && (
-        <button type="button" className="v2-project-back" onClick={onBack} aria-label="返回">
-          <ArrowLeft />
-        </button>
-      )}
-      <header>
-        <span>AR 室內導引</span>
-        <h1>選擇導引場域</h1>
-        <p>請選擇這次要瀏覽與測試的場域。</p>
-      </header>
-
-      {error && <div className="v2-project-error">{error}</div>}
-
-      <section className="v2-project-grid" aria-label="可用的導引專案">
-        {options.map((option) => {
-          const preview = projectPreview(option.localData);
-          const stats = option.summary?.stats;
-          const isLoading = loadingId === option.id;
-          return (
-            <button
-              type="button"
-              key={option.id}
-              className="v2-project-card"
-              onClick={() => onSelect(option)}
-              disabled={Boolean(loadingId)}
-            >
-              <div className="v2-project-preview">
-                {preview ? <img src={preview} alt={`${option.name} 平面圖預覽`} /> : <Map aria-hidden="true" />}
-                {isLoading && (
-                  <span className="v2-project-loading">
-                    <RefreshCw className="is-spinning" aria-hidden="true" />
-                    載入中
-                  </span>
-                )}
-              </div>
-              <div className="v2-project-card-body">
-                <span>導引專案</span>
-                <strong>{option.name}</strong>
-                <small>
-                  {stats
-                    ? `${stats.floorPlans} 張平面圖 · ${stats.markers} 個導引點`
-                    : "點選後載入平面圖與路網"}
-                </small>
-              </div>
-              <ChevronRight aria-hidden="true" />
-            </button>
-          );
-        })}
-      </section>
-    </main>
-  );
-}
-
 function WelcomeScreen({ config, onStart }: { config?: any; onStart: () => void }) {
   const buttonText = String(config?.welcomeButtonText || "開始體驗").trim() || "開始體驗";
   const buttonCharacters = Array.from(buttonText);
@@ -1155,9 +1076,6 @@ export default function ARNavigationV3() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [project, setProject] = useState<any>(null);
-  const [projectOptions, setProjectOptions] = useState<ProjectOption[]>([]);
-  const [projectLoadingId, setProjectLoadingId] = useState<string | null>(null);
-  const [projectPickError, setProjectPickError] = useState("");
   const [screen, setScreen] = useState<"destination" | "origin" | "review" | "calibrate" | "navigate">(
     "destination",
   );
@@ -1257,8 +1175,12 @@ export default function ARNavigationV3() {
           throw new Error("雲端尚未建立可用的 AR 專案");
         }
 
+        const preferredOption = options.find((option) => option.name.includes("新竹市政府")) || options[0];
+        const selected = await loadProjectOption(preferredOption);
+
         if (active) {
-          setProjectOptions(options);
+          defaultsAppliedProjectRef.current = null;
+          setProject(selected);
           setLoadError("");
         }
       } catch (error: any) {
@@ -1272,45 +1194,6 @@ export default function ARNavigationV3() {
       active = false;
     };
   }, []);
-
-  const selectProject = async (option: ProjectOption) => {
-    setProjectLoadingId(option.id);
-    setProjectPickError("");
-    try {
-      const selected = await loadProjectOption(option);
-
-      defaultsAppliedProjectRef.current = null;
-      setProject(selected);
-      setDestinationId(null);
-      setOriginSelection("map");
-      setOrigin(null);
-      setSelectedFloorId(null);
-      setReviewStepIndex(0);
-      setGuideImageExpanded(false);
-      setSegmentIndex(0);
-      setCompletedSegmentIndex(0);
-      setScreen("destination");
-      setShowWelcome(true);
-    } catch (error: any) {
-      setProjectPickError(error?.message || "無法載入此導引專案");
-    } finally {
-      setProjectLoadingId(null);
-    }
-  };
-
-  const returnToProjectPicker = () => {
-    defaultsAppliedProjectRef.current = null;
-    setProject(null);
-    setDestinationId(null);
-    setOriginSelection("map");
-    setOrigin(null);
-    setSelectedFloorId(null);
-    setReviewStepIndex(0);
-    setGuideImageExpanded(false);
-    setSegmentIndex(0);
-    setCompletedSegmentIndex(0);
-    setScreen("destination");
-  };
 
   useEffect(() => {
     const onOrientation = (event: DeviceOrientationEvent) => {
@@ -1727,17 +1610,6 @@ export default function ARNavigationV3() {
     );
   }
 
-  if (!project && projectOptions.length > 0) {
-    return (
-      <ProjectPicker
-        options={projectOptions}
-        loadingId={projectLoadingId}
-        error={projectPickError}
-        onSelect={selectProject}
-      />
-    );
-  }
-
   if (loadError || !project) {
     return (
       <main className="v2-loading is-error">
@@ -2140,8 +2012,8 @@ export default function ARNavigationV3() {
       <header className="v2-page-header">
         <button
           type="button"
-          onClick={returnToProjectPicker}
-          aria-label="返回"
+          onClick={() => setShowWelcome(true)}
+          aria-label="返回歡迎頁"
         >
           <ArrowLeft />
         </button>
