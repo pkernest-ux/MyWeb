@@ -8,7 +8,7 @@
         "id": "project_1783262670309_v8ykg",
         "name": "新竹市政府",
         "description": "",
-        "updatedAt": "2026-08-25T10:14:49.962Z"
+        "updatedAt": "2026-08-25T10:16:33.234Z"
       },
       "systemConfig": {
         "projectName": "新竹市政府",
@@ -53,22 +53,6 @@
                   "linkedFloorIds": [],
                   "x": 0.46745609570221847,
                   "y": 0.9606532837778367,
-                  "imageUrl": null,
-                  "enabled": true,
-                  "navigable": true,
-                  "recognitionStatus": "untested"
-                },
-                {
-                  "id": "marker_1787652803363_filg3",
-                  "code": "N3",
-                  "title": "新增辨識點",
-                  "description": "",
-                  "arrowDirection": "none",
-                  "isVerticalShaft": false,
-                  "shaftId": null,
-                  "linkedFloorIds": [],
-                  "x": 0,
-                  "y": 1,
                   "imageUrl": null,
                   "enabled": true,
                   "navigable": true,
@@ -120,19 +104,6 @@
                   "id": "wp_1787023733888_lmoww",
                   "x": 0.49055180072396587,
                   "y": 0.45394859722511005,
-                  "isVerticalShaft": false,
-                  "shaftId": null,
-                  "linkedFloorIds": [],
-                  "sourceFloorId": "f_1783262670309",
-                  "guideTitle": "",
-                  "guideInstruction": "",
-                  "guideImageUrl": null,
-                  "guideExternalUrl": ""
-                },
-                {
-                  "id": "wp_1787023774038_v0j9h",
-                  "x": 0,
-                  "y": 0.9994347531175539,
                   "isVerticalShaft": false,
                   "shaftId": null,
                   "linkedFloorIds": [],
