@@ -1849,6 +1849,24 @@ button:disabled {
   font-weight: 800;
 }
 
+.v3-permission-panel .v3-recognition-note {
+  margin-top: 10px;
+  padding: 9px 10px;
+  border: 1px solid rgba(54, 211, 153, 0.28);
+  border-radius: 7px;
+  background: rgba(54, 211, 153, 0.08);
+  color: #c9ffe5;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+.v3-permission-panel .v3-recognition-note.is-warning {
+  border-color: rgba(247, 201, 72, 0.28);
+  background: rgba(247, 201, 72, 0.08);
+  color: #fff1b5;
+}
+
 .v3-guide-external-link {
   display: inline-flex;
   min-height: 42px;
@@ -1928,6 +1946,150 @@ button:disabled {
   z-index: 1;
   background: rgba(5, 10, 15, 0.22);
   pointer-events: none;
+}
+
+.v3-recognition-canvas {
+  display: none;
+}
+
+.v3-recognition-overlay {
+  position: absolute;
+  z-index: 9;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.v3-recognition-overlay > svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.v3-recognition-overlay polygon {
+  fill: rgba(54, 211, 153, 0.08);
+  stroke: rgba(123, 255, 199, 0.96);
+  stroke-width: 3;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 8px rgba(54, 211, 153, 0.8));
+}
+
+.v3-recognition-frame {
+  position: absolute;
+  top: 42%;
+  left: 50%;
+  width: min(62vw, 250px);
+  aspect-ratio: 4 / 3;
+  transform: translate(-50%, -50%);
+  border: 1px solid rgba(247, 201, 72, 0.16);
+  border-radius: 8px;
+  background: rgba(247, 201, 72, 0.025);
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    opacity 160ms ease;
+}
+
+.v3-recognition-frame i {
+  position: absolute;
+  width: 34px;
+  height: 34px;
+  border-color: #f7c948;
+  border-style: solid;
+  filter: drop-shadow(0 0 5px rgba(247, 201, 72, 0.72));
+}
+
+.v3-recognition-frame i:nth-child(1) {
+  top: -2px;
+  left: -2px;
+  border-width: 4px 0 0 4px;
+  border-radius: 8px 0 0;
+}
+
+.v3-recognition-frame i:nth-child(2) {
+  top: -2px;
+  right: -2px;
+  border-width: 4px 4px 0 0;
+  border-radius: 0 8px 0 0;
+}
+
+.v3-recognition-frame i:nth-child(3) {
+  right: -2px;
+  bottom: -2px;
+  border-width: 0 4px 4px 0;
+  border-radius: 0 0 8px;
+}
+
+.v3-recognition-frame i:nth-child(4) {
+  bottom: -2px;
+  left: -2px;
+  border-width: 0 0 4px 4px;
+  border-radius: 0 0 0 8px;
+}
+
+.v3-recognition-status {
+  position: absolute;
+  top: calc(42% + min(24vw, 102px));
+  left: 50%;
+  display: flex;
+  max-width: min(76vw, 330px);
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 12px;
+  transform: translateX(-50%);
+  border: 1px solid rgba(247, 201, 72, 0.42);
+  border-radius: 999px;
+  background: rgba(7, 17, 26, 0.82);
+  color: #fff1b5;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.24);
+  text-align: center;
+  backdrop-filter: blur(10px);
+}
+
+.v3-recognition-status svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.v3-recognition-status strong {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.v3-recognition-overlay.is-locked .v3-recognition-frame {
+  border-color: rgba(123, 255, 199, 0.26);
+  box-shadow: 0 0 0 3px rgba(54, 211, 153, 0.06);
+}
+
+.v3-recognition-overlay.is-locked .v3-recognition-frame i {
+  border-color: #7bffc7;
+  filter: drop-shadow(0 0 5px rgba(54, 211, 153, 0.78));
+}
+
+.v3-recognition-overlay.is-locked .v3-recognition-status {
+  border-color: rgba(54, 211, 153, 0.58);
+  color: #c9ffe5;
+}
+
+.v3-recognition-overlay.is-lost .v3-recognition-frame,
+.v3-recognition-overlay.is-error .v3-recognition-frame {
+  border-color: rgba(255, 129, 112, 0.35);
+}
+
+.v3-recognition-overlay.is-lost .v3-recognition-frame i,
+.v3-recognition-overlay.is-error .v3-recognition-frame i {
+  border-color: #ff917f;
+  filter: drop-shadow(0 0 5px rgba(255, 92, 72, 0.7));
+}
+
+.v3-recognition-overlay.is-lost .v3-recognition-status,
+.v3-recognition-overlay.is-error .v3-recognition-status {
+  border-color: rgba(255, 129, 112, 0.52);
+  color: #ffd7d0;
 }
 
 .v2-back-float {

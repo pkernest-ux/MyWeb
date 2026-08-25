@@ -2823,7 +2823,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 <div className="p-3 bg-cyan-950/20 border border-cyan-500/25 rounded-xl space-y-3 mt-4">
                   <div>
                     <h3 className="text-xs font-semibold text-cyan-300">路徑節點識別與方向提示</h3>
-                    <p className="mt-1 text-[10px] leading-relaxed text-slate-400">為每個節點上傳現場識別照片並設定面向提示。民眾到達下一轉角時，前台會先顯示這張照片，確認方向後再開始下一段 AR 導引。</p>
+                    <p className="mt-1 text-[10px] leading-relaxed text-slate-400">為每個節點上傳現場識別照片並設定面向提示。V3 會在辨識成功時立即校正下一路段方位；鏡頭離開照片後會隱藏 AR 路線，重新對準即可恢復。</p>
                   </div>
                   <label className="block">
                     <span className="block text-[11px] text-slate-400 mb-1">轉角名稱</span>
@@ -2849,6 +2849,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                     <div className="border border-slate-800 bg-slate-950 rounded-xl p-2 flex items-center justify-center min-h-[120px]">
                       {selectedWaypoint.guideImageUrl ? <img src={selectedWaypoint.guideImageUrl} alt="節點識別與方向參考" className="max-w-full max-h-48 object-contain rounded" /> : <div className="text-center text-slate-600"><ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-50" /><span className="text-xs">尚未上傳節點識別照片</span></div>}
                     </div>
+                    <p className="mt-2 text-[10px] leading-relaxed text-cyan-200/70">拍攝時請站在節點並面向下一路段。建議使用清楚、有固定紋理且少反光的橫式照片，避免只拍白牆、玻璃或會移動的物件。</p>
                   </div>
                 </div>
 

@@ -18,8 +18,12 @@ import {
   Plus,
   RefreshCw,
   ScanLine,
-  X,
 } from "lucide-react";
+import {
+  OrbImageTracker,
+  type RecognitionDetection,
+  type RecognitionPoint,
+} from "./ar-v3-image-recognition";
 
 type NodeData = {
   id: string;
@@ -81,10 +85,22 @@ type ProjectOption = {
   summary?: any;
 };
 
+type RecognitionStatus =
+  | "disabled"
+  | "loading"
+  | "searching"
+  | "confirming"
+  | "locked"
+  | "lost"
+  | "error";
+
 const clamp = (value: number, min = 0, max = 1) => Math.min(max, Math.max(min, value));
 const DEFAULT_LABEL_SIZE = 15;
 const AR_TURN_ANGLE_THRESHOLD = 18;
 const AR_SCREEN_UNITS_PER_METER = 2.4;
+const RECOGNITION_FRAME_INTERVAL_MS = 120;
+const RECOGNITION_CONFIRMATION_FRAMES = 2;
+const RECOGNITION_LOST_DELAY_MS = 400;
 const DEFAULT_GUIDE_IMAGE_URL = "./assets/ar-v3/hsinchu-city-hall-navigation-clean.png";
 const DEFAULT_DESTINATION_LABEL = "產業發展處工商科(工商登記)";
 const DEFAULT_ORIGIN_LABELS = ["大門", "入口", "正門"];
@@ -383,6 +399,19 @@ const safeExternalUrl = (value: string) => {
     return "";
   }
 };
+
+const smoothRecognitionCorners = (
+  previous: RecognitionPoint[] | null,
+  detection: RecognitionDetection,
+) =>
+  detection.corners.map((point, index) => {
+    const prior = previous?.[index];
+    if (!prior) return point;
+    return {
+      x: prior.x * 0.58 + point.x * 0.42,
+      y: prior.y * 0.58 + point.y * 0.42,
+    };
+  });
 
 type MapLabelPlacement = {
   left: number;
@@ -1095,12 +1124,33 @@ export default function ARNavigationV3() {
   const [mapFullscreen, setMapFullscreen] = useState(false);
   const [mapExpanded, setMapExpanded] = useState(false);
   const [mapFloorId, setMapFloorId] = useState<string | null>(null);
-  const [showAssistMenu, setShowAssistMenu] = useState(false);
+  const [recognitionStatus, setRecognitionStatus] = useState<RecognitionStatus>("disabled");
+  const [recognitionMessage, setRecognitionMessage] = useState("");
+  const [recognitionCorners, setRecognitionCorners] = useState<RecognitionPoint[] | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const recognitionCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const headingRef = useRef<number | null>(null);
   const calibrationHeadingRef = useRef<number | null>(null);
   const defaultsAppliedProjectRef = useRef<string | null>(null);
+  const recognitionFrameRef = useRef<number | null>(null);
+  const recognitionTrackerRef = useRef<OrbImageTracker | null>(null);
+  const recognitionStatusRef = useRef<RecognitionStatus>("disabled");
+  const recognitionMessageRef = useRef("");
+  const recognitionCornersRef = useRef<RecognitionPoint[] | null>(null);
+
+  const updateRecognitionFeedback = (
+    status: RecognitionStatus,
+    message: string,
+    corners: RecognitionPoint[] | null = recognitionCornersRef.current,
+  ) => {
+    recognitionStatusRef.current = status;
+    recognitionMessageRef.current = message;
+    recognitionCornersRef.current = corners;
+    setRecognitionStatus(status);
+    setRecognitionMessage(message);
+    setRecognitionCorners(corners);
+  };
 
   useEffect(() => {
     if (!mapFullscreen) return;
@@ -1468,11 +1518,169 @@ export default function ARNavigationV3() {
     );
   const guideReferenceImage = activeGuideSegment?.referenceImageUrl || DEFAULT_GUIDE_IMAGE_URL;
   const guideExternalUrl = safeExternalUrl(activeGuideSegment?.externalUrl || "");
+  const recognitionTargetUrl = activeGuideSegment?.referenceImageUrl?.trim?.() || "";
+  const recognitionRequired = Boolean(recognitionTargetUrl);
+  const isArRouteVisible = !recognitionRequired || recognitionStatus === "locked";
   const routeSegmentsForMap = guideSegments;
 
   useEffect(() => {
     if (segmentStart?.fId) setMapFloorId(segmentStart.fId);
   }, [currentSegment, segmentStart?.fId]);
+
+  useEffect(() => {
+    if (recognitionFrameRef.current !== null) {
+      cancelAnimationFrame(recognitionFrameRef.current);
+      recognitionFrameRef.current = null;
+    }
+    recognitionTrackerRef.current?.dispose();
+    recognitionTrackerRef.current = null;
+    recognitionCornersRef.current = null;
+    setRecognitionCorners(null);
+
+    if (screen !== "navigate") return;
+    if (!recognitionTargetUrl) {
+      updateRecognitionFeedback("disabled", "此節點未設定辨識照片，沿用人工方向校正", null);
+      return;
+    }
+    if (cameraState !== "ready") {
+      updateRecognitionFeedback("loading", "等待相機就緒", null);
+      return;
+    }
+
+    let cancelled = false;
+    let tracker: OrbImageTracker | null = null;
+    let lastProcessedAt = 0;
+    let lastDetectedAt = 0;
+    let consecutiveDetections = 0;
+    let detectionInFlight = false;
+
+    const updateStatus = (
+      status: RecognitionStatus,
+      message: string,
+      corners: RecognitionPoint[] | null = recognitionCornersRef.current,
+    ) => {
+      if (cancelled) return;
+      if (
+        recognitionStatusRef.current === status &&
+        recognitionMessageRef.current === message &&
+        corners === recognitionCornersRef.current
+      ) return;
+      updateRecognitionFeedback(status, message, corners);
+    };
+
+    const lockToRecognizedDirection = (detection: RecognitionDetection) => {
+      const nextHeading = headingRef.current;
+      if (nextHeading === null) {
+        updateStatus("confirming", "已辨識節點，正在取得手機方向");
+        return;
+      }
+
+      if (recognitionStatusRef.current !== "locked") {
+        calibrationHeadingRef.current = nextHeading;
+        setCalibrationHeading(nextHeading);
+      }
+      const smoothedCorners = smoothRecognitionCorners(recognitionCornersRef.current, detection);
+      updateStatus("locked", "辨識成功，路線已校正", smoothedCorners);
+    };
+
+    const processFrame = (timestamp: number) => {
+      recognitionFrameRef.current = requestAnimationFrame(processFrame);
+      if (timestamp - lastProcessedAt < RECOGNITION_FRAME_INTERVAL_MS) return;
+
+      const video = videoRef.current;
+      const canvas = recognitionCanvasRef.current;
+      if (!tracker || !video || !canvas || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context || !video.videoWidth || !video.videoHeight) return;
+
+      lastProcessedAt = timestamp;
+      const processingWidth = 360;
+      const processingHeight = Math.max(
+        240,
+        Math.round(processingWidth * (video.videoHeight / video.videoWidth)),
+      );
+      if (canvas.width !== processingWidth || canvas.height !== processingHeight) {
+        canvas.width = processingWidth;
+        canvas.height = processingHeight;
+      }
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      if (detectionInFlight) return;
+      detectionInFlight = true;
+      tracker.detect(canvas).then((detection) => {
+        if (cancelled) return;
+        const detectedAt = performance.now();
+        if (detection) {
+          consecutiveDetections += 1;
+          lastDetectedAt = detectedAt;
+          if (consecutiveDetections >= RECOGNITION_CONFIRMATION_FRAMES) {
+            lockToRecognizedDirection(detection);
+          } else {
+            updateStatus("confirming", "正在確認節點照片");
+          }
+          return;
+        }
+
+        consecutiveDetections = 0;
+        if (
+          recognitionStatusRef.current === "locked" &&
+          detectedAt - lastDetectedAt <= RECOGNITION_LOST_DELAY_MS
+        ) {
+          return;
+        }
+
+        if (recognitionStatusRef.current === "locked" || recognitionStatusRef.current === "confirming") {
+          updateStatus("lost", "已離開辨識圖，請重新對準", null);
+        } else if (recognitionStatusRef.current !== "lost") {
+          updateStatus("searching", "請將節點照片對準框內", null);
+        }
+      }).catch((error: any) => {
+        if (cancelled) return;
+        if (recognitionFrameRef.current !== null) {
+          cancelAnimationFrame(recognitionFrameRef.current);
+          recognitionFrameRef.current = null;
+        }
+        updateStatus("error", error?.message || "圖像辨識處理失敗", null);
+      }).finally(() => {
+        detectionInFlight = false;
+      });
+    };
+
+    const startRecognition = async () => {
+      updateRecognitionFeedback("loading", "正在準備圖像辨識", null);
+      try {
+        tracker = new OrbImageTracker();
+        await tracker.prepare(recognitionTargetUrl);
+        if (cancelled) {
+          tracker.dispose();
+          return;
+        }
+        recognitionTrackerRef.current = tracker;
+        updateRecognitionFeedback("searching", "請將節點照片對準框內", null);
+        recognitionFrameRef.current = requestAnimationFrame(processFrame);
+      } catch (error: any) {
+        tracker?.dispose();
+        tracker = null;
+        updateRecognitionFeedback(
+          "error",
+          error?.message || "此節點的辨識照片無法使用，請回後台更換照片",
+          null,
+        );
+      }
+    };
+
+    startRecognition();
+
+    return () => {
+      cancelled = true;
+      if (recognitionFrameRef.current !== null) {
+        cancelAnimationFrame(recognitionFrameRef.current);
+        recognitionFrameRef.current = null;
+      }
+      tracker?.dispose();
+      if (recognitionTrackerRef.current === tracker) recognitionTrackerRef.current = null;
+    };
+  }, [cameraState, currentSegment, recognitionTargetUrl, screen]);
 
   const goToGuideSegment = (index: number, openCalibration = true) => {
     const nextIndex = clamp(index, 0, Math.max(0, guideSegments.length - 1));
@@ -1488,6 +1696,7 @@ export default function ARNavigationV3() {
     setCameraMessage("");
     setMapExpanded(false);
     setGuideImageExpanded(false);
+    updateRecognitionFeedback("disabled", "", null);
     if (openCalibration) setScreen("calibrate");
   };
 
@@ -1580,8 +1789,19 @@ export default function ARNavigationV3() {
       setCameraMessage("正在取得手機方向，請保持面向道路並稍候");
       return;
     }
+
+    if (recognitionRequired) {
+      calibrationHeadingRef.current = null;
+      setCalibrationHeading(null);
+      updateRecognitionFeedback("loading", "正在準備圖像辨識", null);
+      setMapExpanded(false);
+      setScreen("navigate");
+      return;
+    }
+
     calibrationHeadingRef.current = nextCalibrationHeading;
     setCalibrationHeading(nextCalibrationHeading);
+    updateRecognitionFeedback("disabled", "此節點未設定辨識照片，沿用人工方向校正", null);
     setMapExpanded(false);
     setScreen("navigate");
   };
@@ -1597,7 +1817,7 @@ export default function ARNavigationV3() {
     setReviewStepIndex(0);
     setGuideImageExpanded(false);
     setMapExpanded(false);
-    setShowAssistMenu(false);
+    updateRecognitionFeedback("disabled", "", null);
     setScreen("destination");
   };
 
@@ -1629,10 +1849,16 @@ export default function ARNavigationV3() {
 
   if (screen === "navigate") {
     const isLastGuideSegment = !nextGuideSegment;
+    const recognitionCanvasWidth = recognitionCanvasRef.current?.width || 360;
+    const recognitionCanvasHeight = recognitionCanvasRef.current?.height || 480;
+    const recognitionPolygon = recognitionCorners
+      ?.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`)
+      .join(" ");
 
     return (
       <main className="v2-ar-screen">
         <video ref={videoRef} className="v2-camera" playsInline muted />
+        <canvas ref={recognitionCanvasRef} className="v3-recognition-canvas" aria-hidden="true" />
         <div className="v2-camera-shade" />
 
         <header className="v2-ar-header">
@@ -1653,74 +1879,101 @@ export default function ARNavigationV3() {
           {heading === null ? "等待方向感測" : `${Math.round(heading)}°`}
         </div>
 
-        <div className="v2-ar-route-zone" aria-live="polite">
-          <svg
-            key={`ar-guide-segment-${currentSegment}`}
-            className="v2-ar-route-projection"
-            viewBox="0 0 100 100"
-            preserveAspectRatio="xMidYMid meet"
-            aria-label={`第 ${currentSegment + 1} 段 AR 導引路線，方向 ${Math.round(arProjectionRotation)} 度`}
+        {recognitionRequired && (
+          <section
+            className={`v3-recognition-overlay is-${recognitionStatus}`}
+            aria-live="polite"
+            aria-label={recognitionMessage}
           >
-            <defs>
-              <filter id="v2-ar-route-glow" x="-80%" y="-80%" width="260%" height="260%">
-                <feGaussianBlur stdDeviation="1.4" result="blur" />
-                <feMerge>
-                  <feMergeNode in="blur" />
-                  <feMergeNode in="SourceGraphic" />
-                </feMerge>
-              </filter>
-            </defs>
-            <g
-              className="v2-ar-route-rotation"
-              style={
-                {
-                  "--v2-route-rotation": `${arProjectionRotation}deg`,
-                  "--v2-route-origin-x": `${arOriginX}%`,
-                  "--v2-route-origin-y": `${arOriginY}%`,
-                } as React.CSSProperties
-              }
+            <svg
+              viewBox={`0 0 ${recognitionCanvasWidth} ${recognitionCanvasHeight}`}
+              preserveAspectRatio="xMidYMid slice"
+              aria-hidden="true"
             >
-              {nextArRoute && (
-                <>
-                  <path className="v3-ar-route-network-outline" d={nextArRoute.path} />
-                  <path className="v3-ar-route-network-base" d={nextArRoute.path} />
-                </>
-              )}
-              {activeArRoute && (
-                <>
-                  <path className="v3-ar-route-network-outline" d={activeArRoute.path} />
-                  <path id={activeArRoute.pathId} className="v2-ar-route-line" d={activeArRoute.path} />
-                  {Array.from({ length: 7 }, (_, index) => (
-                    <g className="v2-ar-flow-arrow" key={`ar-flow-arrow-${index}`}>
-                      <path d="M -2.4 -2 L 0 0 L -2.4 2" />
-                      <animateMotion
-                        dur="4.2s"
-                        begin={`${(-index * 0.6).toFixed(1)}s`}
-                        repeatCount="indefinite"
-                        rotate="auto"
+              {recognitionPolygon && <polygon points={recognitionPolygon} />}
+            </svg>
+            <div className="v3-recognition-frame" aria-hidden="true">
+              <i /><i /><i /><i />
+            </div>
+            <div className="v3-recognition-status">
+              <ScanLine aria-hidden="true" />
+              <strong>{recognitionMessage}</strong>
+            </div>
+          </section>
+        )}
+
+        <div className="v2-ar-route-zone" aria-live="polite">
+          {isArRouteVisible && (
+            <>
+              <svg
+                key={`ar-guide-segment-${currentSegment}`}
+                className="v2-ar-route-projection"
+                viewBox="0 0 100 100"
+                preserveAspectRatio="xMidYMid meet"
+                aria-label={`第 ${currentSegment + 1} 段 AR 導引路線，方向 ${Math.round(arProjectionRotation)} 度`}
+              >
+                <defs>
+                  <filter id="v2-ar-route-glow" x="-80%" y="-80%" width="260%" height="260%">
+                    <feGaussianBlur stdDeviation="1.4" result="blur" />
+                    <feMerge>
+                      <feMergeNode in="blur" />
+                      <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                  </filter>
+                </defs>
+                <g
+                  className="v2-ar-route-rotation"
+                  style={
+                    {
+                      "--v2-route-rotation": `${arProjectionRotation}deg`,
+                      "--v2-route-origin-x": `${arOriginX}%`,
+                      "--v2-route-origin-y": `${arOriginY}%`,
+                    } as React.CSSProperties
+                  }
+                >
+                  {nextArRoute && (
+                    <>
+                      <path className="v3-ar-route-network-outline" d={nextArRoute.path} />
+                      <path className="v3-ar-route-network-base" d={nextArRoute.path} />
+                    </>
+                  )}
+                  {activeArRoute && (
+                    <>
+                      <path className="v3-ar-route-network-outline" d={activeArRoute.path} />
+                      <path id={activeArRoute.pathId} className="v2-ar-route-line" d={activeArRoute.path} />
+                      {Array.from({ length: 7 }, (_, index) => (
+                        <g className="v2-ar-flow-arrow" key={`ar-flow-arrow-${index}`}>
+                          <path d="M -2.4 -2 L 0 0 L -2.4 2" />
+                          <animateMotion
+                            dur="4.2s"
+                            begin={`${(-index * 0.6).toFixed(1)}s`}
+                            repeatCount="indefinite"
+                            rotate="auto"
+                          >
+                            <mpath href={`#${activeArRoute.pathId}`} />
+                          </animateMotion>
+                        </g>
+                      ))}
+                      <image
+                        className="v2-ar-route-mascot"
+                        href="./assets/ar/mascot-walking-small.png"
+                        x="-6.5"
+                        y="-12"
+                        width="13"
+                        height="13"
+                        preserveAspectRatio="xMidYMid meet"
                       >
-                        <mpath href={`#${activeArRoute.pathId}`} />
-                      </animateMotion>
-                    </g>
-                  ))}
-                  <image
-                    className="v2-ar-route-mascot"
-                    href="./assets/ar/mascot-walking-small.png"
-                    x="-6.5"
-                    y="-12"
-                    width="13"
-                    height="13"
-                    preserveAspectRatio="xMidYMid meet"
-                  >
-                    <animateMotion dur="6.4s" repeatCount="indefinite" rotate="0">
-                      <mpath href={`#${activeArRoute.pathId}`} />
-                    </animateMotion>
-                  </image>
-                </>
-              )}
-            </g>
-          </svg>
-          <span className="v2-ar-route-direction">{arDirectionLabel}</span>
+                        <animateMotion dur="6.4s" repeatCount="indefinite" rotate="0">
+                          <mpath href={`#${activeArRoute.pathId}`} />
+                        </animateMotion>
+                      </image>
+                    </>
+                  )}
+                </g>
+              </svg>
+              <span className="v2-ar-route-direction">{arDirectionLabel}</span>
+            </>
+          )}
         </div>
 
         <div className={`v2-nav-map ${mapExpanded ? "is-expanded" : ""}`}>
@@ -1783,25 +2036,6 @@ export default function ARNavigationV3() {
           </button>
         </section>
 
-        <button
-          type="button"
-          className="v2-assist-button"
-          onClick={() => setShowAssistMenu((value) => !value)}
-          aria-label="影像辨識輔助"
-        >
-          <ScanLine />
-        </button>
-        {showAssistMenu && (
-          <aside className="v2-assist-menu">
-            <button type="button" onClick={() => setShowAssistMenu(false)} aria-label="關閉">
-              <X />
-            </button>
-            <ScanLine />
-            <strong>需要重新校正？</strong>
-            <p>附近若有既有導引圖，可切換原版影像辨識重新定位。</p>
-            <a href="./ar.html">開啟影像辨識輔助</a>
-          </aside>
-        )}
       </main>
     );
   }
@@ -1828,6 +2062,13 @@ export default function ARNavigationV3() {
           <p className="v3-guide-segment-summary">
             {activeGuideSegment?.title || "起點定位"} · 第 {currentSegment + 1}/{Math.max(1, guideSegments.length)} 段 · 約 {remainingDistance.toFixed(1)} 公尺
           </p>
+          {!showPermissionStep && (
+            <p className={`v3-recognition-note ${recognitionRequired ? "" : "is-warning"}`}>
+              {recognitionRequired
+                ? "下一步請將現場節點對準掃描框；辨識成功才會顯示 AR 路線，鏡頭離開後路線會自動隱藏。"
+                : "此節點尚未設定辨識照片，這一段會沿用人工面向校正。可由後台的路徑節點補上照片。"}
+            </p>
+          )}
           {guideExternalUrl && (
             <a className="v3-guide-external-link" href={guideExternalUrl} target="_blank" rel="noreferrer">
               <ExternalLink aria-hidden="true" />
@@ -1861,8 +2102,12 @@ export default function ARNavigationV3() {
               onClick={beginNavigation}
               disabled={heading === null}
             >
-              <Navigation />
-              {heading === null ? "等待方向感測..." : "我已面向照片方向，開始 AR 導引"}
+              {recognitionRequired ? <ScanLine /> : <Navigation />}
+              {heading === null
+                ? "等待方向感測..."
+                : recognitionRequired
+                  ? "開始掃描節點照片"
+                  : "我已面向照片方向，開始 AR 導引"}
             </button>
           )}
         </section>
