@@ -10,6 +10,7 @@ import {
   Building, Layers, ArrowUpDown, Eye, Ruler, Route, GitCommit, MousePointer2, Activity,
   Eraser, Undo2
 } from 'lucide-react';
+import { OrbImageTracker } from './src/ar-v3-image-recognition';
 
 // ==========================================
 // 圖片壓縮工具
@@ -1030,6 +1031,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       guideTitle: '',
       guideInstruction: '',
       guideImageUrl: null,
+      guideRecognitionStatus: 'untested',
       guideExternalUrl: ''
     };
     setBuildings(prev => prev.map(b => b.id === activeBuildingId ? {
@@ -1353,11 +1355,18 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       reader.onload = (event) => {
         compressImage(event.target.result, 1200, (compressedDataUrl) => {
           handleWaypointUpdate(currentWaypointId, 'guideImageUrl', compressedDataUrl);
+          handleWaypointUpdate(currentWaypointId, 'guideRecognitionStatus', 'untested');
         });
       };
       reader.readAsDataURL(file);
     }
     target.value = '';
+  };
+
+  const handleWaypointGuideImageRemove = () => {
+    if (!selectedWaypointId) return;
+    handleWaypointUpdate(selectedWaypointId, 'guideImageUrl', null);
+    handleWaypointUpdate(selectedWaypointId, 'guideRecognitionStatus', 'untested');
   };
 
   const handleEditFromList = (bId, fId, mId) => {
@@ -2821,9 +2830,12 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 </div>
 
                 <div className="p-3 bg-cyan-950/20 border border-cyan-500/25 rounded-xl space-y-3 mt-4">
-                  <div>
-                    <h3 className="text-xs font-semibold text-cyan-300">路徑節點識別與方向提示</h3>
-                    <p className="mt-1 text-[10px] leading-relaxed text-slate-400">為每個節點上傳現場識別照片並設定面向提示。V3 會在辨識成功時立即校正下一路段方位；鏡頭離開照片後會隱藏 AR 路線，重新對準即可恢復。</p>
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-xs font-semibold text-cyan-300">路徑節點識別與方向提示</h3>
+                      <p className="mt-1 text-[10px] leading-relaxed text-slate-400">為每個節點上傳現場識別照片並設定面向提示。V3 會在辨識成功時立即校正下一路段方位；鏡頭離開照片後會隱藏 AR 路線，重新對準即可恢復。</p>
+                    </div>
+                    <StatusBadge status={selectedWaypoint.guideRecognitionStatus || 'untested'} />
                   </div>
                   <label className="block">
                     <span className="block text-[11px] text-slate-400 mb-1">轉角名稱</span>
@@ -2841,7 +2853,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                     <div className="flex items-center justify-between gap-2 mb-2">
                       <span className="text-[11px] text-slate-400">節點識別／方向照片</span>
                       <div className="flex gap-2">
-                        {selectedWaypoint.guideImageUrl && <button type="button" onClick={() => handleWaypointUpdate(selectedWaypoint.id, 'guideImageUrl', null)} className="text-[10px] text-red-300 bg-red-500/10 px-2.5 py-1.5 rounded border border-red-500/25">移除</button>}
+                        {selectedWaypoint.guideImageUrl && <button type="button" onClick={handleWaypointGuideImageRemove} className="text-[10px] text-red-300 bg-red-500/10 px-2.5 py-1.5 rounded border border-red-500/25">移除</button>}
                         <input type="file" ref={waypointGuideImageInputRef} onChange={handleWaypointGuideImageUpload} className="hidden" accept="image/*" />
                         <button type="button" onClick={() => waypointGuideImageInputRef.current?.click()} className="text-[10px] text-cyan-200 bg-cyan-500/10 px-2.5 py-1.5 rounded border border-cyan-500/25">上傳/更換</button>
                       </div>
@@ -2851,6 +2863,14 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                     </div>
                     <p className="mt-2 text-[10px] leading-relaxed text-cyan-200/70">拍攝時請站在節點並面向下一路段。建議使用清楚、有固定紋理且少反光的橫式照片，避免只拍白牆、玻璃或會移動的物件。</p>
                   </div>
+                  {selectedWaypoint.guideImageUrl && (
+                    <WaypointRecognitionTester
+                      key={selectedWaypoint.id}
+                      waypoint={selectedWaypoint}
+                      onUpdateStatus={(status) => handleWaypointUpdate(selectedWaypoint.id, 'guideRecognitionStatus', status)}
+                      showAlert={(message) => setAlertModal({ isOpen: true, message })}
+                    />
+                  )}
                 </div>
 
                 <div className="p-3 bg-slate-950/50 border border-slate-800 rounded-xl space-y-3 mt-4">
@@ -2921,6 +2941,271 @@ function StatusBadge({ status }) {
   };
   const c = statusConfig[status] || statusConfig.untested;
   return <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${c.bg} ${c.border} ${c.color}`}>{c.icon} {c.text}</span>;
+}
+
+function WaypointRecognitionTester({ waypoint, onUpdateStatus, showAlert }) {
+  const [engineState, setEngineState] = useState('idle');
+  const [message, setMessage] = useState('上傳後可用相機確認這張照片能否被 V3 辨識。');
+  const [stats, setStats] = useState({ frames: 0, matches: 0, inliers: 0, confidence: 0 });
+  const videoRef = useRef(null);
+  const processingCanvasRef = useRef(null);
+  const overlayCanvasRef = useRef(null);
+  const streamRef = useRef(null);
+  const trackerRef = useRef(null);
+  const animationFrameRef = useRef(null);
+  const runIdRef = useRef(0);
+  const engineStateRef = useRef('idle');
+  const evaluationRef = useRef({ frames: 0, lockedFrames: 0 });
+
+  const updateEngineState = (nextState) => {
+    engineStateRef.current = nextState;
+    setEngineState(nextState);
+  };
+
+  const clearOverlay = () => {
+    const canvas = overlayCanvasRef.current;
+    const context = canvas?.getContext('2d');
+    if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height);
+  };
+
+  const drawOverlay = (width, height, detection = null) => {
+    const canvas = overlayCanvasRef.current;
+    if (!canvas) return;
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.clearRect(0, 0, width, height);
+
+    if (detection?.corners?.length === 4) {
+      context.save();
+      context.strokeStyle = '#22d3ee';
+      context.lineWidth = Math.max(3, width / 120);
+      context.shadowBlur = 12;
+      context.shadowColor = '#22d3ee';
+      context.beginPath();
+      context.moveTo(detection.corners[0].x, detection.corners[0].y);
+      detection.corners.slice(1).forEach(point => context.lineTo(point.x, point.y));
+      context.closePath();
+      context.stroke();
+      context.restore();
+      return;
+    }
+
+    const boxWidth = width * 0.64;
+    const boxHeight = height * 0.64;
+    context.save();
+    context.strokeStyle = 'rgba(250, 204, 21, 0.85)';
+    context.lineWidth = Math.max(2, width / 180);
+    context.setLineDash([10, 8]);
+    context.strokeRect((width - boxWidth) / 2, (height - boxHeight) / 2, boxWidth, boxHeight);
+    context.restore();
+  };
+
+  const releaseResources = () => {
+    if (animationFrameRef.current !== null) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    trackerRef.current?.dispose();
+    trackerRef.current = null;
+    streamRef.current?.getTracks().forEach(track => track.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    clearOverlay();
+  };
+
+  const stopTest = (evaluate = true) => {
+    runIdRef.current += 1;
+    releaseResources();
+    if (evaluate) {
+      const evaluation = evaluationRef.current;
+      if (evaluation.lockedFrames > 0) {
+        onUpdateStatus('success');
+        setMessage('驗證完成：這張照片可被 V3 辨識。');
+      } else if (evaluation.frames >= 8) {
+        onUpdateStatus('unstable');
+        setMessage('尚未辨識成功，請調整距離、光線，或更換紋理較清楚的照片。');
+      } else {
+        onUpdateStatus('untested');
+        setMessage('測試時間太短，尚未完成驗證。');
+      }
+    }
+    updateEngineState('idle');
+  };
+
+  useEffect(() => () => {
+    runIdRef.current += 1;
+    releaseResources();
+  }, []);
+
+  const startTest = async () => {
+    if (!waypoint.guideImageUrl) {
+      showAlert('請先上傳節點識別照片。');
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      showAlert('此瀏覽器無法啟動相機，請改用 HTTPS 網址或支援相機的裝置。');
+      return;
+    }
+
+    runIdRef.current += 1;
+    releaseResources();
+    const runId = ++runIdRef.current;
+    evaluationRef.current = { frames: 0, lockedFrames: 0 };
+    setStats({ frames: 0, matches: 0, inliers: 0, confidence: 0 });
+    updateEngineState('preparing');
+    setMessage('正在使用與 V3 前台相同的辨識引擎準備照片...');
+    onUpdateStatus('testing');
+
+    let targetPrepared = false;
+    try {
+      const tracker = new OrbImageTracker();
+      trackerRef.current = tracker;
+      await tracker.prepare(waypoint.guideImageUrl);
+      if (runIdRef.current !== runId) return;
+      targetPrepared = true;
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 960 } },
+        audio: false
+      });
+      if (runIdRef.current !== runId) {
+        stream.getTracks().forEach(track => track.stop());
+        return;
+      }
+      streamRef.current = stream;
+      const video = videoRef.current;
+      video.srcObject = stream;
+      await video.play();
+      if (runIdRef.current !== runId) return;
+
+      updateEngineState('searching');
+      setMessage('請將鏡頭對準上方原照片中的現場畫面。');
+      let lastProcessedAt = 0;
+      let lastDetectedAt = 0;
+      let consecutiveDetections = 0;
+      let detectionInFlight = false;
+      let verified = false;
+
+      const processFrame = (timestamp) => {
+        if (runIdRef.current !== runId) return;
+        animationFrameRef.current = requestAnimationFrame(processFrame);
+        if (timestamp - lastProcessedAt < 120 || detectionInFlight) return;
+
+        const processingCanvas = processingCanvasRef.current;
+        if (!video || !processingCanvas || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth || !video.videoHeight) return;
+        const context = processingCanvas.getContext('2d', { willReadFrequently: true });
+        if (!context) return;
+        const width = 360;
+        const height = Math.max(240, Math.round(width * (video.videoHeight / video.videoWidth)));
+        if (processingCanvas.width !== width || processingCanvas.height !== height) {
+          processingCanvas.width = width;
+          processingCanvas.height = height;
+        }
+        context.drawImage(video, 0, 0, width, height);
+        lastProcessedAt = timestamp;
+        detectionInFlight = true;
+
+        tracker.detect(processingCanvas).then(detection => {
+          if (runIdRef.current !== runId) return;
+          const now = performance.now();
+          evaluationRef.current.frames += 1;
+          if (detection) {
+            consecutiveDetections += 1;
+            lastDetectedAt = now;
+            evaluationRef.current.lockedFrames += 1;
+            drawOverlay(width, height, detection);
+            setStats({
+              frames: evaluationRef.current.frames,
+              matches: detection.matchCount,
+              inliers: detection.inliers,
+              confidence: Math.round(detection.confidence * 100)
+            });
+            if (consecutiveDetections >= 2) {
+              updateEngineState('locked');
+              setMessage('辨識成功：V3 前台會在此刻校正方位並顯示目前路段。');
+              if (!verified) {
+                verified = true;
+                onUpdateStatus('success');
+              }
+            }
+            return;
+          }
+
+          consecutiveDetections = 0;
+          setStats(previous => ({ ...previous, frames: evaluationRef.current.frames, matches: 0, inliers: 0, confidence: 0 }));
+          if (engineStateRef.current === 'locked' && now - lastDetectedAt <= 400) return;
+          drawOverlay(width, height, null);
+          updateEngineState('searching');
+          setMessage(verified ? '圖像已離開畫面；V3 前台此時會隱藏路線。' : '搜尋中：請將原照片中的現場畫面對準框內。');
+        }).catch(error => {
+          if (runIdRef.current !== runId) return;
+          runIdRef.current += 1;
+          releaseResources();
+          updateEngineState('error');
+          setMessage(error?.message || '辨識處理失敗。');
+          onUpdateStatus('unstable');
+        }).finally(() => {
+          detectionInFlight = false;
+        });
+      };
+
+      drawOverlay(360, 240, null);
+      animationFrameRef.current = requestAnimationFrame(processFrame);
+    } catch (error) {
+      if (runIdRef.current !== runId) return;
+      releaseResources();
+      updateEngineState('error');
+      setMessage(error?.message || '無法啟動辨識驗證。');
+      onUpdateStatus(targetPrepared ? 'untested' : 'unstable');
+      showAlert(targetPrepared ? '無法存取相機，請確認瀏覽器權限。' : (error?.message || '這張照片無法建立辨識特徵，請更換照片。'));
+    }
+  };
+
+  const isRunning = ['preparing', 'searching', 'locked'].includes(engineState);
+
+  return (
+    <div className="border border-cyan-500/25 rounded-xl overflow-hidden bg-slate-950 shadow-md">
+      <div className="bg-slate-900/80 px-3 py-2 border-b border-slate-800 flex justify-between items-center gap-3">
+        <h3 className="text-[10px] font-bold text-cyan-200 tracking-wider">V3 節點照片辨識驗證</h3>
+        <StatusBadge status={waypoint.guideRecognitionStatus || 'untested'} />
+      </div>
+      <div className="p-3 space-y-3">
+        <div className="relative bg-black border border-slate-800 rounded-lg aspect-video min-h-[170px] overflow-hidden">
+          <video ref={videoRef} playsInline muted className={`absolute inset-0 w-full h-full object-contain ${isRunning ? '' : 'hidden'}`} />
+          <canvas ref={processingCanvasRef} className="hidden" aria-hidden="true" />
+          <canvas ref={overlayCanvasRef} className={`absolute inset-0 w-full h-full object-contain pointer-events-none ${isRunning ? '' : 'hidden'}`} aria-hidden="true" />
+          {!isRunning && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 text-center px-5">
+              <Scan className="w-9 h-9 mb-2 opacity-60" />
+              <strong className="text-xs">使用實際相機驗證</strong>
+            </div>
+          )}
+          {isRunning && (
+            <div className="absolute top-2 left-2 right-2 z-10 flex items-start justify-between gap-2 pointer-events-none">
+              <span className={`px-2 py-1 rounded-md text-[10px] font-bold border backdrop-blur ${engineState === 'locked' ? 'text-cyan-200 border-cyan-400/60 bg-cyan-950/80' : 'text-yellow-200 border-yellow-400/50 bg-slate-950/80'}`}>
+                {engineState === 'locked' ? '辨識成功' : engineState === 'preparing' ? '準備中' : '搜尋圖片'}
+              </span>
+              <span className="px-2 py-1 rounded-md text-[10px] text-slate-200 bg-slate-950/80 border border-slate-700">
+                Inliers {stats.inliers} · {stats.confidence}%
+              </span>
+            </div>
+          )}
+        </div>
+        <p className={`text-[11px] leading-relaxed ${engineState === 'error' ? 'text-red-300' : engineState === 'locked' ? 'text-cyan-200' : 'text-slate-400'}`}>{message}</p>
+        {isRunning ? (
+          <button type="button" onClick={() => stopTest(true)} className="w-full py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/30 rounded-lg text-sm font-bold">停止驗證</button>
+        ) : (
+          <button type="button" onClick={startTest} className="w-full py-2.5 bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-100 border border-cyan-400/35 rounded-lg text-sm font-bold flex items-center justify-center">
+            <Play className="w-4 h-4 mr-2" /> 開啟相機驗證照片
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function ARTestIntegration({ marker, onUpdateStatus, showAlert }) {

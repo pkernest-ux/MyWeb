@@ -355,6 +355,7 @@ const buildGuideSegments = (points: Array<any>, destinationLabel: string): Guide
     const segmentPoints = points.slice(startIndex, endIndex + 1);
     const start = segmentPoints[0];
     const end = segmentPoints[segmentPoints.length - 1];
+    const guideSource = hasGuideDetails(start) ? start : hasGuideDetails(end) ? end : start;
     const nextRange = ranges[index + 1];
     const nextStart = nextRange ? points[nextRange[0]] : null;
     const nextEnd = nextRange ? points[Math.min(nextRange[0] + 1, nextRange[1])] : null;
@@ -381,12 +382,12 @@ const buildGuideSegments = (points: Array<any>, destinationLabel: string): Guide
       floorId: start.fId,
       floorName: start.fName,
       distance: routeLength(segmentPoints),
-      title: start.guideTitle?.trim?.() || (index === 0 ? "起點定位" : `轉角 ${index}`),
+      title: guideSource.guideTitle?.trim?.() || (index === 0 ? "起點定位" : `轉角 ${index}`),
       calibrationInstruction:
-        start.guideInstruction?.trim?.() || "請站在參考位置，拿起手機面向圖片所示方向",
+        guideSource.guideInstruction?.trim?.() || "請站在參考位置，拿起手機面向圖片所示方向",
       travelInstruction,
-      referenceImageUrl: start.guideImageUrl || "",
-      externalUrl: start.guideExternalUrl?.trim?.() || "",
+      referenceImageUrl: guideSource.guideImageUrl || "",
+      externalUrl: guideSource.guideExternalUrl?.trim?.() || "",
     };
   });
 };
@@ -1580,7 +1581,7 @@ export default function ARNavigationV3() {
         setCalibrationHeading(nextHeading);
       }
       const smoothedCorners = smoothRecognitionCorners(recognitionCornersRef.current, detection);
-      updateStatus("locked", "辨識成功，路線已校正", smoothedCorners);
+      updateStatus("locked", "辨識成功，已顯示目前路段", smoothedCorners);
     };
 
     const processFrame = (timestamp: number) => {
@@ -1630,7 +1631,7 @@ export default function ARNavigationV3() {
         }
 
         if (recognitionStatusRef.current === "locked" || recognitionStatusRef.current === "confirming") {
-          updateStatus("lost", "已離開辨識圖，請重新對準", null);
+          updateStatus("lost", "已離開辨識圖，路線已隱藏，請重新對準", null);
         } else if (recognitionStatusRef.current !== "lost") {
           updateStatus("searching", "請將節點照片對準框內", null);
         }
@@ -1777,6 +1778,13 @@ export default function ARNavigationV3() {
       setCameraState("ready");
       setPermissionGranted(true);
       setCameraMessage("");
+      if (recognitionRequired) {
+        calibrationHeadingRef.current = null;
+        setCalibrationHeading(null);
+        updateRecognitionFeedback("loading", "正在準備圖像辨識", null);
+        setMapExpanded(false);
+        setScreen("navigate");
+      }
     } catch (error: any) {
       setCameraState("denied");
       setCameraMessage(error?.message || "無法開啟相機或方向感測");
@@ -2056,7 +2064,9 @@ export default function ARNavigationV3() {
           <div className="v2-step-label">AR 導引</div>
           <h1>
             {showPermissionStep
-              ? "開啟相機與動作方向"
+              ? recognitionRequired
+                ? "開啟相機並掃描節點照片"
+                : "開啟相機與動作方向"
               : activeGuideSegment?.calibrationInstruction || "請面向圖片所示方向"}
           </h1>
           <p className="v3-guide-segment-summary">
@@ -2093,7 +2103,11 @@ export default function ARNavigationV3() {
           {showPermissionStep ? (
             <button type="button" className="v2-primary-button" onClick={requestCameraAndOrientation}>
               <Camera />
-              {cameraState === "loading" ? "正在開啟..." : "開啟相機與動作方向"}
+              {cameraState === "loading"
+                ? "正在開啟..."
+                : recognitionRequired
+                  ? "開啟相機並開始辨識"
+                  : "開啟相機與動作方向"}
             </button>
           ) : (
             <button
