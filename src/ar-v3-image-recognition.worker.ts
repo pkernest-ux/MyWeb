@@ -6,18 +6,39 @@ type RecognitionPoint = {
 };
 
 type RecognitionDetection = {
+  targetId?: string;
   corners: [RecognitionPoint, RecognitionPoint, RecognitionPoint, RecognitionPoint];
   inliers: number;
   matchCount: number;
   confidence: number;
 };
 
-type WorkerRequest = {
-  type: "prepare" | "detect";
-  requestId: number;
+type ImagePayload = {
+  id: string;
   width: number;
   height: number;
   pixels: ArrayBuffer;
+};
+
+type WorkerRequest =
+  | {
+      type: "prepareMany";
+      requestId: number;
+      targets: ImagePayload[];
+    }
+  | {
+      type: "detect";
+      requestId: number;
+      width: number;
+      height: number;
+      pixels: ArrayBuffer;
+    };
+
+type TargetPattern = {
+  id: string;
+  width: number;
+  height: number;
+  levels: FeatureLevel[];
 };
 
 type FeatureLevel = {
@@ -50,9 +71,7 @@ const TARGET_SCALE_STEP = Math.SQRT1_2;
 const ORIENTATION_RADIUS = 15;
 const ORIENTATION_WIDTHS = new Int32Array([15, 15, 15, 15, 14, 14, 14, 13, 13, 12, 11, 10, 9, 8, 6, 3, 0]);
 
-let targetWidth = 0;
-let targetHeight = 0;
-let targetLevels: FeatureLevel[] = [];
+let targetPatterns: TargetPattern[] = [];
 let frameGray: any = null;
 let frameSmooth: any = null;
 let frameDescriptors: any = null;
@@ -109,25 +128,23 @@ const detectKeypoints = (image: any, corners: any[], limit: number) => {
   return count;
 };
 
-const rgbaToGray = (request: WorkerRequest) => {
-  const gray = new jsfeat.matrix_t(request.width, request.height, jsfeat.U8_t | jsfeat.C1_t);
-  jsfeat.imgproc.grayscale(new Uint8Array(request.pixels), request.width, request.height, gray);
+const rgbaToGray = (payload: ImagePayload) => {
+  const gray = new jsfeat.matrix_t(payload.width, payload.height, jsfeat.U8_t | jsfeat.C1_t);
+  jsfeat.imgproc.grayscale(new Uint8Array(payload.pixels), payload.width, payload.height, gray);
   return gray;
 };
 
-const prepareTarget = (request: WorkerRequest) => {
-  targetWidth = request.width;
-  targetHeight = request.height;
-  const source = rgbaToGray(request);
-  targetLevels = [];
+const prepareTargetPattern = (target: ImagePayload): TargetPattern => {
+  const source = rgbaToGray(target);
+  const targetLevels: FeatureLevel[] = [];
 
   for (let levelIndex = 0; levelIndex < TARGET_LEVELS; levelIndex += 1) {
     const scale = TARGET_SCALE_STEP ** levelIndex;
-    const width = Math.max(64, Math.round(targetWidth * scale));
-    const height = Math.max(64, Math.round(targetHeight * scale));
+    const width = Math.max(64, Math.round(target.width * scale));
+    const height = Math.max(64, Math.round(target.height * scale));
     const levelImage = new jsfeat.matrix_t(width, height, jsfeat.U8_t | jsfeat.C1_t);
     const smoothImage = new jsfeat.matrix_t(width, height, jsfeat.U8_t | jsfeat.C1_t);
-    if (levelIndex === 0 && width === targetWidth && height === targetHeight) {
+    if (levelIndex === 0 && width === target.width && height === target.height) {
       source.copy_to(levelImage);
     } else {
       jsfeat.imgproc.resample(source, levelImage, width, height);
@@ -141,15 +158,39 @@ const prepareTarget = (request: WorkerRequest) => {
       corners[index].x /= scale;
       corners[index].y /= scale;
     }
-    targetLevels.push({ scale, corners, descriptors, count });
+    targetLevels.push({ scale, corners: corners.slice(0, count), descriptors, count });
   }
 
   const totalFeatures = targetLevels.reduce((total, level) => total + level.count, 0);
   if (totalFeatures < MIN_MATCHES) {
-    targetLevels = [];
     throw new Error("辨識照片的特徵不足，請改用紋理清楚、避免反光的現場照片");
   }
-  return { prepared: true } as const;
+  return {
+    id: target.id,
+    width: target.width,
+    height: target.height,
+    levels: targetLevels,
+  };
+};
+
+const prepareTargets = (request: Extract<WorkerRequest, { type: "prepareMany" }>) => {
+  const failures: string[] = [];
+  targetPatterns = request.targets.flatMap((target) => {
+    try {
+      return [prepareTargetPattern(target)];
+    } catch (error: any) {
+      failures.push(error?.message || "節點照片無法建立辨識特徵");
+      return [];
+    }
+  });
+  if (!targetPatterns.length) {
+    throw new Error(failures[0] || "沒有可供辨識的路徑節點照片");
+  }
+  return {
+    prepared: true,
+    targetCount: targetPatterns.length,
+    skippedTargetCount: failures.length,
+  } as const;
 };
 
 const ensureFrameBuffers = (width: number, height: number) => {
@@ -168,7 +209,7 @@ const popCount32 = (value: number) => {
   return (((current + (current >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24;
 };
 
-const matchFeatures = (frameCount: number) => {
+const matchFeatures = (frameCount: number, targetLevels: FeatureLevel[]) => {
   const matches: FeatureMatch[] = [];
   const frameDescriptors32 = frameDescriptors.buffer.i32;
   for (let screenIndex = 0; screenIndex < frameCount; screenIndex += 1) {
@@ -259,13 +300,13 @@ const isUsableQuadrilateral = (
   );
 };
 
-const projectTargetCorners = () => {
+const projectTargetCorners = (target: TargetPattern) => {
   const matrix = homography.data;
   const sourceCorners = [
     { x: 0, y: 0 },
-    { x: targetWidth, y: 0 },
-    { x: targetWidth, y: targetHeight },
-    { x: 0, y: targetHeight },
+    { x: target.width, y: 0 },
+    { x: target.width, y: target.height },
+    { x: 0, y: target.height },
   ];
   return sourceCorners.map((point) => {
     const denominator = matrix[6] * point.x + matrix[7] * point.y + matrix[8];
@@ -276,10 +317,15 @@ const projectTargetCorners = () => {
   }) as RecognitionDetection["corners"];
 };
 
-const estimateDetection = (matches: FeatureMatch[], width: number, height: number) => {
+const estimateDetection = (
+  matches: FeatureMatch[],
+  width: number,
+  height: number,
+  target: TargetPattern,
+) => {
   if (matches.length < MIN_MATCHES) return null;
   const sourcePoints = matches.map((match) => {
-    const point = targetLevels[match.patternLevel].corners[match.patternIndex];
+    const point = target.levels[match.patternLevel].corners[match.patternIndex];
     return { x: point.x, y: point.y };
   });
   const destinationPoints = matches.map((match) => {
@@ -310,9 +356,10 @@ const estimateDetection = (matches: FeatureMatch[], width: number, height: numbe
   const inliers = inlierSource.length;
   if (inliers < MIN_INLIERS || inliers / matches.length < MIN_INLIER_RATIO) return null;
   kernel.run(inlierSource, inlierDestination, homography, inliers);
-  const corners = projectTargetCorners();
+  const corners = projectTargetCorners(target);
   if (!isUsableQuadrilateral(corners, width, height)) return null;
   return {
+    targetId: target.id,
     corners,
     inliers,
     matchCount: matches.length,
@@ -321,20 +368,36 @@ const estimateDetection = (matches: FeatureMatch[], width: number, height: numbe
 };
 
 const detect = (request: WorkerRequest): RecognitionDetection | null => {
-  if (!targetLevels.length) return null;
+  if (request.type !== "detect" || !targetPatterns.length) return null;
   ensureFrameBuffers(request.width, request.height);
   jsfeat.imgproc.grayscale(new Uint8Array(request.pixels), request.width, request.height, frameGray);
   jsfeat.imgproc.gaussian_blur(frameGray, frameSmooth, 5, 0);
   const frameCount = detectKeypoints(frameSmooth, frameCorners, FRAME_FEATURE_LIMIT);
   if (frameCount < MIN_MATCHES) return null;
   jsfeat.orb.describe(frameSmooth, frameCorners, frameCount, frameDescriptors);
-  return estimateDetection(matchFeatures(frameCount), request.width, request.height);
+  return targetPatterns.reduce<RecognitionDetection | null>((bestDetection, target) => {
+    const detection = estimateDetection(
+      matchFeatures(frameCount, target.levels),
+      request.width,
+      request.height,
+      target,
+    );
+    if (!detection) return bestDetection;
+    if (!bestDetection) return detection;
+    if (detection.inliers !== bestDetection.inliers) {
+      return detection.inliers > bestDetection.inliers ? detection : bestDetection;
+    }
+    if (detection.confidence !== bestDetection.confidence) {
+      return detection.confidence > bestDetection.confidence ? detection : bestDetection;
+    }
+    return detection.matchCount > bestDetection.matchCount ? detection : bestDetection;
+  }, null);
 };
 
 scope.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
   const request = event.data;
   try {
-    const result = request.type === "prepare" ? prepareTarget(request) : detect(request);
+    const result = request.type === "prepareMany" ? prepareTargets(request) : detect(request);
     scope.postMessage({ requestId: request.requestId, ok: true, result });
   } catch (error: any) {
     scope.postMessage({

@@ -312,6 +312,15 @@ type GuideSegment = {
   externalUrl: string;
 };
 
+type RouteRecognitionCandidate = {
+  id: string;
+  imageUrl: string;
+  nodeId: string;
+  label: string;
+  floorId: string;
+  segmentIndex: number;
+};
+
 const hasGuideDetails = (point: any) =>
   Boolean(
     point?.guideTitle?.trim?.() ||
@@ -391,6 +400,42 @@ const buildGuideSegments = (points: Array<any>, destinationLabel: string): Guide
     };
   });
 };
+
+const buildRouteRecognitionCandidates = (
+  points: Array<any>,
+  segments: GuideSegment[],
+): RouteRecognitionCandidate[] => {
+  const candidatesByImage = new globalThis.Map<string, RouteRecognitionCandidate>();
+  points.forEach((point, pointIndex) => {
+    const imageUrl = point?.guideImageUrl?.trim?.() || "";
+    if (!imageUrl) return;
+    const exactSegment = segments.find((segment) => segment.startIndex === pointIndex);
+    const containingSegment = segments.find(
+      (segment) => pointIndex >= segment.startIndex && pointIndex <= segment.endIndex,
+    );
+    const targetSegment = exactSegment || containingSegment;
+    if (!targetSegment) return;
+
+    const candidate = {
+      id: `route-node-${point.id || pointIndex}`,
+      imageUrl,
+      nodeId: String(point.id || pointIndex),
+      label: point.guideTitle?.trim?.() || nodeLabel(point) || `路徑節點 ${pointIndex + 1}`,
+      floorId: point.fId || targetSegment.floorId,
+      segmentIndex: targetSegment.index,
+    };
+    const existing = candidatesByImage.get(imageUrl);
+    if (!existing || targetSegment.startIndex === pointIndex) {
+      candidatesByImage.set(imageUrl, candidate);
+    }
+  });
+  return [...candidatesByImage.values()];
+};
+
+const recognitionSourceKey = (source: string) =>
+  source.startsWith("data:")
+    ? `${source.length}:${source.slice(0, 32)}:${source.slice(-32)}`
+    : source;
 
 const safeExternalUrl = (value: string) => {
   try {
@@ -1139,6 +1184,7 @@ export default function ARNavigationV3() {
   const recognitionStatusRef = useRef<RecognitionStatus>("disabled");
   const recognitionMessageRef = useRef("");
   const recognitionCornersRef = useRef<RecognitionPoint[] | null>(null);
+  const segmentIndexRef = useRef(0);
 
   const updateRecognitionFeedback = (
     status: RecognitionStatus,
@@ -1404,6 +1450,17 @@ export default function ARNavigationV3() {
   const activeGuideSegment = guideSegments[currentSegment];
   const previousGuideSegment = guideSegments[currentSegment - 1];
   const nextGuideSegment = guideSegments[currentSegment + 1];
+  const recognitionCandidates = buildRouteRecognitionCandidates(navigationPoints, guideSegments);
+  const recognitionCandidateSignature = recognitionCandidates
+    .map(
+      (candidate) =>
+        `${candidate.id}:${candidate.segmentIndex}:${recognitionSourceKey(candidate.imageUrl)}`,
+    )
+    .join("|");
+  const activeRecognitionCandidate =
+    recognitionCandidates.find((candidate) => candidate.segmentIndex === currentSegment) ||
+    recognitionCandidates.find((candidate) => candidate.segmentIndex > currentSegment) ||
+    recognitionCandidates[recognitionCandidates.length - 1];
   const segmentStart = activeGuideSegment?.start;
   const segmentEnd = activeGuideSegment?.end;
   const activeNavigationPoints = activeGuideSegment?.points || navigationPoints;
@@ -1517,12 +1574,18 @@ export default function ARNavigationV3() {
       Math.abs((mapFloorBounds.trX ?? 100) - (mapFloorBounds.blX ?? 0) - 100) < 0.01 &&
       Math.abs((mapFloorBounds.trY ?? 100) - (mapFloorBounds.blY ?? 0) - 100) < 0.01
     );
-  const guideReferenceImage = activeGuideSegment?.referenceImageUrl || DEFAULT_GUIDE_IMAGE_URL;
+  const guideReferenceImage =
+    activeRecognitionCandidate?.imageUrl ||
+    activeGuideSegment?.referenceImageUrl ||
+    DEFAULT_GUIDE_IMAGE_URL;
   const guideExternalUrl = safeExternalUrl(activeGuideSegment?.externalUrl || "");
-  const recognitionTargetUrl = activeGuideSegment?.referenceImageUrl?.trim?.() || "";
-  const recognitionRequired = Boolean(recognitionTargetUrl);
+  const recognitionRequired = recognitionCandidates.length > 0;
   const isArRouteVisible = !recognitionRequired || recognitionStatus === "locked";
   const routeSegmentsForMap = guideSegments;
+
+  useEffect(() => {
+    segmentIndexRef.current = currentSegment;
+  }, [currentSegment]);
 
   useEffect(() => {
     if (segmentStart?.fId) setMapFloorId(segmentStart.fId);
@@ -1539,7 +1602,7 @@ export default function ARNavigationV3() {
     setRecognitionCorners(null);
 
     if (screen !== "navigate") return;
-    if (!recognitionTargetUrl) {
+    if (!recognitionCandidates.length) {
       updateRecognitionFeedback("disabled", "此節點未設定辨識照片，沿用人工方向校正", null);
       return;
     }
@@ -1554,6 +1617,10 @@ export default function ARNavigationV3() {
     let lastDetectedAt = 0;
     let consecutiveDetections = 0;
     let detectionInFlight = false;
+    let pendingTargetId = "";
+    const candidateById = new globalThis.Map(
+      recognitionCandidates.map((candidate) => [candidate.id, candidate]),
+    );
 
     const updateStatus = (
       status: RecognitionStatus,
@@ -1569,19 +1636,45 @@ export default function ARNavigationV3() {
       updateRecognitionFeedback(status, message, corners);
     };
 
-    const lockToRecognizedDirection = (detection: RecognitionDetection) => {
+    const synchronizeRecognizedRoute = (candidate: RouteRecognitionCandidate) => {
+      const targetIndex = clamp(candidate.segmentIndex, 0, Math.max(0, guideSegments.length - 1));
+      const targetSegment = guideSegments[targetIndex];
+      const routeChanged = segmentIndexRef.current !== targetIndex;
+      if (!targetSegment || !routeChanged) return routeChanged;
+
+      segmentIndexRef.current = targetIndex;
+      setSegmentIndex(targetIndex);
+      setCompletedSegmentIndex(targetIndex);
+      setReviewStepIndex(targetIndex);
+      setSelectedFloorId(targetSegment.floorId);
+      setMapFloorId(targetSegment.floorId);
+      setGuideImageExpanded(false);
+      return routeChanged;
+    };
+
+    const lockToRecognizedDirection = (
+      detection: RecognitionDetection,
+      candidate: RouteRecognitionCandidate,
+    ) => {
+      const routeChanged = synchronizeRecognizedRoute(candidate);
       const nextHeading = headingRef.current;
       if (nextHeading === null) {
-        updateStatus("confirming", "已辨識節點，正在取得手機方向");
+        updateStatus("confirming", `已辨識「${candidate.label}」，正在取得手機方向`);
         return;
       }
 
-      if (recognitionStatusRef.current !== "locked") {
+      if (routeChanged || recognitionStatusRef.current !== "locked") {
         calibrationHeadingRef.current = nextHeading;
         setCalibrationHeading(nextHeading);
       }
       const smoothedCorners = smoothRecognitionCorners(recognitionCornersRef.current, detection);
-      updateStatus("locked", "辨識成功，已顯示目前路段", smoothedCorners);
+      updateStatus(
+        "locked",
+        routeChanged
+          ? `已辨識「${candidate.label}」，已切換至對應路段`
+          : `已辨識「${candidate.label}」，已顯示目前路段`,
+        smoothedCorners,
+      );
     };
 
     const processFrame = (timestamp: number) => {
@@ -1612,17 +1705,30 @@ export default function ARNavigationV3() {
         if (cancelled) return;
         const detectedAt = performance.now();
         if (detection) {
-          consecutiveDetections += 1;
+          const targetId = detection.targetId || recognitionCandidates[0]?.id || "";
+          const candidate = candidateById.get(targetId);
+          if (!candidate) {
+            consecutiveDetections = 0;
+            pendingTargetId = "";
+            return;
+          }
+          if (pendingTargetId === targetId) {
+            consecutiveDetections += 1;
+          } else {
+            pendingTargetId = targetId;
+            consecutiveDetections = 1;
+          }
           lastDetectedAt = detectedAt;
           if (consecutiveDetections >= RECOGNITION_CONFIRMATION_FRAMES) {
-            lockToRecognizedDirection(detection);
-          } else {
-            updateStatus("confirming", "正在確認節點照片");
+            lockToRecognizedDirection(detection, candidate);
+          } else if (recognitionStatusRef.current !== "locked") {
+            updateStatus("confirming", `正在確認「${candidate.label}」節點照片`);
           }
           return;
         }
 
         consecutiveDetections = 0;
+        pendingTargetId = "";
         if (
           recognitionStatusRef.current === "locked" &&
           detectedAt - lastDetectedAt <= RECOGNITION_LOST_DELAY_MS
@@ -1633,7 +1739,7 @@ export default function ARNavigationV3() {
         if (recognitionStatusRef.current === "locked" || recognitionStatusRef.current === "confirming") {
           updateStatus("lost", "已離開辨識圖，路線已隱藏，請重新對準", null);
         } else if (recognitionStatusRef.current !== "lost") {
-          updateStatus("searching", "請將節點照片對準框內", null);
+          updateStatus("searching", "請將任一路徑節點照片對準框內", null);
         }
       }).catch((error: any) => {
         if (cancelled) return;
@@ -1651,20 +1757,25 @@ export default function ARNavigationV3() {
       updateRecognitionFeedback("loading", "正在準備圖像辨識", null);
       try {
         tracker = new OrbImageTracker();
-        await tracker.prepare(recognitionTargetUrl);
+        await tracker.prepareMany(
+          recognitionCandidates.map((candidate) => ({
+            id: candidate.id,
+            imageUrl: candidate.imageUrl,
+          })),
+        );
         if (cancelled) {
           tracker.dispose();
           return;
         }
         recognitionTrackerRef.current = tracker;
-        updateRecognitionFeedback("searching", "請將節點照片對準框內", null);
+        updateRecognitionFeedback("searching", "請將任一路徑節點照片對準框內", null);
         recognitionFrameRef.current = requestAnimationFrame(processFrame);
       } catch (error: any) {
         tracker?.dispose();
         tracker = null;
         updateRecognitionFeedback(
           "error",
-          error?.message || "此節點的辨識照片無法使用，請回後台更換照片",
+          error?.message || "路徑節點辨識照片無法使用，請回後台驗證或更換照片",
           null,
         );
       }
@@ -1681,7 +1792,7 @@ export default function ARNavigationV3() {
       tracker?.dispose();
       if (recognitionTrackerRef.current === tracker) recognitionTrackerRef.current = null;
     };
-  }, [cameraState, currentSegment, recognitionTargetUrl, screen]);
+  }, [cameraState, recognitionCandidateSignature, screen]);
 
   const goToGuideSegment = (index: number, openCalibration = true) => {
     const nextIndex = clamp(index, 0, Math.max(0, guideSegments.length - 1));

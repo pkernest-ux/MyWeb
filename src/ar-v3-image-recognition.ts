@@ -4,10 +4,16 @@ export type RecognitionPoint = {
 };
 
 export type RecognitionDetection = {
+  targetId?: string;
   corners: [RecognitionPoint, RecognitionPoint, RecognitionPoint, RecognitionPoint];
   inliers: number;
   matchCount: number;
   confidence: number;
+};
+
+export type RecognitionTarget = {
+  id: string;
+  imageUrl: string;
 };
 
 type WorkerResult = RecognitionDetection | null | { prepared: true };
@@ -58,9 +64,37 @@ export class OrbImageTracker {
   private pending = new Map<number, PendingRequest>();
 
   async prepare(imageUrl: string) {
+    await this.prepareMany([{ id: "target", imageUrl }]);
+  }
+
+  async prepareMany(targets: RecognitionTarget[]) {
     this.dispose();
-    const image = await loadImage(imageUrl);
-    const target = imageToPixels(image);
+    const uniqueTargets = targets.filter(
+      (target, index, allTargets) =>
+        Boolean(target.id && target.imageUrl) &&
+        allTargets.findIndex((candidate) => candidate.id === target.id) === index,
+    );
+    if (!uniqueTargets.length) throw new Error("沒有可供辨識的路徑節點照片");
+
+    const targetResults = await Promise.allSettled(
+      uniqueTargets.map(async (target) => {
+        const image = await loadImage(target.imageUrl);
+        return { id: target.id, ...imageToPixels(image) };
+      }),
+    );
+    const preparedTargets = targetResults
+      .filter((result): result is PromiseFulfilledResult<{ id: string; width: number; height: number; pixels: ArrayBuffer }> =>
+        result.status === "fulfilled",
+      )
+      .map((result) => result.value);
+    if (!preparedTargets.length) {
+      const firstFailure = targetResults.find(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+      throw firstFailure?.reason instanceof Error
+        ? firstFailure.reason
+        : new Error("無法載入路徑節點辨識照片");
+    }
     const worker = new Worker(new URL("./ar-v3-image-recognition.worker.ts", import.meta.url), {
       name: "v3-image-recognition",
       type: "module",
@@ -71,12 +105,10 @@ export class OrbImageTracker {
 
     await this.request(
       {
-        type: "prepare",
-        width: target.width,
-        height: target.height,
-        pixels: target.pixels,
+        type: "prepareMany",
+        targets: preparedTargets,
       },
-      [target.pixels],
+      preparedTargets.map((target) => target.pixels),
       60_000,
     );
     this.prepared = true;
