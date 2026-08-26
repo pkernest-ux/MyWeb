@@ -40,11 +40,17 @@ type NodeData = {
   shaftId?: string | null;
   title?: string;
   code?: string;
+  description?: string;
   enabled?: boolean;
   navigable?: boolean;
+  canStop?: boolean;
+  publicSelectable?: boolean;
+  imageUrl?: string | null;
+  recognitionStatus?: string;
   guideTitle?: string;
   guideInstruction?: string;
   guideImageUrl?: string | null;
+  guideRecognitionStatus?: string;
   guideExternalUrl?: string;
 };
 
@@ -148,7 +154,7 @@ const normalizeAngle = (value: number) => {
 const nodeLabel = (node?: NodeData | null) =>
   node?.title && node.title !== "新增辨識點"
     ? node.title
-    : node?.code || node?.title || "未命名地點";
+    : node?.guideTitle?.trim?.() || node?.code || node?.title || "未命名停駐點";
 
 const getHeading = (event: DeviceOrientationEvent & { webkitCompassHeading?: number }) => {
   if (typeof event.webkitCompassHeading === "number" && Number.isFinite(event.webkitCompassHeading)) {
@@ -160,7 +166,7 @@ const getHeading = (event: DeviceOrientationEvent & { webkitCompassHeading?: num
   return null;
 };
 
-const buildGraph = (buildings: any[]): GraphData => {
+export const buildGraph = (buildings: any[]): GraphData => {
   const nodes: Record<string, NodeData> = {};
   const adjacency: Record<string, Record<string, number>> = {};
   const floors: FloorData[] = [];
@@ -197,6 +203,7 @@ const buildGraph = (buildings: any[]): GraphData => {
           bId: building.id,
           bName: building.name,
           isMarker,
+          canStop: rawNode.canStop !== false,
         };
         adjacency[rawNode.id] ||= {};
       });
@@ -225,7 +232,7 @@ const buildGraph = (buildings: any[]): GraphData => {
   return { nodes, adjacency, floors };
 };
 
-const shortestPath = (graph: GraphData, startId: string, destinationId: string) => {
+export const shortestPath = (graph: GraphData, startId: string, destinationId: string) => {
   const snapNode = (nodeId: string) => {
     const node = graph.nodes[nodeId];
     if (!node) return null;
@@ -285,6 +292,21 @@ const shortestPath = (graph: GraphData, startId: string, destinationId: string) 
   return path;
 };
 
+export const shortestPathThroughStops = (graph: GraphData, stopIds: string[]) => {
+  const normalizedStops = stopIds.filter(
+    (nodeId, index) => Boolean(graph.nodes[nodeId]) && stopIds[index - 1] !== nodeId,
+  );
+  if (normalizedStops.length < 2) return normalizedStops;
+
+  const route: string[] = [];
+  for (let index = 0; index < normalizedStops.length - 1; index += 1) {
+    const section = shortestPath(graph, normalizedStops[index], normalizedStops[index + 1]);
+    if (section.length < 2) return [];
+    route.push(...(route.length ? section.slice(1) : section));
+  }
+  return route;
+};
+
 const segmentBearing = (start: { physX: number; physY: number }, end: { physX: number; physY: number }) =>
   (Math.atan2(end.physX - start.physX, end.physY - start.physY) * 180) / Math.PI;
 
@@ -319,17 +341,49 @@ type RouteRecognitionCandidate = {
   label: string;
   floorId: string;
   segmentIndex: number;
+  source: "ar-location" | "waypoint-guide";
 };
+
+type NodeRecognitionImage = {
+  id: string;
+  imageUrl: string;
+  source: RouteRecognitionCandidate["source"];
+};
+
+export const nodeRecognitionImages = (point: any): NodeRecognitionImage[] => {
+  const images: NodeRecognitionImage[] = [];
+  const markerImageUrl = point?.imageUrl?.trim?.() || "";
+  const guideImageUrl = point?.guideImageUrl?.trim?.() || "";
+  if (markerImageUrl) {
+    images.push({
+      id: `ar-location-${point.id}`,
+      imageUrl: markerImageUrl,
+      source: "ar-location",
+    });
+  }
+  if (guideImageUrl && guideImageUrl !== markerImageUrl) {
+    images.push({
+      id: `waypoint-guide-${point.id}`,
+      imageUrl: guideImageUrl,
+      source: "waypoint-guide",
+    });
+  }
+  return images;
+};
+
+export const isPublicStop = (node: NodeData) =>
+  node.canStop !== false &&
+  (node.isMarker ? node.navigable !== false : node.publicSelectable === true);
 
 const hasGuideDetails = (point: any) =>
   Boolean(
     point?.guideTitle?.trim?.() ||
       point?.guideInstruction?.trim?.() ||
-      point?.guideImageUrl ||
+      nodeRecognitionImages(point).length ||
       point?.guideExternalUrl?.trim?.(),
   );
 
-const buildGuideSegments = (points: Array<any>, destinationLabel: string): GuideSegment[] => {
+export const buildGuideSegments = (points: Array<any>, destinationLabel: string): GuideSegment[] => {
   if (points.length < 2) return [];
 
   const ranges: Array<[number, number]> = [];
@@ -391,24 +445,26 @@ const buildGuideSegments = (points: Array<any>, destinationLabel: string): Guide
       floorId: start.fId,
       floorName: start.fName,
       distance: routeLength(segmentPoints),
-      title: guideSource.guideTitle?.trim?.() || (index === 0 ? "起點定位" : `轉角 ${index}`),
+      title:
+        guideSource.guideTitle?.trim?.() ||
+        (guideSource.isMarker ? nodeLabel(guideSource) : index === 0 ? "起點定位" : `轉角 ${index}`),
       calibrationInstruction:
-        guideSource.guideInstruction?.trim?.() || "請站在參考位置，拿起手機面向圖片所示方向",
+        guideSource.guideInstruction?.trim?.() || "請站在參考位置，讓現場畫面與半透明照片重合",
       travelInstruction,
-      referenceImageUrl: guideSource.guideImageUrl || "",
+      referenceImageUrl: nodeRecognitionImages(guideSource)[0]?.imageUrl || "",
       externalUrl: guideSource.guideExternalUrl?.trim?.() || "",
     };
   });
 };
 
-const buildRouteRecognitionCandidates = (
+export const buildRouteRecognitionCandidates = (
   points: Array<any>,
   segments: GuideSegment[],
 ): RouteRecognitionCandidate[] => {
   const candidatesByImage = new globalThis.Map<string, RouteRecognitionCandidate>();
   points.forEach((point, pointIndex) => {
-    const imageUrl = point?.guideImageUrl?.trim?.() || "";
-    if (!imageUrl) return;
+    const recognitionImages = nodeRecognitionImages(point);
+    if (!recognitionImages.length) return;
     const exactSegment = segments.find((segment) => segment.startIndex === pointIndex);
     const containingSegment = segments.find(
       (segment) => pointIndex >= segment.startIndex && pointIndex <= segment.endIndex,
@@ -416,18 +472,21 @@ const buildRouteRecognitionCandidates = (
     const targetSegment = exactSegment || containingSegment;
     if (!targetSegment) return;
 
-    const candidate = {
-      id: `route-node-${point.id || pointIndex}`,
-      imageUrl,
-      nodeId: String(point.id || pointIndex),
-      label: point.guideTitle?.trim?.() || nodeLabel(point) || `路徑節點 ${pointIndex + 1}`,
-      floorId: point.fId || targetSegment.floorId,
-      segmentIndex: targetSegment.index,
-    };
-    const existing = candidatesByImage.get(imageUrl);
-    if (!existing || targetSegment.startIndex === pointIndex) {
-      candidatesByImage.set(imageUrl, candidate);
-    }
+    recognitionImages.forEach((image) => {
+      const candidate = {
+        id: image.id || `route-node-${point.id || pointIndex}`,
+        imageUrl: image.imageUrl,
+        nodeId: String(point.id || pointIndex),
+        label: point.guideTitle?.trim?.() || nodeLabel(point) || `路徑節點 ${pointIndex + 1}`,
+        floorId: point.fId || targetSegment.floorId,
+        segmentIndex: targetSegment.index,
+        source: image.source,
+      };
+      const existing = candidatesByImage.get(image.imageUrl);
+      if (!existing || targetSegment.startIndex === pointIndex) {
+        candidatesByImage.set(image.imageUrl, candidate);
+      }
+    });
   });
   return [...candidatesByImage.values()];
 };
@@ -458,6 +517,47 @@ const smoothRecognitionCorners = (
       y: prior.y * 0.58 + point.y * 0.42,
     };
   });
+
+const projectRecognitionPoint = (
+  corners: RecognitionPoint[],
+  horizontalRatio: number,
+  verticalRatio: number,
+) => {
+  const [topLeft, topRight, bottomRight, bottomLeft] = corners;
+  const top = {
+    x: topLeft.x + (topRight.x - topLeft.x) * horizontalRatio,
+    y: topLeft.y + (topRight.y - topLeft.y) * horizontalRatio,
+  };
+  const bottom = {
+    x: bottomLeft.x + (bottomRight.x - bottomLeft.x) * horizontalRatio,
+    y: bottomLeft.y + (bottomRight.y - bottomLeft.y) * horizontalRatio,
+  };
+  return {
+    x: top.x + (bottom.x - top.x) * verticalRatio,
+    y: top.y + (bottom.y - top.y) * verticalRatio,
+  };
+};
+
+export const recognitionVectorBearing = (
+  corners: RecognitionPoint[] | null,
+  mapBearing: number,
+) => {
+  if (!corners || corners.length !== 4) return null;
+  const center = projectRecognitionPoint(corners, 0.5, 0.5);
+  const radians = (mapBearing * Math.PI) / 180;
+  const target = projectRecognitionPoint(
+    corners,
+    0.5 + Math.sin(radians) * 0.22,
+    0.5 - Math.cos(radians) * 0.22,
+  );
+  const deltaX = target.x - center.x;
+  const deltaY = target.y - center.y;
+  if (Math.hypot(deltaX, deltaY) < 1) return null;
+  return normalizeAngle((Math.atan2(deltaX, -deltaY) * 180) / Math.PI);
+};
+
+export const recognitionImageUpBearing = (corners: RecognitionPoint[] | null) =>
+  recognitionVectorBearing(corners, 0);
 
 type MapLabelPlacement = {
   left: number;
@@ -688,7 +788,7 @@ function MapPanel({
     multiPointer: false,
   });
   const destinations = (Object.values(graph.nodes) as NodeData[]).filter(
-    (node) => node.isMarker && node.navigable !== false && node.fId === floor?.id,
+    (node) => isPublicStop(node) && node.fId === floor?.id,
   );
   const floorRoute = (routePoints || []).filter((point) => point.fId === floor?.id);
   const routePath =
@@ -808,7 +908,7 @@ function MapPanel({
     if (event.pointerType === "mouse" && event.button !== 0) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     pointerMapRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    const pointers = Array.from(pointerMapRef.current.values());
+    const pointers = Array.from(pointerMapRef.current.values()) as Array<{ x: number; y: number }>;
     const gesture = gestureRef.current;
     gesture.moved = false;
     gesture.startPanX = mapTransform.x;
@@ -831,7 +931,7 @@ function MapPanel({
   const movePointerGesture = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!pointerMapRef.current.has(event.pointerId)) return;
     pointerMapRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    const pointers = Array.from(pointerMapRef.current.values());
+    const pointers = Array.from(pointerMapRef.current.values()) as Array<{ x: number; y: number }>;
     const gesture = gestureRef.current;
     const rect = event.currentTarget.getBoundingClientRect();
 
@@ -876,7 +976,7 @@ function MapPanel({
 
     if (wasTap) selectOriginAtPointer(event);
 
-    const remaining = Array.from(pointerMapRef.current.values());
+    const remaining = Array.from(pointerMapRef.current.values()) as Array<{ x: number; y: number }>;
     if (remaining.length === 0) {
       gestureRef.current.multiPointer = false;
     } else if (remaining.length === 1) {
@@ -1030,7 +1130,13 @@ function MapPanel({
               </div>
             )}
 
-            {origin && origin.floorId === floor?.id && !(mode === "destination" && graph.nodes[origin.snapId]?.isMarker) && (
+            {origin &&
+              origin.floorId === floor?.id &&
+              !(
+                mode === "destination" &&
+                graph.nodes[origin.snapId] &&
+                isPublicStop(graph.nodes[origin.snapId])
+              ) && (
               <div
                 className="v2-static-pin is-origin"
                 style={{ left: `${clamp(origin.x) * 100}%`, top: `${clamp(origin.y) * 100}%` }}
@@ -1325,10 +1431,10 @@ export default function ARNavigationV3() {
   }, [screen, cameraState]);
 
   const graph = useMemo(() => buildGraph(project?.buildings || []), [project]);
-  const navigableMarkers = useMemo(
+  const publicStops = useMemo(
     () =>
       (Object.values(graph.nodes) as NodeData[])
-        .filter((node) => node.isMarker && node.navigable !== false)
+        .filter(isPublicStop)
         .sort(
           (a, b) =>
             a.bName.localeCompare(b.bName, "zh-Hant") ||
@@ -1338,13 +1444,13 @@ export default function ARNavigationV3() {
     [graph],
   );
   const defaultDestination = useMemo(
-    () => navigableMarkers.find((node) => nodeLabel(node).trim() === DEFAULT_DESTINATION_LABEL) || null,
-    [navigableMarkers],
+    () => publicStops.find((node) => nodeLabel(node).trim() === DEFAULT_DESTINATION_LABEL) || null,
+    [publicStops],
   );
   const defaultOrigin = useMemo(() => {
     if (!defaultDestination) return null;
 
-    const namedOrigin = navigableMarkers.find((node) =>
+    const namedOrigin = publicStops.find((node) =>
       DEFAULT_ORIGIN_LABELS.some((label) => nodeLabel(node).trim().includes(label)),
     );
     if (namedOrigin) return namedOrigin;
@@ -1365,14 +1471,14 @@ export default function ARNavigationV3() {
       })
       .filter((candidate) => candidate.connected)
       .sort((a, b) => b.distance - a.distance)[0]?.node || null;
-  }, [defaultDestination, graph, navigableMarkers]);
+  }, [defaultDestination, graph, publicStops]);
   const originOptions = useMemo(() => {
-    const options = navigableMarkers.map((node) => ({ node, label: nodeLabel(node) }));
+    const options = publicStops.map((node) => ({ node, label: nodeLabel(node) }));
     if (defaultOrigin && !options.some((option) => option.node.id === defaultOrigin.id)) {
       options.unshift({ node: defaultOrigin, label: "大門" });
     }
     return options;
-  }, [defaultOrigin, navigableMarkers]);
+  }, [defaultOrigin, publicStops]);
   const visibleFloors = graph.floors;
 
   useEffect(() => {
@@ -1409,7 +1515,7 @@ export default function ARNavigationV3() {
   const destination = destinationId ? graph.nodes[destinationId] : null;
   const routeIds = useMemo(() => {
     if (!origin?.snapId || !destinationId) return [];
-    return shortestPath(graph, origin.snapId, destinationId);
+    return shortestPathThroughStops(graph, [origin.snapId, destinationId]);
   }, [destinationId, graph, origin?.snapId]);
   const routeNodes = routeIds.map((id) => graph.nodes[id]).filter(Boolean);
   const snappedOriginNode = origin?.snapId ? graph.nodes[origin.snapId] : null;
@@ -1457,6 +1563,7 @@ export default function ARNavigationV3() {
         `${candidate.id}:${candidate.segmentIndex}:${recognitionSourceKey(candidate.imageUrl)}`,
     )
     .join("|");
+  const recognitionRequired = recognitionCandidates.length > 0;
   const activeRecognitionCandidate =
     recognitionCandidates.find((candidate) => candidate.segmentIndex === currentSegment) ||
     recognitionCandidates.find((candidate) => candidate.segmentIndex > currentSegment) ||
@@ -1490,7 +1597,11 @@ export default function ARNavigationV3() {
     projectionNavigationPoints.length > 1
       ? segmentBearing(projectionNavigationPoints[0], projectionNavigationPoints[1])
       : currentBearing;
-  const arProjectionRotation = normalizeAngle(projectionBearing - firstBearing - headingDelta);
+  const imageProjectedRouteBearing = recognitionVectorBearing(recognitionCorners, projectionBearing);
+  const arProjectionRotation =
+    recognitionRequired && recognitionStatus === "locked" && imageProjectedRouteBearing !== null
+      ? imageProjectedRouteBearing
+      : normalizeAngle(projectionBearing - firstBearing - headingDelta);
   const toArRawPoint = (point: any) => {
     if (!segmentStart || !point) return { x: 0, y: 0 };
     const distance = Math.hypot(point.physX - segmentStart.physX, point.physY - segmentStart.physY);
@@ -1559,9 +1670,10 @@ export default function ARNavigationV3() {
   }));
   const activeArRoute = arProjectedSegments.find((segment) => segment.index === currentSegment);
   const nextArRoute = arProjectedSegments.find((segment) => segment.index === currentSegment + 1);
-  const arDirectionLabel = Math.abs(arrowRotation) < 18
+  const directionRotation = recognitionRequired ? arProjectionRotation : arrowRotation;
+  const arDirectionLabel = Math.abs(directionRotation) < 18
     ? "方向已對準"
-    : arrowRotation > 0
+    : directionRotation > 0
       ? "請向右轉動手機"
       : "請向左轉動手機";
   const mapFloor = graph.floors.find((floor) => floor.id === mapFloorId) ||
@@ -1579,7 +1691,6 @@ export default function ARNavigationV3() {
     activeGuideSegment?.referenceImageUrl ||
     DEFAULT_GUIDE_IMAGE_URL;
   const guideExternalUrl = safeExternalUrl(activeGuideSegment?.externalUrl || "");
-  const recognitionRequired = recognitionCandidates.length > 0;
   const isArRouteVisible = !recognitionRequired || recognitionStatus === "locked";
   const routeSegmentsForMap = guideSegments;
 
@@ -1657,16 +1768,6 @@ export default function ARNavigationV3() {
       candidate: RouteRecognitionCandidate,
     ) => {
       const routeChanged = synchronizeRecognizedRoute(candidate);
-      const nextHeading = headingRef.current;
-      if (nextHeading === null) {
-        updateStatus("confirming", `已辨識「${candidate.label}」，正在取得手機方向`);
-        return;
-      }
-
-      if (routeChanged || recognitionStatusRef.current !== "locked") {
-        calibrationHeadingRef.current = nextHeading;
-        setCalibrationHeading(nextHeading);
-      }
       const smoothedCorners = smoothRecognitionCorners(recognitionCornersRef.current, detection);
       updateStatus(
         "locked",
@@ -1739,7 +1840,7 @@ export default function ARNavigationV3() {
         if (recognitionStatusRef.current === "locked" || recognitionStatusRef.current === "confirming") {
           updateStatus("lost", "已離開辨識圖，路線已隱藏，請重新對準", null);
         } else if (recognitionStatusRef.current !== "lost") {
-          updateStatus("searching", "請將任一路徑節點照片對準框內", null);
+          updateStatus("searching", "請讓現場畫面與半透明參考圖重合", null);
         }
       }).catch((error: any) => {
         if (cancelled) return;
@@ -1768,7 +1869,7 @@ export default function ARNavigationV3() {
           return;
         }
         recognitionTrackerRef.current = tracker;
-        updateRecognitionFeedback("searching", "請將任一路徑節點照片對準框內", null);
+        updateRecognitionFeedback("searching", "請讓現場畫面與半透明參考圖重合", null);
         recognitionFrameRef.current = requestAnimationFrame(processFrame);
       } catch (error: any) {
         tracker?.dispose();
@@ -1872,9 +1973,13 @@ export default function ARNavigationV3() {
     setCameraMessage("");
     try {
       const Orientation = window.DeviceOrientationEvent as any;
+      let orientationWarning = "";
       if (Orientation?.requestPermission) {
         const permission = await Orientation.requestPermission();
-        if (permission !== "granted") throw new Error("未允許動作與方向權限");
+        if (permission !== "granted") {
+          if (!recognitionRequired) throw new Error("未允許動作與方向權限");
+          orientationWarning = "未開啟方向感測，將以節點照片與路網向量進行導引";
+        }
       }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: "environment" } },
@@ -1888,7 +1993,7 @@ export default function ARNavigationV3() {
       }
       setCameraState("ready");
       setPermissionGranted(true);
-      setCameraMessage("");
+      setCameraMessage(orientationWarning);
       if (recognitionRequired) {
         calibrationHeadingRef.current = null;
         setCalibrationHeading(null);
@@ -1903,18 +2008,18 @@ export default function ARNavigationV3() {
   };
 
   const beginNavigation = () => {
-    const nextCalibrationHeading = headingRef.current ?? heading;
-    if (nextCalibrationHeading === null) {
-      setCameraMessage("正在取得手機方向，請保持面向道路並稍候");
-      return;
-    }
-
     if (recognitionRequired) {
       calibrationHeadingRef.current = null;
       setCalibrationHeading(null);
       updateRecognitionFeedback("loading", "正在準備圖像辨識", null);
       setMapExpanded(false);
       setScreen("navigate");
+      return;
+    }
+
+    const nextCalibrationHeading = headingRef.current ?? heading;
+    if (nextCalibrationHeading === null) {
+      setCameraMessage("正在取得手機方向，請保持面向道路並稍候");
       return;
     }
 
@@ -1994,8 +2099,14 @@ export default function ARNavigationV3() {
         </header>
 
         <div className="v2-heading-chip">
-          <Compass aria-hidden="true" />
-          {heading === null ? "等待方向感測" : `${Math.round(heading)}°`}
+          {recognitionRequired ? <ScanLine aria-hidden="true" /> : <Compass aria-hidden="true" />}
+          {recognitionRequired
+            ? recognitionStatus === "locked"
+              ? "影像已對位"
+              : "等待影像對位"
+            : heading === null
+              ? "等待方向感測"
+              : `${Math.round(heading)}°`}
         </div>
 
         {recognitionRequired && (
@@ -2012,6 +2123,12 @@ export default function ARNavigationV3() {
               {recognitionPolygon && <polygon points={recognitionPolygon} />}
             </svg>
             <div className="v3-recognition-frame" aria-hidden="true">
+              <img
+                className="v3-recognition-reference"
+                src={guideReferenceImage}
+                alt=""
+                draggable={false}
+              />
               <i /><i /><i /><i />
             </div>
             <div className="v3-recognition-status">
@@ -2178,7 +2295,7 @@ export default function ARNavigationV3() {
               ? recognitionRequired
                 ? "開啟相機並掃描節點照片"
                 : "開啟相機與動作方向"
-              : activeGuideSegment?.calibrationInstruction || "請面向圖片所示方向"}
+              : activeGuideSegment?.calibrationInstruction || "請讓現場畫面與半透明照片重合"}
           </h1>
           <p className="v3-guide-segment-summary">
             {activeGuideSegment?.title || "起點定位"} · 第 {currentSegment + 1}/{Math.max(1, guideSegments.length)} 段 · 約 {remainingDistance.toFixed(1)} 公尺
@@ -2186,7 +2303,7 @@ export default function ARNavigationV3() {
           {!showPermissionStep && (
             <p className={`v3-recognition-note ${recognitionRequired ? "" : "is-warning"}`}>
               {recognitionRequired
-                ? "下一步請將現場節點對準掃描框；辨識成功才會顯示 AR 路線，鏡頭離開後路線會自動隱藏。"
+                ? "下一步請讓現場畫面與半透明參考圖重合；辨識成功才會顯示 AR 路線，鏡頭離開後路線會自動隱藏。"
                 : "此節點尚未設定辨識照片，這一段會沿用人工面向校正。可由後台的路徑節點補上照片。"}
             </p>
           )}
@@ -2225,13 +2342,13 @@ export default function ARNavigationV3() {
               type="button"
               className="v2-primary-button"
               onClick={beginNavigation}
-              disabled={heading === null}
+              disabled={!recognitionRequired && heading === null}
             >
               {recognitionRequired ? <ScanLine /> : <Navigation />}
-              {heading === null
-                ? "等待方向感測..."
-                : recognitionRequired
-                  ? "開始掃描節點照片"
+              {recognitionRequired
+                ? "開始掃描節點照片"
+                : heading === null
+                  ? "等待方向感測..."
                   : "我已面向照片方向，開始 AR 導引"}
             </button>
           )}
@@ -2448,7 +2565,7 @@ export default function ARNavigationV3() {
             <span><MapPin aria-hidden="true" />終點</span>
             <select value={destinationId || ""} onChange={(event) => selectDestinationMarker(event.target.value)}>
               <option value="">請選擇導航終點</option>
-              {navigableMarkers
+              {publicStops
                 .filter((marker) => marker.id !== origin?.snapId)
                 .map((marker) => (
                   <option key={`destination-${marker.id}`} value={marker.id}>
@@ -2470,8 +2587,8 @@ export default function ARNavigationV3() {
         {hasRouteSelection && !canPlanRoute && (
           <small className="v3-route-unavailable">目前選擇的起點與終點之間尚未建立完整路網</small>
         )}
-        {navigableMarkers.length === 0 && (
-          <small className="v3-route-unavailable">後台尚未指定可導航的 AR 點位</small>
+        {publicStops.length === 0 && (
+          <small className="v3-route-unavailable">後台尚未指定可公開選擇的停駐點</small>
         )}
       </section>
     </main>

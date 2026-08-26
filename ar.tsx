@@ -1028,6 +1028,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       shaftId: null,
       linkedFloorIds: [],
       sourceFloorId: activeFloorId,
+      canStop: true,
+      publicSelectable: false,
       guideTitle: '',
       guideInstruction: '',
       guideImageUrl: null,
@@ -1283,7 +1285,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           const totalMarkersCount = buildings.reduce((acc, b) => acc + b.floors.reduce((acc2, f) => acc2 + f.markers.length, 0), 0);
           const newMarker = {
             id: `marker_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`, code: `N${totalMarkersCount + 1}`, title: '新增辨識點', description: '', arrowDirection: 'none',
-            isVerticalShaft: false, shaftId: null, linkedFloorIds: [], x, y, imageUrl: null, enabled: true, navigable: true, recognitionStatus: 'untested'
+            isVerticalShaft: false, shaftId: null, linkedFloorIds: [], x, y, imageUrl: null, enabled: true, canStop: true, navigable: true, recognitionStatus: 'untested'
           };
           setBuildings(prev => prev.map(b => b.id === activeBuildingId ? { ...b, floors: b.floors.map(f => f.id === activeFloorId ? { ...f, markers: [...f.markers, newMarker] } : f) } : b));
           setSelectedMarkerId(newMarker.id); setSelectedWaypointId(null);
@@ -2762,7 +2764,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                     </div>
                   ) : (
                     <div className="pt-2 border-t border-slate-800/50">
-                      <label className="block text-[11px] text-slate-400 mb-1">強制導引方向 (一般節點用)</label>
+                      <label className="block text-[11px] text-slate-400 mb-1">強制導引方向（僅 V1 相容）</label>
                       <select value={selectedMarker.arrowDirection || 'none'} onChange={(e) => handleMarkerUpdate(selectedMarker.id, 'arrowDirection', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs text-slate-200 focus:border-cyan-500">
                         <option value="none">無/自動計算方向 (Auto)</option><option value="up">上 (Up)</option><option value="down">下 (Down)</option><option value="left">左 (Left)</option><option value="right">右 (Right)</option>
                       </select>
@@ -2829,11 +2831,28 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                   <div className="flex-1"><label className="block text-[11px] text-slate-400 mb-1">相對 Y (%)</label><input type="number" step="0.1" value={+(selectedWaypoint.y * 100).toFixed(1)} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'y', Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)) / 100)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200" /></div>
                 </div>
 
+                <div className="p-3 bg-slate-950/50 border border-slate-800 rounded-xl space-y-3">
+                  <div>
+                    <strong className="text-xs text-emerald-300">路網停駐點（Stop）</strong>
+                    <p className="mt-1 text-[10px] leading-relaxed text-slate-500">所有路徑節點都會參與路網分析，並可作為辨識後重新定位的停駐點。</p>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-800/70">
+                    <div>
+                      <label className="text-xs font-medium text-amber-300 cursor-pointer" htmlFor="toggle-public-stop-wp">顯示於前台起終點選單</label>
+                      <p className="mt-1 text-[10px] text-slate-500">只建議開啟具有明確名稱、適合民眾選擇的節點。</p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                      <input type="checkbox" id="toggle-public-stop-wp" checked={selectedWaypoint.publicSelectable === true} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'publicSelectable', e.target.checked)} className="sr-only peer" />
+                      <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-400 peer-checked:after:bg-white shadow-inner"></div>
+                    </label>
+                  </div>
+                </div>
+
                 <div className="p-3 bg-cyan-950/20 border border-cyan-500/25 rounded-xl space-y-3 mt-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h3 className="text-xs font-semibold text-cyan-300">路徑節點識別與方向提示</h3>
-                      <p className="mt-1 text-[10px] leading-relaxed text-slate-400">為每個節點上傳現場識別照片並設定面向提示。V3 會在辨識成功時立即校正下一路段方位；鏡頭離開照片後會隱藏 AR 路線，重新對準即可恢復。</p>
+                      <h3 className="text-xs font-semibold text-cyan-300">停駐點識別與影像對位</h3>
+                      <p className="mt-1 text-[10px] leading-relaxed text-slate-400">照片只用來確認目前節點與畫面對位；V3 會依目前節點到下一節點的路網向量自動產生方向。鏡頭離開照片後會隱藏 AR 路線，重新對準即可恢復。</p>
                     </div>
                     <StatusBadge status={selectedWaypoint.guideRecognitionStatus || 'untested'} />
                   </div>
@@ -2842,8 +2861,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                     <input type="text" value={selectedWaypoint.guideTitle || ''} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'guideTitle', e.target.value)} placeholder="例如：一樓中央樓梯前" className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600" />
                   </label>
                   <label className="block">
-                    <span className="block text-[11px] text-slate-400 mb-1">面向提示</span>
-                    <textarea rows="3" value={selectedWaypoint.guideInstruction || ''} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'guideInstruction', e.target.value)} placeholder="例如：站在樓梯前，面向左側走廊" className="w-full resize-none bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600" />
+                    <span className="block text-[11px] text-slate-400 mb-1">對位提示文字</span>
+                    <textarea rows="3" value={selectedWaypoint.guideInstruction || ''} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'guideInstruction', e.target.value)} placeholder="例如：站在樓梯前，將門框與半透明照片重合" className="w-full resize-none bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600" />
                   </label>
                   <label className="block">
                     <span className="block text-[11px] text-slate-400 mb-1">Google Street View 或外部參考網址</span>
@@ -2851,7 +2870,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                   </label>
                   <div>
                     <div className="flex items-center justify-between gap-2 mb-2">
-                      <span className="text-[11px] text-slate-400">節點識別／方向照片</span>
+                      <span className="text-[11px] text-slate-400">節點識別／對位照片</span>
                       <div className="flex gap-2">
                         {selectedWaypoint.guideImageUrl && <button type="button" onClick={handleWaypointGuideImageRemove} className="text-[10px] text-red-300 bg-red-500/10 px-2.5 py-1.5 rounded border border-red-500/25">移除</button>}
                         <input type="file" ref={waypointGuideImageInputRef} onChange={handleWaypointGuideImageUpload} className="hidden" accept="image/*" />
@@ -2859,9 +2878,9 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                       </div>
                     </div>
                     <div className="border border-slate-800 bg-slate-950 rounded-xl p-2 flex items-center justify-center min-h-[120px]">
-                      {selectedWaypoint.guideImageUrl ? <img src={selectedWaypoint.guideImageUrl} alt="節點識別與方向參考" className="max-w-full max-h-48 object-contain rounded" /> : <div className="text-center text-slate-600"><ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-50" /><span className="text-xs">尚未上傳節點識別照片</span></div>}
+                      {selectedWaypoint.guideImageUrl ? <img src={selectedWaypoint.guideImageUrl} alt="節點識別與影像對位參考" className="max-w-full max-h-48 object-contain rounded" /> : <div className="text-center text-slate-600"><ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-50" /><span className="text-xs">尚未上傳節點識別照片</span></div>}
                     </div>
-                    <p className="mt-2 text-[10px] leading-relaxed text-cyan-200/70">拍攝時請站在節點並面向下一路段。建議使用清楚、有固定紋理且少反光的橫式照片，避免只拍白牆、玻璃或會移動的物件。</p>
+                    <p className="mt-2 text-[10px] leading-relaxed text-cyan-200/70">請從民眾預計停駐的位置拍攝清楚、有固定紋理且少反光的場景。方向由路網節點向量自動計算，不需要為不同目的地重拍照片。</p>
                   </div>
                   {selectedWaypoint.guideImageUrl && (
                     <WaypointRecognitionTester
