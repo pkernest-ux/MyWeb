@@ -169,6 +169,89 @@ const getFloorBounds = (floor) => floor?.bounds || { blX: 0, blY: 0, trX: 100, t
 
 const cloneData = (value) => JSON.parse(JSON.stringify(value));
 
+const AR_PROJECT_CACHE_DB = 'ar-manager-cache-v1';
+const AR_PROJECT_CACHE_STORE = 'projects';
+const AR_PROJECTS_LOCAL_KEY = 'arManager_projects';
+const AR_LEGACY_BUILDINGS_KEY = 'arManager_buildings';
+const AR_LEGACY_CONFIG_KEY = 'arManager_config';
+const AR_ACTIVE_PROJECT_KEY = 'arManager_activeProjectId';
+
+const readLocalStoredProjects = () => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(AR_PROJECTS_LOCAL_KEY) || '[]');
+    return Array.isArray(parsed) ? parsed.filter(project => project?.id) : [];
+  } catch (error) {
+    console.warn('Unable to read legacy local project cache:', error);
+    return [];
+  }
+};
+
+const openProjectCache = () => new Promise((resolve, reject) => {
+  if (!window.indexedDB) {
+    reject(new Error('此瀏覽器不支援 IndexedDB 專案暫存。'));
+    return;
+  }
+  const request = window.indexedDB.open(AR_PROJECT_CACHE_DB, 1);
+  request.onupgradeneeded = () => {
+    const database = request.result;
+    if (!database.objectStoreNames.contains(AR_PROJECT_CACHE_STORE)) {
+      database.createObjectStore(AR_PROJECT_CACHE_STORE, { keyPath: 'id' });
+    }
+  };
+  request.onsuccess = () => resolve(request.result);
+  request.onerror = () => reject(request.error || new Error('無法開啟 IndexedDB 專案暫存。'));
+  request.onblocked = () => reject(new Error('IndexedDB 正被其他後台分頁使用，請關閉舊分頁後重試。'));
+});
+
+const readIndexedProjectCache = async () => {
+  const database = await openProjectCache();
+  try {
+    return await new Promise((resolve, reject) => {
+      const transaction = database.transaction(AR_PROJECT_CACHE_STORE, 'readonly');
+      const request = transaction.objectStore(AR_PROJECT_CACHE_STORE).getAll();
+      request.onsuccess = () => resolve(
+        Array.isArray(request.result) ? request.result.filter(project => project?.id) : []
+      );
+      request.onerror = () => reject(request.error || new Error('無法讀取 IndexedDB 專案暫存。'));
+    });
+  } finally {
+    database.close();
+  }
+};
+
+const replaceIndexedProjectCache = async (projects) => {
+  const database = await openProjectCache();
+  try {
+    await new Promise((resolve, reject) => {
+      const transaction = database.transaction(AR_PROJECT_CACHE_STORE, 'readwrite');
+      const store = transaction.objectStore(AR_PROJECT_CACHE_STORE);
+      store.clear();
+      (projects || []).filter(project => project?.id).forEach(project => store.put(cloneData(project)));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error('無法更新 IndexedDB 專案暫存。'));
+      transaction.onabort = () => reject(transaction.error || new Error('IndexedDB 專案暫存已取消。'));
+    });
+  } finally {
+    database.close();
+  }
+};
+
+const removeLargeLegacyLocalCache = () => {
+  localStorage.removeItem(AR_PROJECTS_LOCAL_KEY);
+  localStorage.removeItem(AR_LEGACY_BUILDINGS_KEY);
+  localStorage.removeItem(AR_LEGACY_CONFIG_KEY);
+};
+
+const setSmallLocalCacheValue = (key, value) => {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (error) {
+    console.warn(`Unable to update local setting ${key}:`, error);
+    return false;
+  }
+};
+
 const normalizeAngleDelta = (current, base) => (((current - base) + 540) % 360) - 180;
 
 const normalizeAngle = (angle) => {
@@ -519,33 +602,30 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   });
   const [isCapturingFloorHeading, setIsCapturingFloorHeading] = useState(false);
   const isLoadingProjectRef = useRef(false);
-  const [hadStoredProjectsOnLoad] = useState(() => {
+  const localCacheWarningShownRef = useRef(false);
+  const [initialLocalProjects] = useState(() => publicOnly ? [] : readLocalStoredProjects());
+  const [hadLegacyDataOnLoad] = useState(() => {
     if (publicOnly) return false;
-    try {
-      const storedProjects = JSON.parse(localStorage.getItem('arManager_projects') || '[]');
-      return Array.isArray(storedProjects) && storedProjects.length > 0;
-    } catch {
-      return false;
-    }
+    return Boolean(
+      localStorage.getItem(AR_LEGACY_BUILDINGS_KEY) ||
+      localStorage.getItem(AR_LEGACY_CONFIG_KEY)
+    );
   });
+  const [hadStoredProjectsOnLoad, setHadStoredProjectsOnLoad] = useState(
+    initialLocalProjects.length > 0 || hadLegacyDataOnLoad
+  );
+  const [localCacheReady, setLocalCacheReady] = useState(publicOnly);
 
   const [projects, setProjects] = useState(() => {
     if (publicOnly) return [createProjectFromPublishedData({})];
-
-    try {
-      const savedProjects = localStorage.getItem('arManager_projects');
-      if (savedProjects) {
-        const parsed = JSON.parse(savedProjects);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch (e) { console.error("Project load error:", e); }
+    if (initialLocalProjects.length > 0) return initialLocalProjects;
 
     let migratedConfig = createDefaultConfig('預設導引專案');
     let migratedBuildings = createDefaultBuildings();
     try {
-      const savedConfig = localStorage.getItem('arManager_config');
+      const savedConfig = localStorage.getItem(AR_LEGACY_CONFIG_KEY);
       if (savedConfig) migratedConfig = { ...migratedConfig, ...JSON.parse(savedConfig) };
-      const savedBuildings = localStorage.getItem('arManager_buildings');
+      const savedBuildings = localStorage.getItem(AR_LEGACY_BUILDINGS_KEY);
       if (savedBuildings) migratedBuildings = JSON.parse(savedBuildings);
     } catch (e) { console.error("Legacy AR data migration error:", e); }
 
@@ -558,7 +638,13 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       buildings: migratedBuildings
     }];
   });
-  const [activeProjectId, setActiveProjectId] = useState(projects[0]?.id);
+  const [activeProjectId, setActiveProjectId] = useState(() => {
+    if (publicOnly) return projects[0]?.id;
+    const savedActiveProjectId = localStorage.getItem(AR_ACTIVE_PROJECT_KEY);
+    return projects.some(project => project.id === savedActiveProjectId)
+      ? savedActiveProjectId
+      : projects[0]?.id;
+  });
   const activeProject = projects.find(project => project.id === activeProjectId) || projects[0];
 
   const [systemConfig, setSystemConfig] = useState(() => cloneData(activeProject?.systemConfig || createDefaultConfig()));
@@ -629,9 +715,45 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     setPathStartNodeId(null);
     setMapTransform({ x: 0, y: 0, scale: 1 });
     setDeleteUndo(null);
-    localStorage.setItem('arManager_lastCloudSyncAt', project.updatedAt || new Date().toISOString());
+    setSmallLocalCacheValue('arManager_lastCloudSyncAt', project.updatedAt || new Date().toISOString());
     return project;
   };
+
+  useEffect(() => {
+    if (publicOnly) return;
+    let cancelled = false;
+
+    const hydrateProjectCache = async () => {
+      try {
+        if (initialLocalProjects.length > 0 || hadLegacyDataOnLoad) {
+          await replaceIndexedProjectCache(projects);
+          if (cancelled) return;
+          removeLargeLegacyLocalCache();
+          setSmallLocalCacheValue('arManager_cacheVersion', 'indexeddb-v1');
+          setHadStoredProjectsOnLoad(projects.length > 0);
+          return;
+        }
+
+        const cachedProjects = await readIndexedProjectCache();
+        if (cancelled || cachedProjects.length === 0) return;
+        const savedActiveProjectId = localStorage.getItem(AR_ACTIVE_PROJECT_KEY);
+        const preferredProjectId = cachedProjects.some(project => project.id === savedActiveProjectId)
+          ? savedActiveProjectId
+          : cachedProjects[0].id;
+        isLoadingProjectRef.current = true;
+        setProjects(cachedProjects);
+        setActiveProjectId(preferredProjectId);
+        setHadStoredProjectsOnLoad(true);
+      } catch (error) {
+        console.warn('IndexedDB project cache unavailable:', error);
+      } finally {
+        if (!cancelled) setLocalCacheReady(true);
+      }
+    };
+
+    hydrateProjectCache();
+    return () => { cancelled = true; };
+  }, [publicOnly]);
 
   useEffect(() => {
     const handleExternalTabChange = (event) => {
@@ -646,10 +768,31 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   }, []);
 
   useEffect(() => {
-    if (publicOnly) return;
-    try { localStorage.setItem('arManager_projects', JSON.stringify(projects)); }
-    catch (e) { if (e.name === 'QuotaExceededError') setAlertModal({ isOpen: true, message: "專案資料太大，請先匯出 JSON 或移除不需要的圖片資料。" }); }
-  }, [projects, publicOnly]);
+    if (publicOnly || !localCacheReady) return;
+    const saveTimer = window.setTimeout(async () => {
+      try {
+        await replaceIndexedProjectCache(projects);
+        removeLargeLegacyLocalCache();
+        setSmallLocalCacheValue('arManager_cacheVersion', 'indexeddb-v1');
+        localCacheWarningShownRef.current = false;
+      } catch (error) {
+        console.error('IndexedDB project save error:', error);
+        if (!localCacheWarningShownRef.current) {
+          localCacheWarningShownRef.current = true;
+          setAlertModal({
+            isOpen: true,
+            message: '專案已保留在目前頁面，但瀏覽器無法更新本機暫存。請先同步雲端；重新開啟頁面前，請勿清除網站資料。'
+          });
+        }
+      }
+    }, 350);
+    return () => window.clearTimeout(saveTimer);
+  }, [localCacheReady, projects, publicOnly]);
+
+  useEffect(() => {
+    if (publicOnly || !localCacheReady || !activeProjectId) return;
+    setSmallLocalCacheValue(AR_ACTIVE_PROJECT_KEY, activeProjectId);
+  }, [activeProjectId, localCacheReady, publicOnly]);
 
   useEffect(() => {
     if (!publicOnly) return;
@@ -706,7 +849,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   }, [publicOnly]);
 
   useEffect(() => {
-    if (publicOnly) return;
+    if (publicOnly || !localCacheReady) return;
 
     let cancelled = false;
     fetch(`/ar-data.json?ts=${Date.now()}`, { cache: 'no-store' })
@@ -744,10 +887,11 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       .catch(error => console.warn("Packaged AR admin projects unavailable", error));
 
     return () => { cancelled = true; };
-  }, [hadStoredProjectsOnLoad, publicOnly]);
+  }, [hadStoredProjectsOnLoad, localCacheReady, publicOnly]);
 
   useEffect(() => {
     if (publicOnly) return;
+    if (!localCacheReady) return;
     if (!activeProject) return;
     isLoadingProjectRef.current = true;
     const nextBuildings = cloneData(activeProject.buildings || createDefaultBuildings());
@@ -759,10 +903,11 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     setSelectedWaypointId(null);
     setReferenceFloorId('');
     setMapTransform({ x: 0, y: 0, scale: 1 });
-  }, [activeProjectId, publicOnly]);
+  }, [activeProjectId, localCacheReady, publicOnly]);
 
   useEffect(() => {
     if (publicOnly) return;
+    if (!localCacheReady) return;
     if (!activeProjectId) return;
     if (isLoadingProjectRef.current) {
       isLoadingProjectRef.current = false;
@@ -775,19 +920,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       buildings: cloneData(buildings),
       updatedAt: new Date().toISOString()
     } : project));
-  }, [activeProjectId, buildings, systemConfig, publicOnly]);
-
-  useEffect(() => {
-    if (publicOnly) return;
-    try { localStorage.setItem('arManager_buildings', JSON.stringify(buildings)); }
-    catch (e) { if (e.name === 'QuotaExceededError') setAlertModal({ isOpen: true, message: "⚠️ 瀏覽器本地暫存空間已滿！" }); }
-  }, [buildings, publicOnly]);
-
-  useEffect(() => {
-    if (publicOnly) return;
-    try { localStorage.setItem('arManager_config', JSON.stringify(systemConfig)); }
-    catch (e) { console.error("Config save error:", e); }
-  }, [systemConfig, publicOnly]);
+  }, [activeProjectId, buildings, localCacheReady, systemConfig, publicOnly]);
 
   useEffect(() => {
     const b = buildings.find(b => b.id === activeBuildingId);
@@ -1650,7 +1783,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         throw new Error(result.error || `Save failed: ${response.status}`);
       }
 
-      localStorage.setItem('arManager_lastCloudSyncAt', payload.project.updatedAt);
+      setSmallLocalCacheValue('arManager_lastCloudSyncAt', payload.project.updatedAt);
 
       const preservedCount = Array.isArray(result.projectIds)
         ? result.projectIds.length
@@ -1687,7 +1820,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       const project = applyPublishedProjectData(data);
       setAlertModal({
         isOpen: true,
-        message: `已從雲端載入「${project.name}」。桌機與手機現在會使用同一份已上架的平面圖、AR 點位與路網資料。`
+        message: `已從雲端載入「${project.name}」。同一專案會覆蓋本機暫存，不會累積重複版本。`
       });
     } catch (error) {
       setAlertModal({
@@ -1743,7 +1876,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       setCloudProjectModal({ isOpen: false, isLoading: false, projects: [], error: '' });
       setAlertModal({
         isOpen: true,
-        message: `已從雲端載入「${project.name}」。桌機與手機現在會使用這個專案的平面圖、AR 點位與路網資料。`
+        message: `已從雲端載入「${project.name}」。同一專案會覆蓋本機暫存，不會累積重複版本。`
       });
     } catch (error) {
       setCloudProjectModal(prev => ({
@@ -2851,7 +2984,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             <div className="flex items-start justify-between gap-4 mb-5">
               <div>
                 <h3 className="text-lg font-bold text-amber-300">選擇要載入的雲端專案</h3>
-                <p className="text-xs text-slate-400 mt-1">載入後會新增或更新所選專案，其他後台專案會保留；除非再次按「同步雲端」，否則不會變更線上資料。</p>
+                <p className="text-xs text-slate-400 mt-1">同一專案會覆蓋本機暫存，不會累積歷史版本；其他後台專案仍會保留。除非再次按「同步雲端」，否則不會變更線上資料。</p>
               </div>
               <button onClick={() => setCloudProjectModal({ isOpen: false, isLoading: false, projects: [], error: '' })} className="text-slate-400 hover:text-white p-1"><X className="w-5 h-5" /></button>
             </div>
