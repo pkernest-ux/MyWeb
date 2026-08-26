@@ -56,7 +56,8 @@ const GuideDirectionFields = ({ node, floor, onUpdate, showAlert }) => {
   const directionMode = ['sensor', 'manual'].includes(node?.guideDirectionMode)
     ? node.guideDirectionMode
     : 'auto';
-  const referenceBearing = hasNumericValue(node?.guideReferenceBearing)
+  const hasReferenceBearing = hasNumericValue(node?.guideReferenceBearing);
+  const referenceBearing = hasReferenceBearing
     ? Math.max(0, Math.min(359, Number(node.guideReferenceBearing)))
     : 0;
   const floorMapUpHeading = hasNumericValue(floor?.mapUpHeading)
@@ -89,15 +90,30 @@ const GuideDirectionFields = ({ node, floor, onUpdate, showAlert }) => {
 
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 space-y-3">
+      <div>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs font-bold text-cyan-300">V3 AR 起始角度</span>
+          <span className="rounded bg-cyan-500/10 px-2 py-1 text-[10px] font-bold text-cyan-200">
+            {directionMode === 'auto' ? '自動' : hasReferenceBearing ? `${referenceBearing.toFixed(0)}°` : '未設定'}
+          </span>
+        </div>
+        <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+          設定辨識成功時，鏡頭正前方在平面圖上所對應的角度；路線方向仍會依目前節點到下一節點自動計算。
+        </p>
+      </div>
       <label className="block">
-        <span className="block text-[11px] text-slate-400 mb-1">V3 路徑方向計算</span>
+        <span className="block text-[11px] text-slate-400 mb-1">起始角度設定方式</span>
         <select
           value={directionMode}
-          onChange={(event) => onUpdate('guideDirectionMode', event.target.value)}
+          onChange={(event) => {
+            const nextMode = event.target.value;
+            onUpdate('guideDirectionMode', nextMode);
+            if (nextMode === 'manual' && !hasReferenceBearing) onUpdate('guideReferenceBearing', 0);
+          }}
           className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs text-slate-200 focus:border-cyan-500"
         >
-          <option value="sensor">現場記錄手機方位</option>
-          <option value="manual">手動輸入照片方位</option>
+          <option value="sensor">現場記錄手機起始角度</option>
+          <option value="manual">手動設定起始角度</option>
           <option value="auto">沿路網方向自動推估（舊資料相容）</option>
         </select>
       </label>
@@ -122,7 +138,7 @@ const GuideDirectionFields = ({ node, floor, onUpdate, showAlert }) => {
         </div>
       ) : directionMode === 'manual' ? (
         <label className="block">
-          <span className="block text-[11px] text-slate-400 mb-1">照片正前方的平面圖方位角</span>
+          <span className="block text-[11px] text-slate-400 mb-1">辨識照片正前方的平面圖角度</span>
           <div className="flex items-center gap-2">
             <input
               type="number"
@@ -141,8 +157,18 @@ const GuideDirectionFields = ({ node, floor, onUpdate, showAlert }) => {
             />
             <span className="text-xs font-semibold text-slate-400">度</span>
           </div>
+          <input
+            type="range"
+            min="0"
+            max="359"
+            step="1"
+            value={referenceBearing}
+            onChange={(event) => onUpdate('guideReferenceBearing', Number(event.target.value))}
+            className="mt-3 w-full accent-cyan-400"
+            aria-label="V3 AR 起始角度"
+          />
           <span className="mt-1.5 block text-[10px] leading-relaxed text-slate-500">
-            平面圖上方 0°、右方 90°、下方 180°、左方 270°。系統會再依下一節點向量換算箭頭方向。
+            角度以平面圖為基準：上方 0°、右方 90°、下方 180°、左方 270°。這是照片拍攝方向，不是把路線固定成某個方向。
           </span>
         </label>
       ) : (
@@ -3130,10 +3156,11 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                     </div>
                   ) : (
                     <div className="pt-2 border-t border-slate-800/50">
-                      <label className="block text-[11px] text-slate-400 mb-1">強制導引方向（僅 V1 相容）</label>
+                      <label className="block text-[11px] text-slate-400 mb-1">V1 固定箭頭方向（不影響 V3）</label>
                       <select value={selectedMarker.arrowDirection || 'none'} onChange={(e) => handleMarkerUpdate(selectedMarker.id, 'arrowDirection', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs text-slate-200 focus:border-cyan-500">
                         <option value="none">無/自動計算方向 (Auto)</option><option value="up">上 (Up)</option><option value="down">下 (Down)</option><option value="left">左 (Left)</option><option value="right">右 (Right)</option>
                       </select>
+                      <p className="mt-1.5 text-[10px] leading-relaxed text-slate-500">此欄位只供舊版 V1 單一箭頭使用；V3 請在下方「V3 AR 起始角度」設定。</p>
                     </div>
                   )}
                 </div>
