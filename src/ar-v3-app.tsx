@@ -52,6 +52,8 @@ type NodeData = {
   guideImageUrl?: string | null;
   guideRecognitionStatus?: string;
   guideExternalUrl?: string;
+  guideDirectionMode?: "auto" | "manual";
+  guideReferenceBearing?: number | null;
 };
 
 type FloorData = {
@@ -342,6 +344,8 @@ type RouteRecognitionCandidate = {
   floorId: string;
   segmentIndex: number;
   source: "ar-location" | "waypoint-guide";
+  directionMode: "auto" | "manual";
+  referenceBearing: number | null;
 };
 
 type NodeRecognitionImage = {
@@ -481,6 +485,13 @@ export const buildRouteRecognitionCandidates = (
         floorId: point.fId || targetSegment.floorId,
         segmentIndex: targetSegment.index,
         source: image.source,
+        directionMode: point.guideDirectionMode === "manual" ? "manual" as const : "auto" as const,
+        referenceBearing:
+          point.guideReferenceBearing === null || point.guideReferenceBearing === undefined
+            ? null
+            : Number.isFinite(Number(point.guideReferenceBearing))
+              ? ((Number(point.guideReferenceBearing) % 360) + 360) % 360
+              : null,
       };
       const existing = candidatesByImage.get(image.imageUrl);
       if (!existing || targetSegment.startIndex === pointIndex) {
@@ -558,6 +569,21 @@ export const recognitionVectorBearing = (
 
 export const recognitionImageUpBearing = (corners: RecognitionPoint[] | null) =>
   recognitionVectorBearing(corners, 0);
+
+export const recognitionRouteBearing = (
+  corners: RecognitionPoint[] | null,
+  routeBearing: number,
+  directionMode: "auto" | "manual" = "auto",
+  manualReferenceBearing: number | null = null,
+) => {
+  const parsedReferenceBearing = Number(manualReferenceBearing);
+  const hasManualBearing =
+    directionMode === "manual" &&
+    manualReferenceBearing !== null &&
+    Number.isFinite(parsedReferenceBearing);
+  const referenceBearing = hasManualBearing ? parsedReferenceBearing : routeBearing;
+  return recognitionVectorBearing(corners, normalizeAngle(routeBearing - referenceBearing));
+};
 
 type MapLabelPlacement = {
   left: number;
@@ -1279,6 +1305,7 @@ export default function ARNavigationV3() {
   const [recognitionStatus, setRecognitionStatus] = useState<RecognitionStatus>("disabled");
   const [recognitionMessage, setRecognitionMessage] = useState("");
   const [recognitionCorners, setRecognitionCorners] = useState<RecognitionPoint[] | null>(null);
+  const [recognizedCandidateId, setRecognizedCandidateId] = useState("");
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const recognitionCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -1560,11 +1587,12 @@ export default function ARNavigationV3() {
   const recognitionCandidateSignature = recognitionCandidates
     .map(
       (candidate) =>
-        `${candidate.id}:${candidate.segmentIndex}:${recognitionSourceKey(candidate.imageUrl)}`,
+        `${candidate.id}:${candidate.segmentIndex}:${candidate.directionMode}:${candidate.referenceBearing ?? "auto"}:${recognitionSourceKey(candidate.imageUrl)}`,
     )
     .join("|");
   const recognitionRequired = recognitionCandidates.length > 0;
   const activeRecognitionCandidate =
+    recognitionCandidates.find((candidate) => candidate.id === recognizedCandidateId) ||
     recognitionCandidates.find((candidate) => candidate.segmentIndex === currentSegment) ||
     recognitionCandidates.find((candidate) => candidate.segmentIndex > currentSegment) ||
     recognitionCandidates[recognitionCandidates.length - 1];
@@ -1597,7 +1625,12 @@ export default function ARNavigationV3() {
     projectionNavigationPoints.length > 1
       ? segmentBearing(projectionNavigationPoints[0], projectionNavigationPoints[1])
       : currentBearing;
-  const imageProjectedRouteBearing = recognitionVectorBearing(recognitionCorners, projectionBearing);
+  const imageProjectedRouteBearing = recognitionRouteBearing(
+    recognitionCorners,
+    projectionBearing,
+    activeRecognitionCandidate?.directionMode || "auto",
+    activeRecognitionCandidate?.referenceBearing ?? null,
+  );
   const arProjectionRotation =
     recognitionRequired && recognitionStatus === "locked" && imageProjectedRouteBearing !== null
       ? imageProjectedRouteBearing
@@ -1711,6 +1744,7 @@ export default function ARNavigationV3() {
     recognitionTrackerRef.current = null;
     recognitionCornersRef.current = null;
     setRecognitionCorners(null);
+    setRecognizedCandidateId("");
 
     if (screen !== "navigate") return;
     if (!recognitionCandidates.length) {
@@ -1769,6 +1803,7 @@ export default function ARNavigationV3() {
     ) => {
       const routeChanged = synchronizeRecognizedRoute(candidate);
       const smoothedCorners = smoothRecognitionCorners(recognitionCornersRef.current, detection);
+      setRecognizedCandidateId(candidate.id);
       updateStatus(
         "locked",
         routeChanged
@@ -1838,6 +1873,7 @@ export default function ARNavigationV3() {
         }
 
         if (recognitionStatusRef.current === "locked" || recognitionStatusRef.current === "confirming") {
+          setRecognizedCandidateId("");
           updateStatus("lost", "已離開辨識圖，路線已隱藏，請重新對準", null);
         } else if (recognitionStatusRef.current !== "lost") {
           updateStatus("searching", "請讓現場畫面與半透明參考圖重合", null);

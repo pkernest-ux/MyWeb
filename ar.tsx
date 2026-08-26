@@ -49,6 +49,59 @@ const ArrowIcon = ({ direction, className }) => {
   return <Icon className={className} />;
 };
 
+const GuideDirectionFields = ({ node, onUpdate }) => {
+  const directionMode = node?.guideDirectionMode === 'manual' ? 'manual' : 'auto';
+  const referenceBearing = Number.isFinite(Number(node?.guideReferenceBearing))
+    ? Math.max(0, Math.min(359, Number(node.guideReferenceBearing)))
+    : 0;
+
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 space-y-3">
+      <label className="block">
+        <span className="block text-[11px] text-slate-400 mb-1">V3 路徑方向計算</span>
+        <select
+          value={directionMode}
+          onChange={(event) => onUpdate('guideDirectionMode', event.target.value)}
+          className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs text-slate-200 focus:border-cyan-500"
+        >
+          <option value="auto">系統自動計算</option>
+          <option value="manual">手動輸入照片方位</option>
+        </select>
+      </label>
+      {directionMode === 'manual' ? (
+        <label className="block">
+          <span className="block text-[11px] text-slate-400 mb-1">照片正前方的平面圖方位角</span>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min="0"
+              max="359"
+              step="1"
+              value={referenceBearing}
+              onChange={(event) => {
+                const nextValue = Number(event.target.value);
+                onUpdate(
+                  'guideReferenceBearing',
+                  Number.isFinite(nextValue) ? Math.max(0, Math.min(359, nextValue)) : 0
+                );
+              }}
+              className="min-w-0 flex-1 bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 focus:border-cyan-500"
+            />
+            <span className="text-xs font-semibold text-slate-400">度</span>
+          </div>
+          <span className="mt-1.5 block text-[10px] leading-relaxed text-slate-500">
+            平面圖上方 0°、右方 90°、下方 180°、左方 270°。系統會再依下一節點向量換算箭頭方向。
+          </span>
+        </label>
+      ) : (
+        <p className="text-[10px] leading-relaxed text-slate-500">
+          系統依目前節點與下一節點的向量計算方向，並假設辨識照片朝向該路段正前方。
+        </p>
+      )}
+    </div>
+  );
+};
+
 const getFloorLevel = (name) => {
   if (!name) return 0;
   const upper = name.toUpperCase().trim();
@@ -757,7 +810,14 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       const effectiveShaftId = updates.shaftId !== undefined ? updates.shaftId : targetNode.shaftId;
       const effectiveIsVerticalShaft = updates.isVerticalShaft !== undefined ? updates.isVerticalShaft : targetNode.isVerticalShaft;
       const isGuideUpdate = Object.keys(updates).some(field =>
-        ['guideTitle', 'guideInstruction', 'guideImageUrl', 'guideExternalUrl'].includes(field)
+        [
+          'guideTitle',
+          'guideInstruction',
+          'guideImageUrl',
+          'guideExternalUrl',
+          'guideDirectionMode',
+          'guideReferenceBearing'
+        ].includes(field)
       );
       const isShaftSync = effectiveIsVerticalShaft && effectiveShaftId && !isGuideUpdate;
       const sourceBounds = getFloorBounds(sourceFloor);
@@ -1034,7 +1094,9 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       guideInstruction: '',
       guideImageUrl: null,
       guideRecognitionStatus: 'untested',
-      guideExternalUrl: ''
+      guideExternalUrl: '',
+      guideDirectionMode: 'auto',
+      guideReferenceBearing: 0
     };
     setBuildings(prev => prev.map(b => b.id === activeBuildingId ? {
       ...b, floors: b.floors.map(f => {
@@ -1285,7 +1347,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           const totalMarkersCount = buildings.reduce((acc, b) => acc + b.floors.reduce((acc2, f) => acc2 + f.markers.length, 0), 0);
           const newMarker = {
             id: `marker_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`, code: `N${totalMarkersCount + 1}`, title: '新增辨識點', description: '', arrowDirection: 'none',
-            isVerticalShaft: false, shaftId: null, linkedFloorIds: [], x, y, imageUrl: null, enabled: true, canStop: true, navigable: true, recognitionStatus: 'untested'
+            isVerticalShaft: false, shaftId: null, linkedFloorIds: [], x, y, imageUrl: null, enabled: true, canStop: true, navigable: true, recognitionStatus: 'untested',
+            guideDirectionMode: 'auto', guideReferenceBearing: 0
           };
           setBuildings(prev => prev.map(b => b.id === activeBuildingId ? { ...b, floors: b.floors.map(f => f.id === activeFloorId ? { ...f, markers: [...f.markers, newMarker] } : f) } : b));
           setSelectedMarkerId(newMarker.id); setSelectedWaypointId(null);
@@ -2802,6 +2865,10 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 <div className="border border-slate-800 bg-slate-950 rounded-xl p-2 flex items-center justify-center min-h-[140px]">
                   {selectedMarker.imageUrl ? ( <img src={selectedMarker.imageUrl} alt="Target" className="max-w-full max-h-40 object-contain rounded" /> ) : ( <div className="text-center text-slate-600"><Camera className="w-8 h-8 mx-auto mb-2 opacity-50" /><span className="text-xs">未上傳辨識圖</span></div> )}
                 </div>
+                <GuideDirectionFields
+                  node={selectedMarker}
+                  onUpdate={(field, value) => handleMarkerUpdate(selectedMarker.id, field, value)}
+                />
               </div>
               <ARTestIntegration marker={selectedMarker} onUpdateStatus={(status) => handleMarkerUpdate(selectedMarker.id, 'recognitionStatus', status)} showAlert={(msg) => setAlertModal({ isOpen: true, message: msg })} />
             </div>
@@ -2852,7 +2919,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <h3 className="text-xs font-semibold text-cyan-300">停駐點識別與影像對位</h3>
-                      <p className="mt-1 text-[10px] leading-relaxed text-slate-400">照片只用來確認目前節點與畫面對位；V3 會依目前節點到下一節點的路網向量自動產生方向。鏡頭離開照片後會隱藏 AR 路線，重新對準即可恢復。</p>
+                      <p className="mt-1 text-[10px] leading-relaxed text-slate-400">照片用來確認目前節點與畫面對位；方向可由系統依下一節點向量自動計算，或改由管理者輸入照片方位。鏡頭離開照片後會隱藏 AR 路線。</p>
                     </div>
                     <StatusBadge status={selectedWaypoint.guideRecognitionStatus || 'untested'} />
                   </div>
@@ -2864,6 +2931,10 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                     <span className="block text-[11px] text-slate-400 mb-1">對位提示文字</span>
                     <textarea rows="3" value={selectedWaypoint.guideInstruction || ''} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'guideInstruction', e.target.value)} placeholder="例如：站在樓梯前，將門框與半透明照片重合" className="w-full resize-none bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600" />
                   </label>
+                  <GuideDirectionFields
+                    node={selectedWaypoint}
+                    onUpdate={(field, value) => handleWaypointUpdate(selectedWaypoint.id, field, value)}
+                  />
                   <label className="block">
                     <span className="block text-[11px] text-slate-400 mb-1">Google Street View 或外部參考網址</span>
                     <input type="url" value={selectedWaypoint.guideExternalUrl || ''} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'guideExternalUrl', e.target.value)} placeholder="https://..." className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600" />
@@ -2880,7 +2951,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                     <div className="border border-slate-800 bg-slate-950 rounded-xl p-2 flex items-center justify-center min-h-[120px]">
                       {selectedWaypoint.guideImageUrl ? <img src={selectedWaypoint.guideImageUrl} alt="節點識別與影像對位參考" className="max-w-full max-h-48 object-contain rounded" /> : <div className="text-center text-slate-600"><ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-50" /><span className="text-xs">尚未上傳節點識別照片</span></div>}
                     </div>
-                    <p className="mt-2 text-[10px] leading-relaxed text-cyan-200/70">請從民眾預計停駐的位置拍攝清楚、有固定紋理且少反光的場景。方向由路網節點向量自動計算，不需要為不同目的地重拍照片。</p>
+                    <p className="mt-2 text-[10px] leading-relaxed text-cyan-200/70">請從民眾預計停駐的位置拍攝清楚、有固定紋理且少反光的場景。自動模式請朝下一路段拍攝；若現場無法照此方向拍攝，請切換手動模式輸入照片方位。</p>
                   </div>
                   {selectedWaypoint.guideImageUrl && (
                     <WaypointRecognitionTester
