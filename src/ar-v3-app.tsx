@@ -10,6 +10,7 @@ import {
   Crosshair,
   ExternalLink,
   Footprints,
+  LogIn,
   LocateFixed,
   Map,
   MapPin,
@@ -125,7 +126,6 @@ const RECOGNITION_GRACE_STEP_LIMIT = 5;
 const STEP_ACCELERATION_THRESHOLD = 0.9;
 const STEP_RELEASE_THRESHOLD = 0.34;
 const STEP_COOLDOWN_MS = 420;
-const FIELD_CALIBRATION_LOGIN_ATTEMPT_KEY = "v3-field-calibration-login-attempted";
 const DEFAULT_GUIDE_IMAGE_URL = "./assets/ar-v3/hsinchu-city-hall-navigation-clean.png";
 const DEFAULT_DESTINATION_LABEL = "產業發展處工商科(工商登記)";
 const DEFAULT_ORIGIN_LABELS = ["大門", "入口", "正門"];
@@ -417,6 +417,14 @@ type NodeRecognitionImage = {
   source: RouteRecognitionCandidate["source"];
 };
 
+type RouteCalibrationBaseline = {
+  nodeId: string;
+  nodeLabel: string;
+  routeBearing: number;
+  referenceBearing: number;
+  offset: number;
+};
+
 export const nodeRecognitionImages = (point: any): NodeRecognitionImage[] => {
   const images: NodeRecognitionImage[] = [];
   const markerImageUrl = point?.imageUrl?.trim?.() || "";
@@ -437,6 +445,37 @@ export const nodeRecognitionImages = (point: any): NodeRecognitionImage[] => {
   }
   return images;
 };
+
+const explicitNodeReferenceBearing = (point: any) => {
+  if (point?.guideDirectionMode === "auto") return null;
+  return normalizeOptionalHeading(point?.guideReferenceBearing);
+};
+
+export const buildRouteCalibrationBaseline = (
+  points: Array<any>,
+): RouteCalibrationBaseline | null => {
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const point = points[index];
+    const nextPoint = points[index + 1];
+    const referenceBearing = explicitNodeReferenceBearing(point);
+    if (!nodeRecognitionImages(point).length || referenceBearing === null) continue;
+
+    const routeBearing = segmentBearing(point, nextPoint);
+    return {
+      nodeId: String(point.id || ""),
+      nodeLabel: nodeLabel(point),
+      routeBearing,
+      referenceBearing,
+      offset: normalizeAngle(referenceBearing - routeBearing),
+    };
+  }
+  return null;
+};
+
+export const deriveReferenceBearingFromBaseline = (
+  routeBearing: number,
+  baseline: RouteCalibrationBaseline | null,
+) => baseline ? normalizeHeading(routeBearing + baseline.offset) : null;
 
 export const isPublicStop = (node: NodeData) =>
   node.canStop !== false &&
@@ -533,7 +572,8 @@ const normalizedRecognitionDirection = (point: any) => {
         : "auto";
   return {
     directionMode,
-    referenceBearing: normalizeOptionalHeading(point?.guideReferenceBearing),
+    referenceBearing:
+      directionMode === "auto" ? null : normalizeOptionalHeading(point?.guideReferenceBearing),
     capturedDeviceHeading: normalizeOptionalHeading(point?.guideDeviceHeading),
   };
 };
@@ -1438,6 +1478,7 @@ export default function ARNavigationV3() {
   const [fieldCalibrationAuth, setFieldCalibrationAuth] = useState<
     "idle" | "checking" | "ready" | "login-required"
   >(fieldCalibrationEnabled ? "checking" : "idle");
+  const [fieldCalibrationUser, setFieldCalibrationUser] = useState("");
   const [fieldCalibrationNodeId, setFieldCalibrationNodeId] = useState("");
   const [fieldCalibrationAngle, setFieldCalibrationAngle] = useState(0);
   const [fieldCalibrationSavedAngle, setFieldCalibrationSavedAngle] = useState(0);
@@ -1447,7 +1488,7 @@ export default function ARNavigationV3() {
   >("idle");
   const [fieldCalibrationMessage, setFieldCalibrationMessage] = useState("");
   const fieldCalibrationLoginUrl = `/.auth/login/github?post_login_redirect_uri=${encodeURIComponent(
-    `${window.location.pathname}${window.location.search}`,
+    `${window.location.pathname}${window.location.search}${window.location.hash}`,
   )}`;
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const recognitionCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1530,7 +1571,11 @@ export default function ARNavigationV3() {
   useEffect(() => {
     if (!fieldCalibrationEnabled) return;
     let active = true;
-    fetch("/.auth/me", { cache: "no-store" })
+    fetch("/.auth/me", {
+      cache: "no-store",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+    })
       .then(async (response) => {
         const contentType = response.headers.get("content-type") || "";
         if (!response.ok || !contentType.includes("application/json")) return null;
@@ -1539,33 +1584,26 @@ export default function ARNavigationV3() {
       .then((authData) => {
         if (!active) return;
         if (authData?.clientPrincipal) {
-          try {
-            window.sessionStorage.removeItem(FIELD_CALIBRATION_LOGIN_ATTEMPT_KEY);
-          } catch {
-            // Authentication remains usable when session storage is unavailable.
-          }
+          setFieldCalibrationUser(authData.clientPrincipal.userDetails || "已驗證使用者");
           setFieldCalibrationAuth("ready");
+          setFieldCalibrationMessage("登入完成，角度確認後可直接同步。");
           return;
         }
 
+        setFieldCalibrationUser("");
         setFieldCalibrationAuth("login-required");
-        if (window.location.protocol !== "https:") return;
-        try {
-          if (window.sessionStorage.getItem(FIELD_CALIBRATION_LOGIN_ATTEMPT_KEY) === "1") return;
-          window.sessionStorage.setItem(FIELD_CALIBRATION_LOGIN_ATTEMPT_KEY, "1");
-        } catch {
-          // Continue to the login endpoint even if session storage is unavailable.
-        }
-        setFieldCalibrationMessage("正在登入現場校正模式，登入後即可直接同步。");
-        window.location.replace(fieldCalibrationLoginUrl);
+        setFieldCalibrationMessage("請先登入後台帳號，再開始現場角度校正。");
       })
       .catch(() => {
-        if (active) setFieldCalibrationAuth("login-required");
+        if (!active) return;
+        setFieldCalibrationUser("");
+        setFieldCalibrationAuth("login-required");
+        setFieldCalibrationMessage("無法確認登入狀態，請重新登入後再試。");
       });
     return () => {
       active = false;
     };
-  }, [fieldCalibrationEnabled, fieldCalibrationLoginUrl]);
+  }, [fieldCalibrationEnabled]);
 
   useEffect(() => {
     if (screen !== "navigate" || recognitionGraceDeadline === null) return;
@@ -1827,6 +1865,15 @@ export default function ARNavigationV3() {
 
   const selectedFloor = graph.floors.find((floor) => floor.id === selectedFloorId) || visibleFloors[0];
   const destination = destinationId ? graph.nodes[destinationId] : null;
+  const calibrationRouteStartId = origin?.snapId || "";
+  const calibrationRouteIds = useMemo(() => {
+    if (!calibrationRouteStartId || !destinationId) return [];
+    return shortestPathThroughStops(graph, [calibrationRouteStartId, destinationId]);
+  }, [calibrationRouteStartId, destinationId, graph]);
+  const calibrationRoutePoints = calibrationRouteIds
+    .map((id) => graph.nodes[id])
+    .filter(Boolean);
+  const routeCalibrationBaseline = buildRouteCalibrationBaseline(calibrationRoutePoints);
   const routeStartId = runtimeAnchorId || origin?.snapId || "";
   const routeIds = useMemo(() => {
     if (!routeStartId || !destinationId) return [];
@@ -1935,11 +1982,23 @@ export default function ARNavigationV3() {
       ? normalizeHeading(activeCapturedHeading - activeReferenceBearing)
       : null;
   const effectiveMapUpHeading = configuredMapUpHeading ?? inferredMapUpHeading;
+  const capturedReferenceBearing =
+    activeCapturedHeading !== null && effectiveMapUpHeading !== null
+      ? normalizeHeading(activeCapturedHeading - effectiveMapUpHeading)
+      : null;
+  const routeDerivedReferenceBearing =
+    activeReferenceBearing === null && capturedReferenceBearing === null
+      ? deriveReferenceBearingFromBaseline(projectionBearing, routeCalibrationBaseline)
+      : null;
   const effectiveReferenceBearing =
     activeReferenceBearing ??
-    (activeCapturedHeading !== null && effectiveMapUpHeading !== null
-      ? normalizeHeading(activeCapturedHeading - effectiveMapUpHeading)
-      : null);
+    capturedReferenceBearing ??
+    routeDerivedReferenceBearing;
+  const effectiveDirectionMode: RouteRecognitionCandidate["directionMode"] =
+    routeDerivedReferenceBearing !== null
+      ? "manual"
+      : activeRecognitionCandidate?.directionMode || "auto";
+  const activeAngleIsRouteDerived = routeDerivedReferenceBearing !== null;
   const recognitionGraceActive = Boolean(
     recognitionGraceDeadline !== null &&
       recognitionGraceRemaining > 0 &&
@@ -1960,8 +2019,18 @@ export default function ARNavigationV3() {
     setFieldCalibrationSavedAngle(initialAngle);
     setFieldCalibrationConfirmed(false);
     setFieldCalibrationSync("idle");
-    setFieldCalibrationMessage("調整數值時，AR 路線會立即旋轉預覽。");
-  }, [effectiveReferenceBearing, fieldCalibrationNodeId, fieldCalibrationTargetNode]);
+    setFieldCalibrationMessage(
+      activeAngleIsRouteDerived && routeCalibrationBaseline
+        ? `已依首點「${routeCalibrationBaseline.nodeLabel}」與目前路段方向自動帶入，可再單點微調。`
+        : "調整數值時，AR 路線會立即旋轉預覽。",
+    );
+  }, [
+    activeAngleIsRouteDerived,
+    effectiveReferenceBearing,
+    fieldCalibrationNodeId,
+    fieldCalibrationTargetNode,
+    routeCalibrationBaseline,
+  ]);
 
   const fieldCalibrationPreviewActive = Boolean(
     fieldCalibrationTargetNode && fieldCalibrationNodeId === fieldCalibrationTargetNode.id,
@@ -1971,7 +2040,7 @@ export default function ARNavigationV3() {
     : effectiveReferenceBearing;
   const projectionDirectionMode = fieldCalibrationPreviewActive
     ? "manual"
-    : activeRecognitionCandidate?.directionMode || "auto";
+    : effectiveDirectionMode;
   const imageProjectedRouteBearing = recognitionRouteBearing(
     recognitionCorners,
     projectionBearing,
@@ -2101,10 +2170,10 @@ export default function ARNavigationV3() {
   const activeDirectionConfigured =
     fieldCalibrationPreviewActive ||
     !activeRecognitionCandidate ||
-    activeRecognitionCandidate.directionMode === "auto" ||
-    (activeRecognitionCandidate.directionMode === "manual" && effectiveReferenceBearing !== null) ||
+    effectiveDirectionMode === "auto" ||
+    (effectiveDirectionMode === "manual" && effectiveReferenceBearing !== null) ||
     (
-      activeRecognitionCandidate.directionMode === "sensor" &&
+      effectiveDirectionMode === "sensor" &&
       activeCapturedHeading !== null &&
       effectiveMapUpHeading !== null
     );
@@ -2142,10 +2211,11 @@ export default function ARNavigationV3() {
     setFieldCalibrationMessage("正在同步目前節點角度...");
 
     try {
-      const response = await fetch("./api/save-ar-content", {
+      const response = await fetch("/api/save-ar-content", {
         method: "POST",
-        credentials: "same-origin",
+        credentials: "include",
         headers: {
+          Accept: "application/json",
           "Content-Type": "application/json",
           "X-AR-Save-Contract": "ar-angle-calibration-v1",
         },
@@ -2161,7 +2231,13 @@ export default function ARNavigationV3() {
         }),
       });
       const contentType = response.headers.get("content-type") || "";
-      if (!contentType.includes("application/json")) {
+      if (
+        response.status === 401 ||
+        response.status === 403 ||
+        response.redirected ||
+        !contentType.includes("application/json")
+      ) {
+        setFieldCalibrationUser("");
         setFieldCalibrationAuth("login-required");
         throw new Error("登入狀態已失效，請重新登入後再同步。");
       }
@@ -2654,6 +2730,32 @@ export default function ARNavigationV3() {
     setScreen("destination");
   };
 
+  if (fieldCalibrationEnabled && fieldCalibrationAuth !== "ready") {
+    const isCheckingAuth = fieldCalibrationAuth === "checking";
+    return (
+      <main className="v3-calibration-auth-gate">
+        <section aria-live="polite">
+          <div className="v3-calibration-auth-icon">
+            {isCheckingAuth ? <RefreshCw className="is-spinning" /> : <LogIn />}
+          </div>
+          <span>V3 現場角度校正</span>
+          <h1>{isCheckingAuth ? "正在確認登入狀態" : "請先登入後台"}</h1>
+          <p>
+            {isCheckingAuth
+              ? "正在向 Azure 確認目前帳號，完成後會自動進入校正流程。"
+              : "登入成功後會返回這一頁。之後掃描、調整與同步單點角度時，不需要再次登入。"}
+          </p>
+          {!isCheckingAuth && (
+            <a href={fieldCalibrationLoginUrl} rel="nofollow">
+              <LogIn aria-hidden="true" />
+              登入後開始校正
+            </a>
+          )}
+        </section>
+      </main>
+    );
+  }
+
   if (loading) {
     return (
       <main className="v2-loading">
@@ -2741,6 +2843,9 @@ export default function ARNavigationV3() {
 
               <div className="v3-field-calibration-metrics">
                 <span>照片基準 <strong>{fieldCalibrationAngle.toFixed(0)}°</strong></span>
+                <span>
+                  角度來源 <strong>{activeAngleIsRouteDerived ? "首點推算" : "單點設定"}</strong>
+                </span>
                 <span>手機方位 <strong>{heading === null ? "--" : `${Math.round(heading)}°`}</strong></span>
                 <span>
                   畫面旋轉 <strong>{arProjectionRotation > 0 ? "+" : ""}{Math.round(arProjectionRotation)}°</strong>
@@ -2829,6 +2934,7 @@ export default function ARNavigationV3() {
               ) : (
                 <p className={`v3-field-calibration-message is-${fieldCalibrationSync}`}>
                   {fieldCalibrationMessage}
+                  {fieldCalibrationUser ? `（${fieldCalibrationUser}）` : ""}
                 </p>
               )}
             </aside>
