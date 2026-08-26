@@ -49,11 +49,43 @@ const ArrowIcon = ({ direction, className }) => {
   return <Icon className={className} />;
 };
 
-const GuideDirectionFields = ({ node, onUpdate }) => {
-  const directionMode = node?.guideDirectionMode === 'manual' ? 'manual' : 'auto';
-  const referenceBearing = Number.isFinite(Number(node?.guideReferenceBearing))
+const GuideDirectionFields = ({ node, floor, onUpdate, showAlert }) => {
+  const [isCapturing, setIsCapturing] = useState(false);
+  const hasNumericValue = (value) =>
+    value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
+  const directionMode = ['sensor', 'manual'].includes(node?.guideDirectionMode)
+    ? node.guideDirectionMode
+    : 'auto';
+  const referenceBearing = hasNumericValue(node?.guideReferenceBearing)
     ? Math.max(0, Math.min(359, Number(node.guideReferenceBearing)))
     : 0;
+  const floorMapUpHeading = hasNumericValue(floor?.mapUpHeading)
+    ? normalizeAngle(Number(floor.mapUpHeading))
+    : null;
+  const capturedHeading = hasNumericValue(node?.guideDeviceHeading)
+    ? normalizeAngle(Number(node.guideDeviceHeading))
+    : null;
+
+  const recordCurrentHeading = async () => {
+    if (floorMapUpHeading === null) {
+      showAlert('請先開啟「座標、比例尺與方向基準設定」，記錄平面圖上方所對應的現場方位。');
+      return;
+    }
+    setIsCapturing(true);
+    try {
+      const result = await captureCurrentDeviceHeading();
+      onUpdate('guideDirectionMode', 'sensor');
+      onUpdate('guideDeviceHeading', result.heading);
+      onUpdate('guideReferenceBearing', normalizeAngle(result.heading - floorMapUpHeading));
+      onUpdate('guideHeadingAccuracy', result.accuracy);
+      onUpdate('guideHeadingCapturedAt', new Date().toISOString());
+      showAlert(`方位記錄完成：手機 ${result.heading.toFixed(0)}°，換算平面圖方位 ${normalizeAngle(result.heading - floorMapUpHeading).toFixed(0)}°。`);
+    } catch (error) {
+      showAlert(error?.message || '無法記錄目前方位。');
+    } finally {
+      setIsCapturing(false);
+    }
+  };
 
   return (
     <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 space-y-3">
@@ -64,11 +96,31 @@ const GuideDirectionFields = ({ node, onUpdate }) => {
           onChange={(event) => onUpdate('guideDirectionMode', event.target.value)}
           className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs text-slate-200 focus:border-cyan-500"
         >
-          <option value="auto">系統自動計算</option>
+          <option value="sensor">現場記錄手機方位</option>
           <option value="manual">手動輸入照片方位</option>
+          <option value="auto">沿路網方向自動推估（舊資料相容）</option>
         </select>
       </label>
-      {directionMode === 'manual' ? (
+      {directionMode === 'sensor' ? (
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={recordCurrentHeading}
+            disabled={isCapturing}
+            className="w-full flex items-center justify-center gap-2 rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-3 py-2.5 text-xs font-bold text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+          >
+            <Navigation className="w-4 h-4" />
+            {isCapturing ? '正在穩定取樣...' : '記錄目前手機面向'}
+          </button>
+          <p className="text-[10px] leading-relaxed text-slate-500">
+            {floorMapUpHeading === null
+              ? '尚未設定本樓層的方向基準，請先至座標與比例尺設定完成校正。'
+              : capturedHeading === null
+                ? `樓層方向基準 ${floorMapUpHeading.toFixed(0)}° 已就緒，請站在照片固定位置並面向照片拍攝方向。`
+                : `已記錄手機 ${capturedHeading.toFixed(0)}°，照片對應平面圖 ${referenceBearing.toFixed(0)}°。`}
+          </p>
+        </div>
+      ) : directionMode === 'manual' ? (
         <label className="block">
           <span className="block text-[11px] text-slate-400 mb-1">照片正前方的平面圖方位角</span>
           <div className="flex items-center gap-2">
@@ -95,7 +147,7 @@ const GuideDirectionFields = ({ node, onUpdate }) => {
         </label>
       ) : (
         <p className="text-[10px] leading-relaxed text-slate-500">
-          系統依目前節點與下一節點的向量計算方向，並假設辨識照片朝向該路段正前方。
+          系統假設辨識照片朝向規劃路徑的下一節點。此模式只供既有資料相容，現場新點位建議改用手機記錄方位。
         </p>
       )}
     </div>
@@ -137,6 +189,59 @@ const getHeadingFromOrientationEvent = (event) => {
     return normalizeAngle(360 - event.alpha);
   }
   return null;
+};
+
+const captureCurrentDeviceHeading = async () => {
+  if (!window.isSecureContext) throw new Error('方位記錄需要 HTTPS 或 localhost。');
+  const Orientation = window.DeviceOrientationEvent;
+  if (Orientation?.requestPermission) {
+    const permission = await Orientation.requestPermission();
+    if (permission !== 'granted') throw new Error('未允許動作與方向權限。');
+  }
+
+  return new Promise((resolve, reject) => {
+    const samples = [];
+    const accuracies = [];
+    let timeoutId = null;
+    let settled = false;
+
+    const cleanup = () => {
+      window.removeEventListener('deviceorientation', onOrientation, true);
+      window.removeEventListener('deviceorientationabsolute', onOrientation, true);
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (samples.length < 4) {
+        reject(new Error('尚未取得穩定方位，請確認手機已開啟方向感測後再試一次。'));
+        return;
+      }
+      const meanSin = samples.reduce((total, value) => total + Math.sin(value * Math.PI / 180), 0) / samples.length;
+      const meanCos = samples.reduce((total, value) => total + Math.cos(value * Math.PI / 180), 0) / samples.length;
+      const heading = normalizeAngle(Math.atan2(meanSin, meanCos) * 180 / Math.PI);
+      resolve({
+        heading,
+        accuracy: accuracies.length
+          ? accuracies.reduce((total, value) => total + value, 0) / accuracies.length
+          : null,
+        sampleCount: samples.length
+      });
+    };
+    const onOrientation = (event) => {
+      const heading = getHeadingFromOrientationEvent(event);
+      if (heading == null) return;
+      samples.push(heading);
+      const accuracy = Number(event.webkitCompassAccuracy);
+      if (Number.isFinite(accuracy) && accuracy >= 0) accuracies.push(accuracy);
+      if (samples.length >= 12) finish();
+    };
+
+    window.addEventListener('deviceorientation', onOrientation, true);
+    window.addEventListener('deviceorientationabsolute', onOrientation, true);
+    timeoutId = window.setTimeout(finish, 2400);
+  });
 };
 
 const getBearingFromNodes = (currentNode, nextNode) => {
@@ -311,6 +416,9 @@ const createDefaultBuildings = () => [
         markers: [],
         waypoints: [],
         edges: [],
+        mapUpHeading: null,
+        mapUpHeadingAccuracy: null,
+        mapUpHeadingCapturedAt: null,
         bounds: { blX: 0, blY: 0, trX: 100, trY: 100 }
       }
     ]
@@ -399,7 +507,17 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const [alertModal, setAlertModal] = useState({ isOpen: false, message: '' });
   const [cloudProjectModal, setCloudProjectModal] = useState({ isOpen: false, isLoading: false, projects: [], error: '' });
   const [permissionsModal, setPermissionsModal] = useState(false);
-  const [boundsModal, setBoundsModal] = useState({ isOpen: false, blX: 0, blY: 0, trX: 100, trY: 100 });
+  const [boundsModal, setBoundsModal] = useState({
+    isOpen: false,
+    blX: 0,
+    blY: 0,
+    trX: 100,
+    trY: 100,
+    mapUpHeading: null,
+    mapUpHeadingAccuracy: null,
+    mapUpHeadingCapturedAt: null
+  });
+  const [isCapturingFloorHeading, setIsCapturingFloorHeading] = useState(false);
   const isLoadingProjectRef = useRef(false);
   const [hadStoredProjectsOnLoad] = useState(() => {
     if (publicOnly) return false;
@@ -723,6 +841,22 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const currentWaypoints = currentFloor?.waypoints || [];
   const currentEdges = currentFloor?.edges || [];
   const currentBounds = getFloorBounds(currentFloor);
+  const captureFloorMapUpHeading = async () => {
+    setIsCapturingFloorHeading(true);
+    try {
+      const result = await captureCurrentDeviceHeading();
+      setBoundsModal(previous => ({
+        ...previous,
+        mapUpHeading: result.heading,
+        mapUpHeadingAccuracy: result.accuracy,
+        mapUpHeadingCapturedAt: new Date().toISOString()
+      }));
+    } catch (error) {
+      setAlertModal({ isOpen: true, message: error?.message || '無法記錄樓層方向基準。' });
+    } finally {
+      setIsCapturingFloorHeading(false);
+    }
+  };
   const sortedCurrentFloors = currentBuilding?.floors
     .slice()
     .sort((a, b) => getFloorLevel(b.name) - getFloorLevel(a.name)) || [];
@@ -816,7 +950,10 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           'guideImageUrl',
           'guideExternalUrl',
           'guideDirectionMode',
-          'guideReferenceBearing'
+          'guideReferenceBearing',
+          'guideDeviceHeading',
+          'guideHeadingAccuracy',
+          'guideHeadingCapturedAt'
         ].includes(field)
       );
       const isShaftSync = effectiveIsVerticalShaft && effectiveShaftId && !isGuideUpdate;
@@ -956,7 +1093,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         if (!name) return;
         const newBId = `b_${Date.now()}`;
         const newFId = `f_${Date.now()}`;
-        setBuildings(prev => [...prev, { id: newBId, name, floors: [{ id: newFId, name: '1F', imageUrl: null, navigationImageUrl: null, markers: [], waypoints: [], edges: [], bounds: { blX: 0, blY: 0, trX: 100, trY: 100 } }] }]);
+        setBuildings(prev => [...prev, { id: newBId, name, floors: [{ id: newFId, name: '1F', imageUrl: null, navigationImageUrl: null, markers: [], waypoints: [], edges: [], mapUpHeading: null, mapUpHeadingAccuracy: null, mapUpHeadingCapturedAt: null, bounds: { blX: 0, blY: 0, trX: 100, trY: 100 } }] }]);
         setActiveBuildingId(newBId); setActiveFloorId(newFId);
       }
     });
@@ -971,7 +1108,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         const newFId = `f_${Date.now()}`;
         const inheritBounds = currentFloor ? { ...getFloorBounds(currentFloor) } : { blX: 0, blY: 0, trX: 100, trY: 100 };
         setBuildings(prev => prev.map(b => b.id === activeBuildingId ? {
-          ...b, floors: [...b.floors, { id: newFId, name, imageUrl: null, navigationImageUrl: null, markers: [], waypoints: [], edges: [], bounds: inheritBounds }]
+          ...b, floors: [...b.floors, { id: newFId, name, imageUrl: null, navigationImageUrl: null, markers: [], waypoints: [], edges: [], mapUpHeading: null, mapUpHeadingAccuracy: null, mapUpHeadingCapturedAt: null, bounds: inheritBounds }]
         } : b));
         setActiveFloorId(newFId);
       }
@@ -1095,8 +1232,11 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       guideImageUrl: null,
       guideRecognitionStatus: 'untested',
       guideExternalUrl: '',
-      guideDirectionMode: 'auto',
-      guideReferenceBearing: 0
+      guideDirectionMode: 'sensor',
+      guideReferenceBearing: null,
+      guideDeviceHeading: null,
+      guideHeadingAccuracy: null,
+      guideHeadingCapturedAt: null
     };
     setBuildings(prev => prev.map(b => b.id === activeBuildingId ? {
       ...b, floors: b.floors.map(f => {
@@ -1348,7 +1488,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           const newMarker = {
             id: `marker_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`, code: `N${totalMarkersCount + 1}`, title: '新增辨識點', description: '', arrowDirection: 'none',
             isVerticalShaft: false, shaftId: null, linkedFloorIds: [], x, y, imageUrl: null, enabled: true, canStop: true, navigable: true, recognitionStatus: 'untested',
-            guideDirectionMode: 'auto', guideReferenceBearing: 0
+            guideDirectionMode: 'sensor', guideReferenceBearing: null, guideDeviceHeading: null, guideHeadingAccuracy: null, guideHeadingCapturedAt: null
           };
           setBuildings(prev => prev.map(b => b.id === activeBuildingId ? { ...b, floors: b.floors.map(f => f.id === activeFloorId ? { ...f, markers: [...f.markers, newMarker] } : f) } : b));
           setSelectedMarkerId(newMarker.id); setSelectedWaypointId(null);
@@ -2327,7 +2467,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 <button onClick={() => { setIsAddMode(!isAddMode); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsMeasuring(false); setIsPathMode(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setDraggingId(null); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isAddMode ? 'bg-cyan-500 text-slate-950 shadow-[0_0_15px_rgba(6,182,212,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-cyan-400 hover:bg-slate-800'}`} title="AR 點位建置與編輯">
                   {isAddMode ? <X className="w-5 h-5" /> : <MapPin className="w-5 h-5" />}
                 </button>
-                <button onClick={() => setBoundsModal({ isOpen: true, blX: currentBounds.blX, blY: currentBounds.blY, trX: currentBounds.trX, trY: currentBounds.trY })} className="flex shrink-0 items-center justify-center w-10 h-10 bg-slate-900/90 backdrop-blur border border-slate-700 text-blue-400 hover:bg-slate-800 rounded-xl transition-all shadow-lg" title="座標與比例尺設定">
+                <button onClick={() => setBoundsModal({ isOpen: true, blX: currentBounds.blX, blY: currentBounds.blY, trX: currentBounds.trX, trY: currentBounds.trY, mapUpHeading: currentFloor?.mapUpHeading ?? null, mapUpHeadingAccuracy: currentFloor?.mapUpHeadingAccuracy ?? null, mapUpHeadingCapturedAt: currentFloor?.mapUpHeadingCapturedAt ?? null })} className="flex shrink-0 items-center justify-center w-10 h-10 bg-slate-900/90 backdrop-blur border border-slate-700 text-blue-400 hover:bg-slate-800 rounded-xl transition-all shadow-lg" title="座標、比例尺與方向基準設定">
                   <Target className="w-5 h-5" />
                 </button>
                 <button onClick={requestClearCurrentFloor} disabled={currentMarkers.length + currentWaypoints.length + currentEdges.length === 0} className="flex shrink-0 items-center justify-center w-10 h-10 bg-red-500/10 backdrop-blur border border-red-500/30 text-red-300 hover:bg-red-500/20 rounded-xl transition-all shadow-lg disabled:opacity-40 disabled:cursor-not-allowed" title="清除目前圖面的所有路網與點位">
@@ -2667,9 +2807,39 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 <div><label className="text-[10px] text-slate-500">Y 座標 (m)</label><input type="number" value={boundsModal.trY} onChange={e => setBoundsModal({...boundsModal, trY: parseFloat(e.target.value)||0})} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 mt-1" /></div>
               </div>
             </div>
+            <div className="mb-6 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-3">
+              <div>
+                <h4 className="text-xs font-bold text-emerald-300">平面圖方向基準</h4>
+                <p className="mt-1 text-[11px] leading-relaxed text-slate-400">面向平面圖上方在現場代表的方向後按下記錄。系統會用這個基準，把路網角度轉成手機的真實方位。</p>
+              </div>
+              <div className="flex items-end gap-2">
+                <label className="min-w-0 flex-1">
+                  <span className="block text-[10px] text-slate-500 mb-1">平面圖上方的裝置方位角</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      max="359"
+                      step="1"
+                      value={boundsModal.mapUpHeading ?? ''}
+                      onChange={event => setBoundsModal({ ...boundsModal, mapUpHeading: event.target.value === '' ? null : normalizeAngle(Number(event.target.value)) })}
+                      className="min-w-0 flex-1 bg-slate-950 border border-slate-700 rounded px-3 py-2 text-sm text-slate-200"
+                    />
+                    <span className="text-xs text-slate-400">度</span>
+                  </div>
+                </label>
+                <button type="button" onClick={captureFloorMapUpHeading} disabled={isCapturingFloorHeading} className="shrink-0 flex items-center gap-2 rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50">
+                  <Navigation className="w-4 h-4" />
+                  {isCapturingFloorHeading ? '取樣中' : '記錄目前面向'}
+                </button>
+              </div>
+              {boundsModal.mapUpHeading !== null && (
+                <p className="text-[10px] text-emerald-200/70">目前基準：{Number(boundsModal.mapUpHeading).toFixed(0)}°{boundsModal.mapUpHeadingAccuracy !== null && boundsModal.mapUpHeadingAccuracy !== undefined && Number.isFinite(Number(boundsModal.mapUpHeadingAccuracy)) ? `，裝置回報誤差約 ${Number(boundsModal.mapUpHeadingAccuracy).toFixed(0)}°` : ''}</p>
+              )}
+            </div>
             <button onClick={() => {
-              setBuildings(prev => prev.map(b => b.id === activeBuildingId ? { ...b, floors: b.floors.map(f => f.id === activeFloorId ? { ...f, bounds: { blX: boundsModal.blX, blY: boundsModal.blY, trX: boundsModal.trX, trY: boundsModal.trY } } : f) } : b));
-              setBoundsModal({ isOpen: false }); setAlertModal({ isOpen: true, message: '樓層座標已更新！' });
+              setBuildings(prev => prev.map(b => b.id === activeBuildingId ? { ...b, floors: b.floors.map(f => f.id === activeFloorId ? { ...f, bounds: { blX: boundsModal.blX, blY: boundsModal.blY, trX: boundsModal.trX, trY: boundsModal.trY }, mapUpHeading: boundsModal.mapUpHeading, mapUpHeadingAccuracy: boundsModal.mapUpHeadingAccuracy, mapUpHeadingCapturedAt: boundsModal.mapUpHeadingCapturedAt } : f) } : b));
+              setBoundsModal({ isOpen: false }); setAlertModal({ isOpen: true, message: '樓層座標、比例尺與方向基準已更新！' });
             }} className="w-full py-3 bg-blue-500 text-white font-bold rounded-lg shadow-lg">儲存套用</button>
           </div>
         </div>
@@ -2867,7 +3037,9 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 </div>
                 <GuideDirectionFields
                   node={selectedMarker}
+                  floor={currentFloor}
                   onUpdate={(field, value) => handleMarkerUpdate(selectedMarker.id, field, value)}
+                  showAlert={(message) => setAlertModal({ isOpen: true, message })}
                 />
               </div>
               <ARTestIntegration marker={selectedMarker} onUpdateStatus={(status) => handleMarkerUpdate(selectedMarker.id, 'recognitionStatus', status)} showAlert={(msg) => setAlertModal({ isOpen: true, message: msg })} />
@@ -2933,7 +3105,9 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                   </label>
                   <GuideDirectionFields
                     node={selectedWaypoint}
+                    floor={currentFloor}
                     onUpdate={(field, value) => handleWaypointUpdate(selectedWaypoint.id, field, value)}
+                    showAlert={(message) => setAlertModal({ isOpen: true, message })}
                   />
                   <label className="block">
                     <span className="block text-[11px] text-slate-400 mb-1">Google Street View 或外部參考網址</span>
