@@ -1929,6 +1929,43 @@ button:disabled {
   font-size: 16px;
 }
 
+@media (max-height: 760px) {
+  .v3-permission-screen {
+    padding-top: calc(34px + env(safe-area-inset-top));
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+
+  .v3-permission-hero {
+    aspect-ratio: 2.2;
+  }
+
+  .v3-permission-panel {
+    padding: 16px 20px 14px;
+  }
+
+  .v3-permission-panel h1 {
+    margin: 8px 0 14px;
+    font-size: 24px;
+  }
+
+  .v3-permission-panel .v3-guide-segment-summary {
+    margin-top: -7px;
+  }
+
+  .v3-permission-list {
+    gap: 6px;
+    margin: 12px 0;
+  }
+
+  .v3-permission-list > div {
+    min-height: 50px;
+  }
+
+  .v3-permission-panel .v2-primary-button {
+    min-height: 54px;
+  }
+}
+
 .v2-camera,
 .v2-camera-shade {
   position: absolute;
@@ -2093,6 +2130,12 @@ button:disabled {
 .v3-recognition-overlay.is-locked .v3-recognition-status {
   border-color: rgba(54, 211, 153, 0.58);
   color: #c9ffe5;
+}
+
+.v3-recognition-overlay.is-grace > svg,
+.v3-recognition-overlay.is-grace .v3-recognition-frame,
+.v3-recognition-overlay.is-grace .v3-recognition-status {
+  opacity: 0;
 }
 
 .v3-recognition-overlay.is-lost .v3-recognition-frame,
@@ -2327,6 +2370,13 @@ button:disabled {
   width: 17px;
   height: 17px;
   color: #f7c948;
+}
+
+.v2-heading-chip.is-grace {
+  border-color: rgba(247, 201, 72, 0.66);
+  background: rgba(24, 22, 12, 0.84);
+  color: #fff1ad;
+  white-space: nowrap;
 }
 
 .v3-field-calibration {

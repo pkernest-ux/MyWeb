@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Camera,
@@ -9,6 +9,7 @@ import {
   Compass,
   Crosshair,
   ExternalLink,
+  Footprints,
   LocateFixed,
   Map,
   MapPin,
@@ -107,6 +108,7 @@ type RecognitionStatus =
   | "searching"
   | "confirming"
   | "locked"
+  | "grace"
   | "lost"
   | "error";
 
@@ -117,6 +119,13 @@ const AR_SCREEN_UNITS_PER_METER = 2.4;
 const RECOGNITION_FRAME_INTERVAL_MS = 120;
 const RECOGNITION_CONFIRMATION_FRAMES = 2;
 const RECOGNITION_LOST_DELAY_MS = 400;
+const RECOGNITION_GRACE_PERIOD_MS = 20_000;
+const RECOGNITION_GRACE_SECONDS = RECOGNITION_GRACE_PERIOD_MS / 1000;
+const RECOGNITION_GRACE_STEP_LIMIT = 5;
+const STEP_ACCELERATION_THRESHOLD = 0.9;
+const STEP_RELEASE_THRESHOLD = 0.34;
+const STEP_COOLDOWN_MS = 420;
+const FIELD_CALIBRATION_LOGIN_ATTEMPT_KEY = "v3-field-calibration-login-attempted";
 const DEFAULT_GUIDE_IMAGE_URL = "./assets/ar-v3/hsinchu-city-hall-navigation-clean.png";
 const DEFAULT_DESTINATION_LABEL = "產業發展處工商科(工商登記)";
 const DEFAULT_ORIGIN_LABELS = ["大門", "入口", "正門"];
@@ -1417,6 +1426,12 @@ export default function ARNavigationV3() {
   const [recognizedCandidateId, setRecognizedCandidateId] = useState("");
   const [runtimeAnchorId, setRuntimeAnchorId] = useState("");
   const [recognitionHeadingOffset, setRecognitionHeadingOffset] = useState<number | null>(null);
+  const [recognitionGraceDeadline, setRecognitionGraceDeadline] = useState<number | null>(null);
+  const [recognitionGraceRemaining, setRecognitionGraceRemaining] = useState(0);
+  const [recognitionGraceSteps, setRecognitionGraceSteps] = useState(0);
+  const [motionSensorState, setMotionSensorState] = useState<
+    "idle" | "ready" | "denied" | "unavailable"
+  >("idle");
   const [fieldCalibrationEnabled] = useState(
     () => new URLSearchParams(window.location.search).get("calibrate") === "1",
   );
@@ -1431,6 +1446,9 @@ export default function ARNavigationV3() {
     "idle" | "saving" | "success" | "error"
   >("idle");
   const [fieldCalibrationMessage, setFieldCalibrationMessage] = useState("");
+  const fieldCalibrationLoginUrl = `/.auth/login/github?post_login_redirect_uri=${encodeURIComponent(
+    `${window.location.pathname}${window.location.search}`,
+  )}`;
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const recognitionCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -1442,8 +1460,13 @@ export default function ARNavigationV3() {
   const recognitionStatusRef = useRef<RecognitionStatus>("disabled");
   const recognitionMessageRef = useRef("");
   const recognitionCornersRef = useRef<RecognitionPoint[] | null>(null);
+  const recognitionGraceDeadlineRef = useRef<number | null>(null);
+  const recognitionGraceStepCountRef = useRef(0);
+  const recognitionLossHeadingRef = useRef<number | null>(null);
+  const retainedArProjectionRotationRef = useRef(0);
+  const motionSampleRef = useRef({ filtered: 0, lastStepAt: 0, hasSample: false, armed: true });
 
-  const updateRecognitionFeedback = (
+  const updateRecognitionFeedback = useCallback((
     status: RecognitionStatus,
     message: string,
     corners: RecognitionPoint[] | null = recognitionCornersRef.current,
@@ -1454,7 +1477,41 @@ export default function ARNavigationV3() {
     setRecognitionStatus(status);
     setRecognitionMessage(message);
     setRecognitionCorners(corners);
-  };
+  }, []);
+
+  const resetRecognitionGrace = useCallback(() => {
+    recognitionGraceDeadlineRef.current = null;
+    recognitionGraceStepCountRef.current = 0;
+    recognitionLossHeadingRef.current = null;
+    motionSampleRef.current = { filtered: 0, lastStepAt: 0, hasSample: false, armed: true };
+    setRecognitionGraceDeadline(null);
+    setRecognitionGraceRemaining(0);
+    setRecognitionGraceSteps(0);
+  }, []);
+
+  const startRecognitionGrace = useCallback(() => {
+    const deadline = Date.now() + RECOGNITION_GRACE_PERIOD_MS;
+    recognitionGraceDeadlineRef.current = deadline;
+    recognitionGraceStepCountRef.current = 0;
+    recognitionLossHeadingRef.current = normalizeOptionalHeading(headingRef.current);
+    motionSampleRef.current = { filtered: 0, lastStepAt: 0, hasSample: false, armed: true };
+    setRecognitionGraceDeadline(deadline);
+    setRecognitionGraceRemaining(RECOGNITION_GRACE_SECONDS);
+    setRecognitionGraceSteps(0);
+  }, []);
+
+  const expireRecognitionGrace = useCallback((reason: "timeout" | "steps") => {
+    resetRecognitionGrace();
+    setRecognizedCandidateId("");
+    setRecognitionHeadingOffset(null);
+    updateRecognitionFeedback(
+      "lost",
+      reason === "steps"
+        ? `已離開辨識圖並走動 ${RECOGNITION_GRACE_STEP_LIMIT} 步，路線已隱藏，請重新掃描`
+        : "已離開辨識圖超過 20 秒，路線已隱藏，請重新掃描",
+      null,
+    );
+  }, [resetRecognitionGrace, updateRecognitionFeedback]);
 
   useEffect(() => {
     if (!mapFullscreen) return;
@@ -1481,7 +1538,26 @@ export default function ARNavigationV3() {
       })
       .then((authData) => {
         if (!active) return;
-        setFieldCalibrationAuth(authData?.clientPrincipal ? "ready" : "login-required");
+        if (authData?.clientPrincipal) {
+          try {
+            window.sessionStorage.removeItem(FIELD_CALIBRATION_LOGIN_ATTEMPT_KEY);
+          } catch {
+            // Authentication remains usable when session storage is unavailable.
+          }
+          setFieldCalibrationAuth("ready");
+          return;
+        }
+
+        setFieldCalibrationAuth("login-required");
+        if (window.location.protocol !== "https:") return;
+        try {
+          if (window.sessionStorage.getItem(FIELD_CALIBRATION_LOGIN_ATTEMPT_KEY) === "1") return;
+          window.sessionStorage.setItem(FIELD_CALIBRATION_LOGIN_ATTEMPT_KEY, "1");
+        } catch {
+          // Continue to the login endpoint even if session storage is unavailable.
+        }
+        setFieldCalibrationMessage("正在登入現場校正模式，登入後即可直接同步。");
+        window.location.replace(fieldCalibrationLoginUrl);
       })
       .catch(() => {
         if (active) setFieldCalibrationAuth("login-required");
@@ -1489,7 +1565,73 @@ export default function ARNavigationV3() {
     return () => {
       active = false;
     };
-  }, [fieldCalibrationEnabled]);
+  }, [fieldCalibrationEnabled, fieldCalibrationLoginUrl]);
+
+  useEffect(() => {
+    if (screen !== "navigate" || recognitionGraceDeadline === null) return;
+
+    const updateCountdown = () => {
+      const remaining = Math.max(
+        0,
+        Math.ceil((recognitionGraceDeadline - Date.now()) / 1000),
+      );
+      setRecognitionGraceRemaining(remaining);
+      if (remaining === 0) expireRecognitionGrace("timeout");
+    };
+
+    updateCountdown();
+    const timer = window.setInterval(updateCountdown, 250);
+    return () => window.clearInterval(timer);
+  }, [expireRecognitionGrace, recognitionGraceDeadline, screen]);
+
+  useEffect(() => {
+    if (screen !== "navigate" || cameraState !== "ready" || motionSensorState !== "ready") return;
+
+    const onMotion = (event: DeviceMotionEvent) => {
+      if (recognitionGraceDeadlineRef.current === null) return;
+
+      const acceleration = event.acceleration;
+      const gravityAcceleration = event.accelerationIncludingGravity;
+      const values =
+        acceleration && [acceleration.x, acceleration.y, acceleration.z].some((value) => value !== null)
+          ? acceleration
+          : gravityAcceleration;
+      if (!values) return;
+
+      const x = Number(values.x) || 0;
+      const y = Number(values.y) || 0;
+      const z = Number(values.z) || 0;
+      const magnitude = Math.sqrt(x * x + y * y + z * z);
+      const dynamicMagnitude = values === gravityAcceleration ? Math.abs(magnitude - 9.81) : magnitude;
+      const previousFiltered = motionSampleRef.current.filtered;
+      const filtered = previousFiltered * 0.6 + dynamicMagnitude * 0.4;
+      motionSampleRef.current.filtered = filtered;
+
+      if (!motionSampleRef.current.hasSample) {
+        motionSampleRef.current.hasSample = true;
+        motionSampleRef.current.armed = filtered <= STEP_RELEASE_THRESHOLD;
+        return;
+      }
+      if (filtered <= STEP_RELEASE_THRESHOLD) motionSampleRef.current.armed = true;
+
+      const now = Date.now();
+      const isStep =
+        motionSampleRef.current.armed &&
+        filtered >= STEP_ACCELERATION_THRESHOLD &&
+        now - motionSampleRef.current.lastStepAt >= STEP_COOLDOWN_MS;
+      if (!isStep) return;
+
+      motionSampleRef.current.armed = false;
+      motionSampleRef.current.lastStepAt = now;
+      const nextStepCount = recognitionGraceStepCountRef.current + 1;
+      recognitionGraceStepCountRef.current = nextStepCount;
+      setRecognitionGraceSteps(nextStepCount);
+      if (nextStepCount >= RECOGNITION_GRACE_STEP_LIMIT) expireRecognitionGrace("steps");
+    };
+
+    window.addEventListener("devicemotion", onMotion, true);
+    return () => window.removeEventListener("devicemotion", onMotion, true);
+  }, [cameraState, expireRecognitionGrace, motionSensorState, screen]);
 
   useEffect(() => {
     let active = true;
@@ -1798,8 +1940,15 @@ export default function ARNavigationV3() {
     (activeCapturedHeading !== null && effectiveMapUpHeading !== null
       ? normalizeHeading(activeCapturedHeading - effectiveMapUpHeading)
       : null);
+  const recognitionGraceActive = Boolean(
+    recognitionGraceDeadline !== null &&
+      recognitionGraceRemaining > 0 &&
+      recognitionGraceSteps < RECOGNITION_GRACE_STEP_LIMIT,
+  );
   const fieldCalibrationTargetNode =
-    fieldCalibrationEnabled && recognitionStatus === "locked" && activeRecognitionCandidate
+    fieldCalibrationEnabled &&
+    (recognitionStatus === "locked" || recognitionGraceActive) &&
+    activeRecognitionCandidate
       ? graph.nodes[activeRecognitionCandidate.nodeId] || null
       : null;
 
@@ -1841,11 +1990,25 @@ export default function ARNavigationV3() {
           recognitionHeadingOffset,
         )
       : null;
-  const arProjectionRotation =
+  const liveArProjectionRotation =
     sensorProjectedRouteBearing ??
     (recognitionRequired && recognitionStatus === "locked" && imageProjectedRouteBearing !== null
       ? imageProjectedRouteBearing
       : normalizeAngle(projectionBearing - firstBearing - headingDelta));
+  const recognitionGraceHeadingDelta =
+    recognitionGraceActive &&
+    heading !== null &&
+    recognitionLossHeadingRef.current !== null
+      ? normalizeAngle(heading - recognitionLossHeadingRef.current)
+      : 0;
+  const arProjectionRotation = recognitionGraceActive
+    ? normalizeAngle(retainedArProjectionRotationRef.current - recognitionGraceHeadingDelta)
+    : liveArProjectionRotation;
+
+  useEffect(() => {
+    if (recognitionStatus !== "locked" || !Number.isFinite(arProjectionRotation)) return;
+    retainedArProjectionRotationRef.current = arProjectionRotation;
+  }, [arProjectionRotation, recognitionStatus]);
   const toArRawPoint = (point: any) => {
     if (!segmentStart || !point) return { x: 0, y: 0 };
     const distance = Math.hypot(point.physX - segmentStart.physX, point.physY - segmentStart.physY);
@@ -1946,7 +2109,8 @@ export default function ARNavigationV3() {
       effectiveMapUpHeading !== null
     );
   const isArRouteVisible =
-    !recognitionRequired || (recognitionStatus === "locked" && activeDirectionConfigured);
+    !recognitionRequired ||
+    ((recognitionStatus === "locked" || recognitionGraceActive) && activeDirectionConfigured);
   const routeSegmentsForMap = guideSegments;
   const fieldCalibrationHasChanges = Boolean(
     fieldCalibrationTargetNode &&
@@ -1956,10 +2120,6 @@ export default function ARNavigationV3() {
         Math.abs(normalizeAngle(fieldCalibrationAngle - fieldCalibrationSavedAngle)) >= 0.05
       ),
   );
-  const fieldCalibrationLoginUrl = `/.auth/login/github?post_login_redirect_uri=${encodeURIComponent(
-    `${window.location.pathname}${window.location.search}`,
-  )}`;
-
   const updateFieldCalibrationAngle = (value: number) => {
     if (!Number.isFinite(value)) return;
     setFieldCalibrationAngle(normalizeHeading(value));
@@ -2028,6 +2188,7 @@ export default function ARNavigationV3() {
   }, [currentSegment, segmentStart?.fId]);
 
   useEffect(() => {
+    resetRecognitionGrace();
     if (recognitionFrameRef.current !== null) {
       cancelAnimationFrame(recognitionFrameRef.current);
       recognitionFrameRef.current = null;
@@ -2157,7 +2318,7 @@ export default function ARNavigationV3() {
       candidate: RouteRecognitionCandidate,
     ) => {
       const smoothedCorners = smoothRecognitionCorners(recognitionCornersRef.current, detection);
-      if (lockedTargetId === candidate.id) {
+      if (lockedTargetId === candidate.id && recognitionStatusRef.current === "locked") {
         updateStatus("locked", recognitionMessageRef.current, smoothedCorners);
         return;
       }
@@ -2172,6 +2333,7 @@ export default function ARNavigationV3() {
       }
 
       lockedTargetId = candidate.id;
+      resetRecognitionGrace();
       setRecognizedCandidateId(candidate.id);
       updateStatus("locked", reanchorResult.message, smoothedCorners);
     };
@@ -2220,7 +2382,10 @@ export default function ARNavigationV3() {
           lastDetectedAt = detectedAt;
           if (consecutiveDetections >= RECOGNITION_CONFIRMATION_FRAMES) {
             lockToRecognizedDirection(detection, candidate);
-          } else if (recognitionStatusRef.current !== "locked") {
+          } else if (
+            recognitionStatusRef.current !== "locked" &&
+            recognitionStatusRef.current !== "grace"
+          ) {
             updateStatus("confirming", `正在確認「${candidate.label}」節點照片`);
           }
           return;
@@ -2235,12 +2400,20 @@ export default function ARNavigationV3() {
           return;
         }
 
-        if (recognitionStatusRef.current === "locked" || recognitionStatusRef.current === "confirming") {
+        if (recognitionStatusRef.current === "locked") {
           lockedTargetId = "";
-          setRecognizedCandidateId("");
-          setRecognitionHeadingOffset(null);
-          updateStatus("lost", "已離開辨識圖，路線已隱藏，請重新對準", null);
-        } else if (recognitionStatusRef.current !== "lost") {
+          startRecognitionGrace();
+          updateStatus(
+            "grace",
+            "已離開辨識圖，路線將保留 20 秒；重新掃描可再次校正",
+            recognitionCornersRef.current,
+          );
+        } else if (recognitionStatusRef.current === "confirming") {
+          updateStatus("searching", "請讓現場畫面與半透明參考圖重合", null);
+        } else if (
+          recognitionStatusRef.current !== "grace" &&
+          recognitionStatusRef.current !== "lost"
+        ) {
           updateStatus("searching", "請讓現場畫面與半透明參考圖重合", null);
         }
       }).catch((error: any) => {
@@ -2294,7 +2467,14 @@ export default function ARNavigationV3() {
       tracker?.dispose();
       if (recognitionTrackerRef.current === tracker) recognitionTrackerRef.current = null;
     };
-  }, [cameraState, destinationId, recognitionCandidateSignature, screen]);
+  }, [
+    cameraState,
+    destinationId,
+    recognitionCandidateSignature,
+    resetRecognitionGrace,
+    screen,
+    startRecognitionGrace,
+  ]);
 
   const resetRuntimeLocalization = () => {
     setRuntimeAnchorId("");
@@ -2382,16 +2562,32 @@ export default function ARNavigationV3() {
   const requestCameraAndOrientation = async () => {
     if (cameraState === "loading") return;
     setCameraState("loading");
+    setMotionSensorState("idle");
     setCameraMessage("");
     try {
       const Orientation = window.DeviceOrientationEvent as any;
-      let orientationWarning = "";
+      const Motion = window.DeviceMotionEvent as any;
+      const permissionWarnings: string[] = [];
       if (Orientation?.requestPermission) {
         const permission = await Orientation.requestPermission();
         if (permission !== "granted") {
           if (!recognitionRequired) throw new Error("未允許動作與方向權限");
-          orientationWarning = "未開啟方向感測，將以節點照片與路網向量進行導引";
+          permissionWarnings.push("未開啟方向感測，將以節點照片與路網向量進行導引");
         }
+      }
+      if (!Motion) {
+        setMotionSensorState("unavailable");
+        permissionWarnings.push("此裝置不支援步行感測，離開照片後將只使用 20 秒倒數");
+      } else if (Motion.requestPermission) {
+        const permission = await Motion.requestPermission();
+        if (permission === "granted") {
+          setMotionSensorState("ready");
+        } else {
+          setMotionSensorState("denied");
+          permissionWarnings.push("未開啟步行感測，離開照片後將只使用 20 秒倒數");
+        }
+      } else {
+        setMotionSensorState("ready");
       }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: "environment" } },
@@ -2405,7 +2601,7 @@ export default function ARNavigationV3() {
       }
       setCameraState("ready");
       setPermissionGranted(true);
-      setCameraMessage(orientationWarning);
+      setCameraMessage(permissionWarnings.join("；"));
       if (recognitionRequired) {
         calibrationHeadingRef.current = null;
         setCalibrationHeading(null);
@@ -2488,6 +2684,7 @@ export default function ARNavigationV3() {
     const isLastGuideSegment = !nextGuideSegment;
     const recognitionCanvasWidth = recognitionCanvasRef.current?.width || 360;
     const recognitionCanvasHeight = recognitionCanvasRef.current?.height || 480;
+    const recognitionGraceLabel = `離開影像 · ${recognitionGraceRemaining} 秒 · ${recognitionGraceSteps}/${RECOGNITION_GRACE_STEP_LIMIT} 步`;
     const recognitionPolygon = recognitionCorners
       ?.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`)
       .join(" ");
@@ -2511,10 +2708,12 @@ export default function ARNavigationV3() {
           </button>
         </header>
 
-        <div className="v2-heading-chip">
+        <div className={`v2-heading-chip ${recognitionGraceActive ? "is-grace" : ""}`}>
           {recognitionRequired ? <ScanLine aria-hidden="true" /> : <Compass aria-hidden="true" />}
           {recognitionRequired
-            ? recognitionStatus === "locked"
+            ? recognitionGraceActive
+              ? recognitionGraceLabel
+              : recognitionStatus === "locked"
               ? !activeDirectionConfigured
                 ? "方位尚未設定"
                 : sensorProjectedRouteBearing !== null
@@ -2639,7 +2838,7 @@ export default function ARNavigationV3() {
           <section
             className={`v3-recognition-overlay is-${recognitionStatus}`}
             aria-live="polite"
-            aria-label={recognitionMessage}
+            aria-label={recognitionGraceActive ? recognitionGraceLabel : recognitionMessage}
           >
             <svg
               viewBox={`0 0 ${recognitionCanvasWidth} ${recognitionCanvasHeight}`}
@@ -2659,7 +2858,7 @@ export default function ARNavigationV3() {
             </div>
             <div className="v3-recognition-status">
               <ScanLine aria-hidden="true" />
-              <strong>{recognitionMessage}</strong>
+              <strong>{recognitionGraceActive ? recognitionGraceLabel : recognitionMessage}</strong>
             </div>
           </section>
         )}
@@ -2821,9 +3020,7 @@ export default function ARNavigationV3() {
           <div className="v2-step-label">AR 導引</div>
           <h1>
             {showPermissionStep
-              ? recognitionRequired
-                ? "開啟相機並掃描節點照片"
-                : "開啟相機與動作方向"
+              ? "開啟相機、方向與步行感測"
               : activeGuideSegment?.calibrationInstruction || "請讓現場畫面與半透明照片重合"}
           </h1>
           <p className="v3-guide-segment-summary">
@@ -2832,7 +3029,7 @@ export default function ARNavigationV3() {
           {!showPermissionStep && (
             <p className={`v3-recognition-note ${recognitionRequired ? "" : "is-warning"}`}>
               {recognitionRequired
-                ? "下一步請讓現場畫面與半透明參考圖重合；辨識任一已設定節點後，系統會自動定位並重算剩餘路徑，鏡頭離開後路線會自動隱藏。"
+                ? "下一步請讓現場畫面與半透明參考圖重合；離開照片後，路線會保留 20 秒，或偵測到 5 步後提前隱藏。重新掃描即可再次校正。"
                 : "此節點尚未設定辨識照片，這一段會沿用人工面向校正。可由後台的路徑節點補上照片。"}
             </p>
           )}
@@ -2854,6 +3051,19 @@ export default function ARNavigationV3() {
                 <span>動作與方向</span>
                 <strong>{heading === null ? "等待允許" : `${Math.round(heading)}°`}</strong>
               </div>
+              <div>
+                <Footprints aria-hidden="true" />
+                <span>步行感測</span>
+                <strong>
+                  {motionSensorState === "ready"
+                    ? "已開啟"
+                    : motionSensorState === "denied"
+                      ? "未允許"
+                      : motionSensorState === "unavailable"
+                        ? "不支援"
+                        : "等待允許"}
+                </strong>
+              </div>
             </div>
           )}
           {cameraMessage && <div className={`v2-message ${cameraState === "denied" ? "is-error" : ""}`}>{cameraMessage}</div>}
@@ -2862,9 +3072,7 @@ export default function ARNavigationV3() {
               <Camera />
               {cameraState === "loading"
                 ? "正在開啟..."
-                : recognitionRequired
-                  ? "開啟相機並開始辨識"
-                  : "開啟相機與動作方向"}
+                : "開啟相機、方向與步行感測"}
             </button>
           ) : (
             <button
