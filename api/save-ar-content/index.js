@@ -164,8 +164,32 @@ module.exports = async function (context, req) {
       }
 
       const current = await currentResponse.json();
-      const currentText = Buffer.from(current.content || "", "base64").toString("utf8");
-      const currentJson = currentText ? JSON.parse(currentText) : {};
+      let currentText = "";
+
+      if (current.encoding === "base64" && current.content) {
+        currentText = Buffer.from(current.content, "base64").toString("utf8");
+      } else if (current.download_url) {
+        const rawResponse = await fetch(current.download_url, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Cache-Control": "no-cache",
+            "User-Agent": "myweb-ar-admin"
+          },
+          cache: "no-store"
+        });
+
+        if (!rawResponse.ok) {
+          throw new Error(`Unable to download AR content file from GitHub: ${rawResponse.status}`);
+        }
+
+        currentText = await rawResponse.text();
+      }
+
+      if (!currentText) {
+        throw new Error("AR content file is empty or unavailable from GitHub.");
+      }
+
+      const currentJson = JSON.parse(currentText);
       return { current, collection: normalizeCollection(currentJson), headCommitSha };
     };
 
