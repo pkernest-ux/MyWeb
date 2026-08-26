@@ -2,6 +2,7 @@ const repo = process.env.GITHUB_REPO || "pkernest-ux/MyWeb";
 const branch = process.env.GITHUB_BRANCH || "main";
 const path = "ar-data.json";
 const saveContract = "ar-project-collection-v4";
+const angleCalibrationContract = "ar-angle-calibration-v1";
 
 const normalizeCollection = (json) => {
   if (Array.isArray(json?.projects)) {
@@ -55,7 +56,7 @@ module.exports = async function (context, req) {
     return;
   }
 
-  if (requestContract !== saveContract) {
+  if (![saveContract, angleCalibrationContract].includes(requestContract)) {
     context.res = {
       status: 428,
       body: { error: "Please reload the AR admin before syncing cloud data." }
@@ -63,13 +64,44 @@ module.exports = async function (context, req) {
     return;
   }
 
+  const isAngleCalibration = requestContract === angleCalibrationContract;
   const payload = body.payload;
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+  const calibration = body.calibration;
+
+  if (!isAngleCalibration && (!payload || typeof payload !== "object" || Array.isArray(payload))) {
     context.res = {
       status: 400,
       body: { error: "Invalid AR project payload." }
     };
     return;
+  }
+
+  if (isAngleCalibration) {
+    const requiredIds = [
+      calibration?.projectId,
+      calibration?.buildingId,
+      calibration?.floorId,
+      calibration?.nodeId
+    ];
+    const bearing = Number(calibration?.guideReferenceBearing);
+    if (
+      !calibration ||
+      typeof calibration !== "object" ||
+      Array.isArray(calibration) ||
+      requiredIds.some(value => typeof value !== "string" || !value.trim()) ||
+      !["marker", "waypoint"].includes(calibration.nodeType) ||
+      calibration.guideReferenceBearing === null ||
+      calibration.guideReferenceBearing === "" ||
+      !Number.isFinite(bearing) ||
+      bearing < 0 ||
+      bearing >= 360
+    ) {
+      context.res = {
+        status: 400,
+        body: { error: "Invalid AR angle calibration payload." }
+      };
+      return;
+    }
   }
 
   const apiUrl = `https://api.github.com/repos/${repo}/contents/${path}`;
@@ -117,19 +149,67 @@ module.exports = async function (context, req) {
     };
 
     const { current, collection, headCommitSha } = await readLatestCollection();
-    const projectId = payload.project?.id;
+    let nextProjects;
+    let nextActiveProjectId;
+    let commitMessage;
+    let responseCalibration = null;
 
-    if (!projectId) {
-      throw new Error("Missing AR project id.");
+    if (isAngleCalibration) {
+      const bearing = Math.round(Number(calibration.guideReferenceBearing) * 10) / 10;
+      const projectIndex = collection.projects.findIndex(
+        item => item?.project?.id === calibration.projectId
+      );
+      if (projectIndex < 0) throw new Error("AR calibration project not found.");
+
+      const targetProject = collection.projects[projectIndex];
+      const targetBuilding = (targetProject.buildings || []).find(
+        item => item?.id === calibration.buildingId
+      );
+      const targetFloor = (targetBuilding?.floors || []).find(
+        item => item?.id === calibration.floorId
+      );
+      const nodeCollection = calibration.nodeType === "marker"
+        ? targetFloor?.markers
+        : targetFloor?.waypoints;
+      const targetNode = (nodeCollection || []).find(item => item?.id === calibration.nodeId);
+      if (!targetNode) throw new Error("AR calibration node not found.");
+
+      targetNode.guideDirectionMode = "manual";
+      targetNode.guideReferenceBearing = bearing;
+      targetNode.guideAngleCalibratedAt = new Date().toISOString();
+      targetNode.guideAngleCalibrationSource = "v3-field-calibration";
+      targetProject.project = {
+        ...(targetProject.project || {}),
+        updatedAt: targetNode.guideAngleCalibratedAt
+      };
+
+      nextProjects = collection.projects;
+      nextActiveProjectId = collection.activeProjectId || calibration.projectId;
+      commitMessage = `Calibrate V3 AR angle for ${calibration.nodeId}`;
+      responseCalibration = {
+        projectId: calibration.projectId,
+        buildingId: calibration.buildingId,
+        floorId: calibration.floorId,
+        nodeId: calibration.nodeId,
+        nodeType: calibration.nodeType,
+        guideDirectionMode: "manual",
+        guideReferenceBearing: bearing,
+        updatedAt: targetNode.guideAngleCalibratedAt
+      };
+    } else {
+      const projectId = payload.project?.id;
+      if (!projectId) throw new Error("Missing AR project id.");
+
+      nextProjects = collection.projects.filter(item => item?.project?.id !== projectId);
+      nextProjects.push(payload);
+      nextProjects.sort((a, b) => (b?.project?.updatedAt || "").localeCompare(a?.project?.updatedAt || ""));
+      nextActiveProjectId = projectId;
+      commitMessage = "Update AR guide data from admin";
     }
-
-    const nextProjects = collection.projects.filter(item => item?.project?.id !== projectId);
-    nextProjects.push(payload);
-    nextProjects.sort((a, b) => (b?.project?.updatedAt || "").localeCompare(a?.project?.updatedAt || ""));
 
     const nextContent = {
       version: "7.1",
-      activeProjectId: projectId,
+      activeProjectId: nextActiveProjectId,
       projects: nextProjects
     };
 
@@ -138,7 +218,7 @@ module.exports = async function (context, req) {
       method: "PUT",
       headers,
       body: JSON.stringify({
-        message: "Update AR guide data from admin",
+        message: commitMessage,
         content,
         sha: current.sha,
         branch
@@ -155,10 +235,11 @@ module.exports = async function (context, req) {
       status: 200,
       body: {
         ok: true,
-        contract: saveContract,
+        contract: requestContract,
         commit: result.commit?.html_url,
         sourceCommit: headCommitSha,
-        projectIds: nextProjects.map(item => item?.project?.id).filter(Boolean)
+        projectIds: nextProjects.map(item => item?.project?.id).filter(Boolean),
+        calibration: responseCalibration
       }
     };
   } catch (error) {

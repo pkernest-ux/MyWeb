@@ -2329,6 +2329,225 @@ button:disabled {
   color: #f7c948;
 }
 
+.v3-field-calibration {
+  position: absolute;
+  z-index: 26;
+  top: calc(126px + env(safe-area-inset-top));
+  left: 10px;
+  width: clamp(150px, calc(100vw - 172px), 220px);
+  padding: 10px;
+  border: 1px solid rgba(64, 205, 255, 0.48);
+  border-radius: 8px;
+  background: rgba(6, 17, 27, 0.92);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.42);
+  color: #ffffff;
+  backdrop-filter: blur(14px);
+}
+
+.v3-field-calibration-title {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+}
+
+.v3-field-calibration-title > svg {
+  width: 18px;
+  height: 18px;
+  color: #52d8ff;
+}
+
+.v3-field-calibration-title > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.v3-field-calibration-title span {
+  color: #8bdfff;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.v3-field-calibration-title strong {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.v3-field-calibration-title output {
+  color: #fff1a9;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.v3-field-calibration-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 8px;
+  color: #9fb0bf;
+  font-size: 9px;
+}
+
+.v3-field-calibration-metrics span {
+  min-width: 0;
+}
+
+.v3-field-calibration-metrics strong {
+  display: block;
+  margin-top: 1px;
+  color: #edf7ff;
+  font-size: 11px;
+}
+
+.v3-field-calibration-input {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 32px;
+  align-items: stretch;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.v3-field-calibration-input > button {
+  display: inline-flex;
+  width: 32px;
+  height: 34px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  background: #111d28;
+  color: #ffffff;
+}
+
+.v3-field-calibration-input > button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.v3-field-calibration-input label {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.v3-field-calibration-input label > span {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  clip: rect(0, 0, 0, 0);
+}
+
+.v3-field-calibration-input input {
+  width: 100%;
+  height: 34px;
+  padding: 0 24px 0 8px;
+  border: 1px solid rgba(82, 216, 255, 0.36);
+  border-radius: 6px;
+  outline: none;
+  background: rgba(0, 0, 0, 0.28);
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 900;
+  text-align: right;
+}
+
+.v3-field-calibration-input input:focus {
+  border-color: #52d8ff;
+}
+
+.v3-field-calibration-input em {
+  position: absolute;
+  right: 8px;
+  color: #9fb0bf;
+  font-size: 12px;
+  font-style: normal;
+  pointer-events: none;
+}
+
+.v3-field-calibration-range {
+  width: 100%;
+  margin: 7px 0 3px;
+  accent-color: #32c7f5;
+}
+
+.v3-field-calibration-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+
+.v3-field-calibration-actions button,
+.v3-field-calibration-login {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.v3-field-calibration-actions button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.v3-field-calibration-actions button.is-confirmed {
+  border-color: rgba(80, 226, 151, 0.52);
+  background: rgba(43, 185, 113, 0.18);
+  color: #bfffdc;
+}
+
+.v3-field-calibration-actions button.is-sync {
+  border-color: rgba(247, 201, 72, 0.52);
+  background: rgba(247, 201, 72, 0.18);
+  color: #fff1ad;
+}
+
+.v3-field-calibration-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
+.v3-field-calibration-message,
+.v3-field-calibration-login {
+  margin-top: 7px;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.v3-field-calibration-message {
+  margin-bottom: 0;
+  color: #a8b8c6;
+}
+
+.v3-field-calibration-message.is-success {
+  color: #a9ffd2;
+}
+
+.v3-field-calibration-message.is-error {
+  color: #ffb6a9;
+}
+
+.v3-field-calibration-login {
+  width: 100%;
+  border-color: rgba(247, 201, 72, 0.45);
+  color: #fff1ad;
+}
+
 .v2-ar-route-zone {
   position: absolute;
   z-index: 8;

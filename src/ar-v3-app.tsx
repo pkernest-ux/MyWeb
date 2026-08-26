@@ -5,6 +5,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  CloudUpload,
   Compass,
   Crosshair,
   ExternalLink,
@@ -18,6 +19,7 @@ import {
   Plus,
   RefreshCw,
   ScanLine,
+  SlidersHorizontal,
 } from "lucide-react";
 import {
   OrbImageTracker,
@@ -127,6 +129,44 @@ const normalizeProjects = (raw: any) => {
 
 const projectName = (data: any) =>
   data?.project?.name || data?.systemConfig?.projectName || "未命名導引專案";
+
+const updateProjectNodeGuideAngle = (
+  currentProject: any,
+  target: NodeData,
+  angle: number,
+  updatedAt: string,
+) => ({
+  ...currentProject,
+  project: {
+    ...(currentProject?.project || {}),
+    updatedAt,
+  },
+  buildings: (currentProject?.buildings || []).map((building: any) =>
+    building.id !== target.bId
+      ? building
+      : {
+          ...building,
+          floors: (building.floors || []).map((floor: any) => {
+            if (floor.id !== target.fId) return floor;
+            const collectionKey = target.isMarker ? "markers" : "waypoints";
+            return {
+              ...floor,
+              [collectionKey]: (floor[collectionKey] || []).map((node: any) =>
+                node.id !== target.id
+                  ? node
+                  : {
+                      ...node,
+                      guideDirectionMode: "manual",
+                      guideReferenceBearing: angle,
+                      guideAngleCalibratedAt: updatedAt,
+                      guideAngleCalibrationSource: "v3-field-calibration",
+                    },
+              ),
+            };
+          }),
+        },
+  ),
+});
 
 const loadProjectOption = async (option: ProjectOption) => {
   let selected = option.localData;
@@ -1377,6 +1417,20 @@ export default function ARNavigationV3() {
   const [recognizedCandidateId, setRecognizedCandidateId] = useState("");
   const [runtimeAnchorId, setRuntimeAnchorId] = useState("");
   const [recognitionHeadingOffset, setRecognitionHeadingOffset] = useState<number | null>(null);
+  const [fieldCalibrationEnabled] = useState(
+    () => new URLSearchParams(window.location.search).get("calibrate") === "1",
+  );
+  const [fieldCalibrationAuth, setFieldCalibrationAuth] = useState<
+    "idle" | "checking" | "ready" | "login-required"
+  >(fieldCalibrationEnabled ? "checking" : "idle");
+  const [fieldCalibrationNodeId, setFieldCalibrationNodeId] = useState("");
+  const [fieldCalibrationAngle, setFieldCalibrationAngle] = useState(0);
+  const [fieldCalibrationSavedAngle, setFieldCalibrationSavedAngle] = useState(0);
+  const [fieldCalibrationConfirmed, setFieldCalibrationConfirmed] = useState(false);
+  const [fieldCalibrationSync, setFieldCalibrationSync] = useState<
+    "idle" | "saving" | "success" | "error"
+  >("idle");
+  const [fieldCalibrationMessage, setFieldCalibrationMessage] = useState("");
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const recognitionCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -1415,6 +1469,27 @@ export default function ARNavigationV3() {
       window.removeEventListener("keydown", closeOnEscape);
     };
   }, [mapFullscreen]);
+
+  useEffect(() => {
+    if (!fieldCalibrationEnabled) return;
+    let active = true;
+    fetch("/.auth/me", { cache: "no-store" })
+      .then(async (response) => {
+        const contentType = response.headers.get("content-type") || "";
+        if (!response.ok || !contentType.includes("application/json")) return null;
+        return response.json();
+      })
+      .then((authData) => {
+        if (!active) return;
+        setFieldCalibrationAuth(authData?.clientPrincipal ? "ready" : "login-required");
+      })
+      .catch(() => {
+        if (active) setFieldCalibrationAuth("login-required");
+      });
+    return () => {
+      active = false;
+    };
+  }, [fieldCalibrationEnabled]);
 
   useEffect(() => {
     let active = true;
@@ -1723,13 +1798,39 @@ export default function ARNavigationV3() {
     (activeCapturedHeading !== null && effectiveMapUpHeading !== null
       ? normalizeHeading(activeCapturedHeading - effectiveMapUpHeading)
       : null);
+  const fieldCalibrationTargetNode =
+    fieldCalibrationEnabled && recognitionStatus === "locked" && activeRecognitionCandidate
+      ? graph.nodes[activeRecognitionCandidate.nodeId] || null
+      : null;
+
+  useEffect(() => {
+    if (!fieldCalibrationTargetNode || fieldCalibrationNodeId === fieldCalibrationTargetNode.id) return;
+    const initialAngle = normalizeHeading(effectiveReferenceBearing ?? 0);
+    setFieldCalibrationNodeId(fieldCalibrationTargetNode.id);
+    setFieldCalibrationAngle(initialAngle);
+    setFieldCalibrationSavedAngle(initialAngle);
+    setFieldCalibrationConfirmed(false);
+    setFieldCalibrationSync("idle");
+    setFieldCalibrationMessage("調整數值時，AR 路線會立即旋轉預覽。");
+  }, [effectiveReferenceBearing, fieldCalibrationNodeId, fieldCalibrationTargetNode]);
+
+  const fieldCalibrationPreviewActive = Boolean(
+    fieldCalibrationTargetNode && fieldCalibrationNodeId === fieldCalibrationTargetNode.id,
+  );
+  const projectionReferenceBearing = fieldCalibrationPreviewActive
+    ? fieldCalibrationAngle
+    : effectiveReferenceBearing;
+  const projectionDirectionMode = fieldCalibrationPreviewActive
+    ? "manual"
+    : activeRecognitionCandidate?.directionMode || "auto";
   const imageProjectedRouteBearing = recognitionRouteBearing(
     recognitionCorners,
     projectionBearing,
-    activeRecognitionCandidate?.directionMode || "auto",
-    effectiveReferenceBearing,
+    projectionDirectionMode,
+    projectionReferenceBearing,
   );
   const sensorProjectedRouteBearing =
+    !fieldCalibrationPreviewActive &&
     recognitionRequired &&
     recognitionStatus === "locked" &&
     activeRecognitionCandidate?.directionMode === "sensor"
@@ -1835,6 +1936,7 @@ export default function ARNavigationV3() {
     DEFAULT_GUIDE_IMAGE_URL;
   const guideExternalUrl = safeExternalUrl(activeGuideSegment?.externalUrl || "");
   const activeDirectionConfigured =
+    fieldCalibrationPreviewActive ||
     !activeRecognitionCandidate ||
     activeRecognitionCandidate.directionMode === "auto" ||
     (activeRecognitionCandidate.directionMode === "manual" && effectiveReferenceBearing !== null) ||
@@ -1846,6 +1948,80 @@ export default function ARNavigationV3() {
   const isArRouteVisible =
     !recognitionRequired || (recognitionStatus === "locked" && activeDirectionConfigured);
   const routeSegmentsForMap = guideSegments;
+  const fieldCalibrationHasChanges = Boolean(
+    fieldCalibrationTargetNode &&
+      (
+        fieldCalibrationTargetNode.guideDirectionMode !== "manual" ||
+        normalizeOptionalHeading(fieldCalibrationTargetNode.guideReferenceBearing) === null ||
+        Math.abs(normalizeAngle(fieldCalibrationAngle - fieldCalibrationSavedAngle)) >= 0.05
+      ),
+  );
+  const fieldCalibrationLoginUrl = `/.auth/login/github?post_login_redirect_uri=${encodeURIComponent(
+    `${window.location.pathname}${window.location.search}`,
+  )}`;
+
+  const updateFieldCalibrationAngle = (value: number) => {
+    if (!Number.isFinite(value)) return;
+    setFieldCalibrationAngle(normalizeHeading(value));
+    setFieldCalibrationConfirmed(false);
+    setFieldCalibrationSync("idle");
+    setFieldCalibrationMessage("AR 路線已套用此角度預覽，請確認畫面方向。");
+  };
+
+  const syncFieldCalibrationAngle = async () => {
+    if (!fieldCalibrationTargetNode || !project?.project?.id) return;
+    if (fieldCalibrationAuth !== "ready") {
+      setFieldCalibrationAuth("login-required");
+      setFieldCalibrationSync("error");
+      setFieldCalibrationMessage("同步需要先登入後台帳號。");
+      return;
+    }
+
+    const angle = Math.round(normalizeHeading(fieldCalibrationAngle) * 10) / 10;
+    setFieldCalibrationSync("saving");
+    setFieldCalibrationMessage("正在同步目前節點角度...");
+
+    try {
+      const response = await fetch("./api/save-ar-content", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          "X-AR-Save-Contract": "ar-angle-calibration-v1",
+        },
+        body: JSON.stringify({
+          calibration: {
+            projectId: project.project.id,
+            buildingId: fieldCalibrationTargetNode.bId,
+            floorId: fieldCalibrationTargetNode.fId,
+            nodeId: fieldCalibrationTargetNode.id,
+            nodeType: fieldCalibrationTargetNode.isMarker ? "marker" : "waypoint",
+            guideReferenceBearing: angle,
+          },
+        }),
+      });
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        setFieldCalibrationAuth("login-required");
+        throw new Error("登入狀態已失效，請重新登入後再同步。");
+      }
+      const result = await response.json();
+      if (!response.ok) throw new Error(result?.error || `同步失敗 (${response.status})`);
+
+      const savedAngle = normalizeHeading(Number(result?.calibration?.guideReferenceBearing ?? angle));
+      const updatedAt = result?.calibration?.updatedAt || new Date().toISOString();
+      setProject((current: any) =>
+        updateProjectNodeGuideAngle(current, fieldCalibrationTargetNode, savedAngle, updatedAt),
+      );
+      setFieldCalibrationAngle(savedAngle);
+      setFieldCalibrationSavedAngle(savedAngle);
+      setFieldCalibrationSync("success");
+      setFieldCalibrationMessage(`已同步 ${nodeLabel(fieldCalibrationTargetNode)}：${savedAngle.toFixed(0)}°`);
+    } catch (error: any) {
+      setFieldCalibrationSync("error");
+      setFieldCalibrationMessage(error?.message || "角度同步失敗，請稍後再試。");
+    }
+  };
 
   useEffect(() => {
     if (segmentStart?.fId) setMapFloorId(segmentStart.fId);
@@ -2349,6 +2525,115 @@ export default function ARNavigationV3() {
               ? "等待方向感測"
               : `${Math.round(heading)}°`}
         </div>
+
+        {fieldCalibrationEnabled &&
+          !mapExpanded &&
+          fieldCalibrationTargetNode &&
+          fieldCalibrationNodeId === fieldCalibrationTargetNode.id && (
+            <aside className="v3-field-calibration" aria-label="V3 AR 現場角度校正">
+              <div className="v3-field-calibration-title">
+                <SlidersHorizontal aria-hidden="true" />
+                <div>
+                  <span>現場角度校正</span>
+                  <strong>{nodeLabel(fieldCalibrationTargetNode)}</strong>
+                </div>
+                <output>{fieldCalibrationAngle.toFixed(0)}°</output>
+              </div>
+
+              <div className="v3-field-calibration-metrics">
+                <span>照片基準 <strong>{fieldCalibrationAngle.toFixed(0)}°</strong></span>
+                <span>手機方位 <strong>{heading === null ? "--" : `${Math.round(heading)}°`}</strong></span>
+                <span>
+                  畫面旋轉 <strong>{arProjectionRotation > 0 ? "+" : ""}{Math.round(arProjectionRotation)}°</strong>
+                </span>
+              </div>
+
+              <div className="v3-field-calibration-input">
+                <button
+                  type="button"
+                  onClick={() => updateFieldCalibrationAngle(fieldCalibrationAngle - 1)}
+                  aria-label="角度減少一度"
+                >
+                  <Minus />
+                </button>
+                <label>
+                  <span>角度</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="359"
+                    step="1"
+                    inputMode="numeric"
+                    value={Math.round(fieldCalibrationAngle)}
+                    onChange={(event) => updateFieldCalibrationAngle(Number(event.target.value))}
+                  />
+                  <em>°</em>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => updateFieldCalibrationAngle(fieldCalibrationAngle + 1)}
+                  aria-label="角度增加一度"
+                >
+                  <Plus />
+                </button>
+              </div>
+              <input
+                className="v3-field-calibration-range"
+                type="range"
+                min="0"
+                max="359"
+                step="1"
+                value={fieldCalibrationAngle}
+                onChange={(event) => updateFieldCalibrationAngle(Number(event.target.value))}
+                aria-label="調整 AR 起始角度"
+              />
+
+              <div className="v3-field-calibration-actions">
+                <button
+                  type="button"
+                  className={fieldCalibrationConfirmed ? "is-confirmed" : ""}
+                  onClick={() => {
+                    setFieldCalibrationConfirmed(true);
+                    setFieldCalibrationMessage("效果已確認，可以同步此節點角度。");
+                  }}
+                  disabled={fieldCalibrationSync === "saving"}
+                >
+                  <Check />
+                  {fieldCalibrationConfirmed ? "已確認" : "確認效果"}
+                </button>
+                <button
+                  type="button"
+                  className="is-sync"
+                  onClick={syncFieldCalibrationAngle}
+                  disabled={
+                    !fieldCalibrationConfirmed ||
+                    !fieldCalibrationHasChanges ||
+                    fieldCalibrationSync === "saving" ||
+                    fieldCalibrationAuth !== "ready"
+                  }
+                >
+                  <CloudUpload />
+                  {fieldCalibrationSync === "saving"
+                    ? "同步中"
+                    : fieldCalibrationHasChanges
+                      ? "同步角度"
+                      : "已同步"}
+                </button>
+              </div>
+
+              {fieldCalibrationAuth === "checking" ? (
+                <p className="v3-field-calibration-message">正在確認後台登入狀態...</p>
+              ) : fieldCalibrationAuth === "login-required" ? (
+                <a className="v3-field-calibration-login" href={fieldCalibrationLoginUrl}>
+                  登入後台以同步
+                </a>
+              ) : (
+                <p className={`v3-field-calibration-message is-${fieldCalibrationSync}`}>
+                  {fieldCalibrationMessage}
+                </p>
+              )}
+            </aside>
+          )}
 
         {recognitionRequired && (
           <section
