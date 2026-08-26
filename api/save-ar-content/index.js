@@ -3,6 +3,10 @@ const branch = process.env.GITHUB_BRANCH || "main";
 const path = "ar-data.json";
 const saveContract = "ar-project-collection-v4";
 const angleCalibrationContract = "ar-angle-calibration-v1";
+const jsonResponseHeaders = {
+  "Cache-Control": "no-store, max-age=0",
+  "Content-Type": "application/json; charset=utf-8"
+};
 
 const isAuthenticatedPrincipal = (value) => {
   if (typeof value !== "string" || !value.trim()) return false;
@@ -44,10 +48,7 @@ module.exports = async function (context, req) {
   if (!isAuthenticatedPrincipal(principalHeader)) {
     context.res = {
       status: 403,
-      headers: {
-        "Cache-Control": "no-store, max-age=0",
-        "Content-Type": "application/json"
-      },
+      headers: jsonResponseHeaders,
       body: {
         error: "Login required.",
         code: "AUTH_REQUIRED"
@@ -61,6 +62,7 @@ module.exports = async function (context, req) {
   if (!token) {
     context.res = {
       status: 500,
+      headers: jsonResponseHeaders,
       body: { error: "Missing GITHUB_CONTENT_TOKEN app setting." }
     };
     return;
@@ -72,6 +74,7 @@ module.exports = async function (context, req) {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     context.res = {
       status: 400,
+      headers: jsonResponseHeaders,
       body: { error: "Invalid AR content payload." }
     };
     return;
@@ -80,6 +83,7 @@ module.exports = async function (context, req) {
   if (![saveContract, angleCalibrationContract].includes(requestContract)) {
     context.res = {
       status: 428,
+      headers: jsonResponseHeaders,
       body: { error: "Please reload the AR admin before syncing cloud data." }
     };
     return;
@@ -92,6 +96,7 @@ module.exports = async function (context, req) {
   if (!isAngleCalibration && (!payload || typeof payload !== "object" || Array.isArray(payload))) {
     context.res = {
       status: 400,
+      headers: jsonResponseHeaders,
       body: { error: "Invalid AR project payload." }
     };
     return;
@@ -119,6 +124,7 @@ module.exports = async function (context, req) {
     ) {
       context.res = {
         status: 400,
+        headers: jsonResponseHeaders,
         body: { error: "Invalid AR angle calibration payload." }
       };
       return;
@@ -278,6 +284,7 @@ module.exports = async function (context, req) {
 
     context.res = {
       status: 200,
+      headers: jsonResponseHeaders,
       body: {
         ok: true,
         contract: requestContract,
@@ -291,6 +298,7 @@ module.exports = async function (context, req) {
     context.log.error(error);
     context.res = {
       status: 500,
+      headers: jsonResponseHeaders,
       body: { error: error.message }
     };
   }

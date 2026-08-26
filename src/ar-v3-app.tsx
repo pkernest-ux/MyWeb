@@ -2245,16 +2245,20 @@ export default function ARNavigationV3() {
           },
         }),
       });
-      const contentType = response.headers.get("content-type") || "";
       if (response.status === 401 || response.redirected) {
         setFieldCalibrationUser("");
         setFieldCalibrationAuth("login-required");
         throw new Error("登入狀態已失效，請重新登入後再同步。");
       }
-      if (!contentType.includes("application/json")) {
+
+      const responseText = await response.text();
+      let result: any = {};
+      try {
+        result = responseText ? JSON.parse(responseText) : {};
+      } catch {
         throw new Error(`同步服務回傳格式錯誤 (${response.status})`);
       }
-      const result = await response.json();
+
       if (response.status === 403 && result?.code === "AUTH_REQUIRED") {
         setFieldCalibrationUser("");
         setFieldCalibrationAuth("login-required");
