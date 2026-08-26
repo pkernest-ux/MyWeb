@@ -8,7 +8,7 @@
         "id": "project_1783262670309_v8ykg",
         "name": "新竹市政府",
         "description": "",
-        "updatedAt": "2026-08-26T09:15:12.017Z"
+        "updatedAt": "2026-08-26T09:16:31.776Z"
       },
       "systemConfig": {
         "projectName": "新竹市政府",
@@ -58,8 +58,8 @@
                   "navigable": true,
                   "recognitionStatus": "success",
                   "guideDirectionMode": "manual",
-                  "guideReferenceBearing": 90,
-                  "guideAngleCalibratedAt": "2026-08-26T09:15:12.017Z",
+                  "guideReferenceBearing": 64,
+                  "guideAngleCalibratedAt": "2026-08-26T09:16:31.776Z",
                   "guideAngleCalibrationSource": "v3-field-calibration"
                 }
               ],
