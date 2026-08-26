@@ -201,6 +201,21 @@ const loadProjectOption = async (option: ProjectOption) => {
   return selected;
 };
 
+const loadCurrentClientPrincipal = async () => {
+  const response = await fetch(`/.auth/me?ts=${Date.now()}`, {
+    cache: "no-store",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      "Cache-Control": "no-cache",
+    },
+  });
+  const contentType = response.headers.get("content-type") || "";
+  if (!response.ok || !contentType.includes("application/json")) return null;
+  const authData = await response.json();
+  return authData?.clientPrincipal || null;
+};
+
 const normalizeAngle = (value: number) => {
   let angle = value % 360;
   if (angle > 180) angle -= 360;
@@ -1571,20 +1586,11 @@ export default function ARNavigationV3() {
   useEffect(() => {
     if (!fieldCalibrationEnabled) return;
     let active = true;
-    fetch("/.auth/me", {
-      cache: "no-store",
-      credentials: "include",
-      headers: { Accept: "application/json" },
-    })
-      .then(async (response) => {
-        const contentType = response.headers.get("content-type") || "";
-        if (!response.ok || !contentType.includes("application/json")) return null;
-        return response.json();
-      })
-      .then((authData) => {
+    loadCurrentClientPrincipal()
+      .then((clientPrincipal) => {
         if (!active) return;
-        if (authData?.clientPrincipal) {
-          setFieldCalibrationUser(authData.clientPrincipal.userDetails || "已驗證使用者");
+        if (clientPrincipal) {
+          setFieldCalibrationUser(clientPrincipal.userDetails || "已驗證使用者");
           setFieldCalibrationAuth("ready");
           setFieldCalibrationMessage("登入完成，角度確認後可直接同步。");
           return;
@@ -2211,6 +2217,15 @@ export default function ARNavigationV3() {
     setFieldCalibrationMessage("正在同步目前節點角度...");
 
     try {
+      const clientPrincipal = await loadCurrentClientPrincipal();
+      if (!clientPrincipal) {
+        setFieldCalibrationUser("");
+        setFieldCalibrationAuth("login-required");
+        throw new Error(`目前網域 ${window.location.host} 尚未登入，請登入後再同步。`);
+      }
+      setFieldCalibrationUser(clientPrincipal.userDetails || "已驗證使用者");
+      setFieldCalibrationAuth("ready");
+
       const response = await fetch("/api/save-ar-content", {
         method: "POST",
         credentials: "include",
@@ -2231,17 +2246,20 @@ export default function ARNavigationV3() {
         }),
       });
       const contentType = response.headers.get("content-type") || "";
-      if (
-        response.status === 401 ||
-        response.status === 403 ||
-        response.redirected ||
-        !contentType.includes("application/json")
-      ) {
+      if (response.status === 401 || response.redirected) {
         setFieldCalibrationUser("");
         setFieldCalibrationAuth("login-required");
         throw new Error("登入狀態已失效，請重新登入後再同步。");
       }
+      if (!contentType.includes("application/json")) {
+        throw new Error(`同步服務回傳格式錯誤 (${response.status})`);
+      }
       const result = await response.json();
+      if (response.status === 403 && result?.code === "AUTH_REQUIRED") {
+        setFieldCalibrationUser("");
+        setFieldCalibrationAuth("login-required");
+        throw new Error(`目前網域 ${window.location.host} 的登入狀態已失效，請重新登入。`);
+      }
       if (!response.ok) throw new Error(result?.error || `同步失敗 (${response.status})`);
 
       const savedAngle = normalizeHeading(Number(result?.calibration?.guideReferenceBearing ?? angle));
@@ -2743,8 +2761,11 @@ export default function ARNavigationV3() {
           <p>
             {isCheckingAuth
               ? "正在向 Azure 確認目前帳號，完成後會自動進入校正流程。"
-              : "登入成功後會返回這一頁。之後掃描、調整與同步單點角度時，不需要再次登入。"}
+              : "登入成功後會返回這一頁。登入狀態只適用目前網域，正式站與測試站需各自登入一次。"}
           </p>
+          {!isCheckingAuth && (
+            <small className="v3-calibration-auth-host">目前網域：{window.location.host}</small>
+          )}
           {!isCheckingAuth && (
             <a href={fieldCalibrationLoginUrl} rel="nofollow">
               <LogIn aria-hidden="true" />

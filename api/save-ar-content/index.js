@@ -4,6 +4,20 @@ const path = "ar-data.json";
 const saveContract = "ar-project-collection-v4";
 const angleCalibrationContract = "ar-angle-calibration-v1";
 
+const isAuthenticatedPrincipal = (value) => {
+  if (typeof value !== "string" || !value.trim()) return false;
+
+  try {
+    const principal = JSON.parse(Buffer.from(value, "base64").toString("utf8"));
+    return (
+      Array.isArray(principal?.userRoles) &&
+      principal.userRoles.includes("authenticated")
+    );
+  } catch {
+    return false;
+  }
+};
+
 const normalizeCollection = (json) => {
   if (Array.isArray(json?.projects)) {
     return {
@@ -27,10 +41,17 @@ const normalizeCollection = (json) => {
 module.exports = async function (context, req) {
   const principalHeader = req.headers["x-ms-client-principal"];
 
-  if (!principalHeader) {
+  if (!isAuthenticatedPrincipal(principalHeader)) {
     context.res = {
-      status: 401,
-      body: { error: "Login required." }
+      status: 403,
+      headers: {
+        "Cache-Control": "no-store, max-age=0",
+        "Content-Type": "application/json"
+      },
+      body: {
+        error: "Login required.",
+        code: "AUTH_REQUIRED"
+      }
     };
     return;
   }

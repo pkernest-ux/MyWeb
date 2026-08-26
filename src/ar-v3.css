@@ -143,6 +143,15 @@ button:disabled {
   line-height: 1.75;
 }
 
+.v3-calibration-auth-host {
+  display: block;
+  margin-top: 10px;
+  color: #7edfff;
+  font-size: 12px;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
 .v3-calibration-auth-gate a {
   display: inline-flex;
   width: 100%;
