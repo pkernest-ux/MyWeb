@@ -7,7 +7,7 @@ import {
   ZoomIn, ZoomOut, Maximize, Scan, Info, Smartphone,
   ArrowUp, ArrowDown, ArrowLeft, ArrowRight,
   ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, Minus, Navigation,
-  Building, Layers, ArrowUpDown, Eye, Ruler, Route, GitCommit, MousePointer2, Activity,
+  Building, Layers, ArrowUpDown, Eye, Ruler, Route, GitCommit, MousePointer2, Activity, RefreshCw,
   Eraser, Undo2
 } from 'lucide-react';
 import { OrbImageTracker } from './src/ar-v3-image-recognition';
@@ -202,10 +202,33 @@ const AR_LEGACY_BUILDINGS_KEY = 'arManager_buildings';
 const AR_LEGACY_CONFIG_KEY = 'arManager_config';
 const AR_ACTIVE_PROJECT_KEY = 'arManager_activeProjectId';
 
+const normalizeProjectSync = (project, defaults = {}) => {
+  const existingSync = project?._sync && typeof project._sync === 'object'
+    ? project._sync
+    : {};
+  return {
+    baseSha: typeof existingSync.baseSha === 'string' && existingSync.baseSha
+      ? existingSync.baseSha
+      : (defaults.baseSha || null),
+    lastSyncedAt: existingSync.lastSyncedAt || defaults.lastSyncedAt || null,
+    dirty: typeof existingSync.dirty === 'boolean'
+      ? existingSync.dirty
+      : (defaults.dirty ?? true),
+    source: existingSync.source || defaults.source || 'local'
+  };
+};
+
+const normalizeCachedProject = (project) => ({
+  ...project,
+  _sync: normalizeProjectSync(project)
+});
+
 const readLocalStoredProjects = () => {
   try {
     const parsed = JSON.parse(localStorage.getItem(AR_PROJECTS_LOCAL_KEY) || '[]');
-    return Array.isArray(parsed) ? parsed.filter(project => project?.id) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter(project => project?.id).map(normalizeCachedProject)
+      : [];
   } catch (error) {
     console.warn('Unable to read legacy local project cache:', error);
     return [];
@@ -236,7 +259,9 @@ const readIndexedProjectCache = async () => {
       const transaction = database.transaction(AR_PROJECT_CACHE_STORE, 'readonly');
       const request = transaction.objectStore(AR_PROJECT_CACHE_STORE).getAll();
       request.onsuccess = () => resolve(
-        Array.isArray(request.result) ? request.result.filter(project => project?.id) : []
+        Array.isArray(request.result)
+          ? request.result.filter(project => project?.id).map(normalizeCachedProject)
+          : []
       );
       request.onerror = () => reject(request.error || new Error('無法讀取 IndexedDB 專案暫存。'));
     });
@@ -540,17 +565,32 @@ const createProject = (name = '新導引專案', description = '') => ({
   description,
   updatedAt: new Date().toISOString(),
   systemConfig: createDefaultConfig(name),
-  buildings: createDefaultBuildings()
+  buildings: createDefaultBuildings(),
+  _sync: {
+    baseSha: null,
+    lastSyncedAt: null,
+    dirty: true,
+    source: 'local'
+  }
 });
 
-const createProjectFromPublishedData = (data) => ({
-  id: data?.project?.id || 'published',
-  name: data?.project?.name || data?.systemConfig?.projectName || 'AR導覽',
-  description: data?.project?.description || '',
-  updatedAt: data?.project?.updatedAt || new Date().toISOString(),
-  systemConfig: { ...createDefaultConfig(data?.project?.name || 'AR導覽'), ...(data?.systemConfig || {}) },
-  buildings: Array.isArray(data?.buildings) ? data.buildings : []
-});
+const createProjectFromPublishedData = (data, sourceBlobSha = null) => {
+  const updatedAt = data?.project?.updatedAt || new Date().toISOString();
+  return {
+    id: data?.project?.id || 'published',
+    name: data?.project?.name || data?.systemConfig?.projectName || 'AR導覽',
+    description: data?.project?.description || '',
+    updatedAt,
+    systemConfig: { ...createDefaultConfig(data?.project?.name || 'AR導覽'), ...(data?.systemConfig || {}) },
+    buildings: Array.isArray(data?.buildings) ? data.buildings : [],
+    _sync: {
+      baseSha: sourceBlobSha || null,
+      lastSyncedAt: sourceBlobSha ? updatedAt : null,
+      dirty: false,
+      source: sourceBlobSha ? 'github' : 'packaged'
+    }
+  };
+};
 
 const getDestinationDisplayName = (node) => {
   const placeholderTitles = new Set(['新增辨識點', '未命名', '未命名點位', '未命名目的地']);
@@ -602,6 +642,22 @@ const mergePublishedProjectLists = (...sources) => {
   return Array.from(projectMap.values());
 };
 
+const loadCloudProjectSummary = async () => {
+  const response = await fetch(`/api/ar-content?list=1&ts=${Date.now()}`, {
+    cache: 'no-store',
+    credentials: 'include',
+    headers: { Accept: 'application/json' }
+  });
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    throw new Error(`雲端服務回傳格式錯誤 (${response.status})`);
+  }
+  const data = await response.json();
+  if (!response.ok) throw new Error(data?.error || `Cloud project list failed: ${response.status}`);
+  const revision = response.headers.get('x-ar-source-blob-sha') || data?.revision || null;
+  return { data, revision };
+};
+
 const hasPublishedFloorPlan = (project) =>
   (project?.buildings || []).some(building =>
     (building?.floors || []).some(floor => Boolean(floor?.imageUrl || floor?.navigationImageUrl))
@@ -614,7 +670,15 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const [promptModal, setPromptModal] = useState({ isOpen: false, title: '', placeholder: '', onSubmit: null, defaultValue: '' });
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', message: '', onConfirm: null });
   const [alertModal, setAlertModal] = useState({ isOpen: false, message: '' });
-  const [cloudProjectModal, setCloudProjectModal] = useState({ isOpen: false, isLoading: false, projects: [], error: '' });
+  const [cloudProjectModal, setCloudProjectModal] = useState({ isOpen: false, isLoading: false, projects: [], error: '', revision: null });
+  const [cloudSnapshot, setCloudSnapshot] = useState({
+    status: 'idle',
+    revision: null,
+    projects: [],
+    checkedAt: null,
+    error: ''
+  });
+  const [cloudWriteState, setCloudWriteState] = useState('idle');
   const [permissionsModal, setPermissionsModal] = useState(false);
   const [boundsModal, setBoundsModal] = useState({
     isOpen: false,
@@ -661,7 +725,13 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       description: '由既有 AR 導引資料自動建立',
       updatedAt: new Date().toISOString(),
       systemConfig: migratedConfig,
-      buildings: migratedBuildings
+      buildings: migratedBuildings,
+      _sync: {
+        baseSha: null,
+        lastSyncedAt: null,
+        dirty: true,
+        source: 'local'
+      }
     }];
   });
   const [activeProjectId, setActiveProjectId] = useState(() => {
@@ -716,13 +786,15 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const [mapTransform, setMapTransform] = useState({ x: 0, y: 0, scale: 1 });
   const [deleteUndo, setDeleteUndo] = useState(null);
 
-  const applyPublishedProjectData = (data, projectId = null, replaceProjectList = false) => {
+  const applyPublishedProjectData = (data, projectId = null, replaceProjectList = false, sourceBlobSha = null) => {
     const selectedData = selectPublishedProjectData(data, projectId);
     if (!Array.isArray(selectedData?.buildings) || selectedData.buildings.length === 0) {
       throw new Error('雲端目前沒有可載入的 AR 平面圖資料。');
     }
 
-    const project = createProjectFromPublishedData(selectedData);
+    const project = createProjectFromPublishedData(selectedData, sourceBlobSha);
+    const isReplacingActiveProject = project.id === activeProjectId;
+    isLoadingProjectRef.current = true;
     setProjects(previousProjects => {
       if (replaceProjectList) return [project];
       const exists = previousProjects.some(item => item.id === project.id);
@@ -731,10 +803,12 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         : [...previousProjects, project];
     });
     setActiveProjectId(project.id);
-    setSystemConfig(cloneData(project.systemConfig));
-    setBuildings(cloneData(project.buildings));
-    setActiveBuildingId(project.buildings[0]?.id);
-    setActiveFloorId(project.buildings[0]?.floors[0]?.id);
+    if (isReplacingActiveProject) {
+      setSystemConfig(cloneData(project.systemConfig));
+      setBuildings(cloneData(project.buildings));
+      setActiveBuildingId(project.buildings[0]?.id);
+      setActiveFloorId(project.buildings[0]?.floors[0]?.id);
+    }
     setReferenceFloorId('');
     setSelectedMarkerId(null);
     setSelectedWaypointId(null);
@@ -743,6 +817,54 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     setDeleteUndo(null);
     setSmallLocalCacheValue('arManager_lastCloudSyncAt', project.updatedAt || new Date().toISOString());
     return project;
+  };
+
+  const rememberCloudSnapshot = ({ data, revision }) => {
+    const remoteProjects = Array.isArray(data?.projects) ? data.projects : [];
+    setCloudSnapshot({
+      status: 'ready',
+      revision,
+      projects: remoteProjects,
+      checkedAt: new Date().toISOString(),
+      error: ''
+    });
+
+    if (!revision) return;
+    const remoteProjectIds = new Set(
+      remoteProjects.map(item => item?.project?.id).filter(Boolean)
+    );
+    setProjects(previousProjects => previousProjects.map(project => {
+      const sync = normalizeProjectSync(project);
+      if (sync.baseSha || remoteProjectIds.has(project.id)) return project;
+      return {
+        ...project,
+        _sync: {
+          ...sync,
+          baseSha: revision
+        }
+      };
+    }));
+  };
+
+  const refreshCloudStatus = async ({ announceErrors = false } = {}) => {
+    setCloudSnapshot(previous => ({ ...previous, status: 'checking', error: '' }));
+    try {
+      const snapshot = await loadCloudProjectSummary();
+      if (!snapshot.revision) throw new Error('雲端服務未提供可用的版本識別碼。');
+      rememberCloudSnapshot(snapshot);
+      return snapshot;
+    } catch (error) {
+      setCloudSnapshot(previous => ({
+        ...previous,
+        status: 'error',
+        checkedAt: new Date().toISOString(),
+        error: error.message
+      }));
+      if (announceErrors) {
+        setAlertModal({ isOpen: true, message: `無法檢查 GitHub 最新狀態：${error.message}` });
+      }
+      throw error;
+    }
   };
 
   useEffect(() => {
@@ -807,7 +929,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           localCacheWarningShownRef.current = true;
           setAlertModal({
             isOpen: true,
-            message: '專案已保留在目前頁面，但瀏覽器無法更新本機暫存。請先同步雲端；重新開啟頁面前，請勿清除網站資料。'
+            message: '專案已保留在目前頁面，但瀏覽器無法更新 IndexedDB 草稿。重新開啟頁面前請勿清除網站資料，並先下載 JSON 備份。'
           });
         }
       }
@@ -819,6 +941,13 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     if (publicOnly || !localCacheReady || !activeProjectId) return;
     setSmallLocalCacheValue(AR_ACTIVE_PROJECT_KEY, activeProjectId);
   }, [activeProjectId, localCacheReady, publicOnly]);
+
+  useEffect(() => {
+    if (publicOnly || !localCacheReady) return;
+    refreshCloudStatus().catch(() => {
+      // The local IndexedDB draft remains usable when the cloud is unavailable.
+    });
+  }, [localCacheReady, publicOnly]);
 
   useEffect(() => {
     if (!publicOnly) return;
@@ -944,9 +1073,14 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       name: systemConfig.projectName || project.name,
       systemConfig: cloneData(systemConfig),
       buildings: cloneData(buildings),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      _sync: {
+        ...normalizeProjectSync(project),
+        dirty: true,
+        source: 'local'
+      }
     } : project));
-  }, [activeProjectId, buildings, localCacheReady, systemConfig, publicOnly]);
+  }, [buildings, systemConfig, publicOnly]);
 
   useEffect(() => {
     const b = buildings.find(b => b.id === activeBuildingId);
@@ -1756,11 +1890,51 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     return stats.floorPlans > 0 || stats.markers > 0 || stats.waypoints > 0 || stats.edges > 0;
   };
 
+  const saveLocalDraft = async () => {
+    if (!activeProjectId || !activeProject) return;
+    const updatedAt = new Date().toISOString();
+    const localProject = {
+      ...activeProject,
+      name: systemConfig.projectName || activeProject.name,
+      systemConfig: cloneData(systemConfig),
+      buildings: cloneData(buildings),
+      updatedAt,
+      _sync: {
+        ...normalizeProjectSync(activeProject),
+        dirty: true,
+        source: 'local'
+      }
+    };
+    const nextProjects = projects.map(project => project.id === activeProjectId ? localProject : project);
+
+    try {
+      await replaceIndexedProjectCache(nextProjects);
+      setProjects(nextProjects);
+      removeLargeLegacyLocalCache();
+      setSmallLocalCacheValue('arManager_cacheVersion', 'indexeddb-v1');
+      setAlertModal({
+        isOpen: true,
+        message: `「${localProject.name}」已儲存在這台裝置的 IndexedDB 草稿；GitHub 尚未變更。`
+      });
+    } catch (error) {
+      setAlertModal({ isOpen: true, message: `本機草稿儲存失敗：${error.message}` });
+    }
+  };
+
   const performCloudSync = async () => {
     if (!canSyncProjectToCloud(buildings)) {
       setAlertModal({
         isOpen: true,
-        message: '目前專案還是空的，尚未有平面圖、AR 點位或路網資料。為避免覆蓋雲端既有專案，請先載入雲端資料或新增內容後再同步。'
+        message: '目前專案還是空的，尚未有平面圖、AR 點位或路網資料。為避免覆蓋 GitHub 既有專案，請先以 GitHub 更新本機或新增內容後再發布。'
+      });
+      return;
+    }
+
+    const expectedSourceBlobSha = normalizeProjectSync(activeProject).baseSha;
+    if (!expectedSourceBlobSha) {
+      setAlertModal({
+        isOpen: true,
+        message: '目前草稿尚未建立 GitHub 版本基準。若 GitHub 已有同名專案，請先「以 GitHub 更新本機」；若是新專案，請先按「檢查 GitHub 最新狀態」。'
       });
       return;
     }
@@ -1777,46 +1951,87 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       buildings: cloneData(buildings)
     };
 
-    setProjects(prev => prev.map(project => project.id === activeProjectId ? {
-      ...project,
-      name: payload.project.name,
-      systemConfig: payload.systemConfig,
-      buildings: payload.buildings,
-      updatedAt: payload.project.updatedAt
-    } : project));
-
+    setCloudWriteState('saving');
     try {
-      const cloudListResponse = await fetch(`/api/ar-content?list=1&ts=${Date.now()}`, {
-        cache: 'no-store'
-      });
-      const cloudList = await cloudListResponse.json().catch(() => ({}));
-      if (!cloudListResponse.ok) {
-        throw new Error(cloudList.error || `Cloud project list failed: ${cloudListResponse.status}`);
+      const latestSnapshot = await refreshCloudStatus();
+      if (latestSnapshot.revision !== expectedSourceBlobSha) {
+        const conflictError = new Error('GitHub 資料已在其他地方更新，已停止發布以保護較新的內容。');
+        conflictError.code = 'SYNC_CONFLICT';
+        throw conflictError;
       }
-      // Only cloud-confirmed IDs belong in the preservation contract. Local storage
-      // can contain drafts or deleted project IDs that have never existed remotely.
+
       const response = await fetch('/api/save-ar-content', {
         method: 'POST',
+        credentials: 'include',
         headers: {
+          'Accept': 'application/json',
           'Content-Type': 'application/json',
           'X-AR-Save-Contract': 'ar-project-collection-v4'
         },
-        body: JSON.stringify({ payload })
+        body: JSON.stringify({ payload, expectedSourceBlobSha })
       });
       const result = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        throw new Error(result.error || `Save failed: ${response.status}`);
+        const saveError = new Error(result.error || `Save failed: ${response.status}`);
+        saveError.code = result.code || (response.status === 409 ? 'SYNC_CONFLICT' : 'SAVE_FAILED');
+        throw saveError;
       }
 
+      const nextBaseSha = result.sourceBlobSha;
+      if (!nextBaseSha) throw new Error('GitHub 已回應成功，但未提供新的資料版本，請重新檢查狀態。');
+
+      const syncedProject = {
+        ...activeProject,
+        name: payload.project.name,
+        systemConfig: payload.systemConfig,
+        buildings: payload.buildings,
+        updatedAt: payload.project.updatedAt,
+        _sync: {
+          baseSha: nextBaseSha,
+          lastSyncedAt: payload.project.updatedAt,
+          dirty: false,
+          source: 'github'
+        }
+      };
+      setProjects(previousProjects => previousProjects.map(project =>
+        project.id === activeProjectId ? syncedProject : project
+      ));
+
       setSmallLocalCacheValue('arManager_lastCloudSyncAt', payload.project.updatedAt);
+      const syncedSummary = {
+        project: payload.project,
+        systemConfig: payload.systemConfig,
+        stats: getProjectContentStats(payload.buildings)
+      };
+      const previousRemoteProjects = Array.isArray(latestSnapshot.data?.projects)
+        ? latestSnapshot.data.projects
+        : [];
+      setCloudSnapshot({
+        status: 'ready',
+        revision: nextBaseSha,
+        projects: [
+          ...previousRemoteProjects.filter(item => item?.project?.id !== activeProjectId),
+          syncedSummary
+        ],
+        checkedAt: new Date().toISOString(),
+        error: ''
+      });
+      setCloudWriteState('success');
 
       const preservedCount = Array.isArray(result.projectIds)
         ? result.projectIds.length
-        : (Array.isArray(cloudList.projects) ? cloudList.projects.length : 1);
-      setAlertModal({ isOpen: true, message: `「${payload.project.name}」已儲存到 Web 端，雲端共保留 ${preservedCount} 個專案。民眾端會透過 /api/ar-content 讀取最新資料。` });
+        : Math.max(previousRemoteProjects.length, 1);
+      setAlertModal({ isOpen: true, message: `「${payload.project.name}」已發布到 GitHub，並取得新的同步版本。雲端共保留 ${preservedCount} 個專案。` });
     } catch (error) {
-      setAlertModal({ isOpen: true, message: `已儲存在後台暫存，但發布到網站失敗：${error.message}` });
+      const isConflict = error.code === 'SYNC_CONFLICT';
+      setCloudWriteState(isConflict ? 'conflict' : 'error');
+      setAlertModal({
+        isOpen: true,
+        message: isConflict
+          ? `${error.message} 本機 IndexedDB 草稿仍完整保留；請先下載 JSON 備份或以 GitHub 最新內容更新本機。`
+          : `本機 IndexedDB 草稿仍已保留，但發布到 GitHub 失敗：${error.message}`
+      });
     }
   };
 
@@ -1832,8 +2047,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     const stats = getProjectContentStats(buildings);
     setConfirmModal({
       isOpen: true,
-      title: '確認同步到雲端',
-      message: `即將更新雲端的「${systemConfig.projectName || activeProject?.name || 'AR 專案'}」，其他專案會保留。內容包含 ${stats.floorPlans} 張平面圖、${stats.markers} 個 AR 點位、${stats.waypoints} 個路網節點、${stats.edges} 條路線連線。確定要同步嗎？`,
+      title: '確認發布到 GitHub',
+      message: `即將以目前 IndexedDB 草稿更新 GitHub 的「${systemConfig.projectName || activeProject?.name || 'AR 專案'}」，其他專案會保留。內容包含 ${stats.floorPlans} 張平面圖、${stats.markers} 個 AR 點位、${stats.waypoints} 個路網節點、${stats.edges} 條路線連線。若 GitHub 已更新，系統會停止並提示衝突。確定要發布嗎？`,
       onConfirm: performCloudSync
     });
   };
@@ -1843,21 +2058,24 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       const response = await fetch(`/api/ar-content?ts=${Date.now()}`, { cache: 'no-store' });
       if (!response.ok) throw new Error(`Load failed: ${response.status}`);
       const data = await response.json();
-      const project = applyPublishedProjectData(data);
+      const sourceBlobSha = response.headers.get('x-ar-source-blob-sha');
+      if (!sourceBlobSha) throw new Error('雲端服務未提供可用的版本識別碼。');
+      const project = applyPublishedProjectData(data, null, false, sourceBlobSha);
+      await refreshCloudStatus();
       setAlertModal({
         isOpen: true,
-        message: `已從雲端載入「${project.name}」。同一專案會覆蓋本機暫存，不會累積重複版本。`
+        message: `已用 GitHub 最新版本更新本機的「${project.name}」，並儲存至 IndexedDB。`
       });
     } catch (error) {
       setAlertModal({
         isOpen: true,
-        message: `無法從雲端載入 AR 資料：${error.message}`
+        message: `無法從 GitHub 載入 AR 資料：${error.message}`
       });
     }
   };
 
   const openCloudProjectList = async () => {
-    setCloudProjectModal({ isOpen: true, isLoading: true, projects: [], error: '' });
+    setCloudProjectModal({ isOpen: true, isLoading: true, projects: [], error: '', revision: null });
     try {
       const loadJson = async (url) => {
         const response = await fetch(url, { cache: 'no-store' });
@@ -1867,42 +2085,63 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         return response.json();
       };
       const [cloudResult, packagedResult] = await Promise.allSettled([
-        loadJson(`/api/ar-content?list=1&ts=${Date.now()}`),
+        loadCloudProjectSummary(),
         loadJson(`/ar-data.json?ts=${Date.now()}`)
       ]);
-      const cloudData = cloudResult.status === 'fulfilled' ? cloudResult.value : null;
+      const cloudSnapshotResult = cloudResult.status === 'fulfilled' ? cloudResult.value : null;
+      const cloudData = cloudSnapshotResult?.data || null;
       const packagedData = packagedResult.status === 'fulfilled' ? packagedResult.value : null;
-      const cloudProjects = mergePublishedProjectLists(cloudData, packagedData);
-      if (cloudProjects.length === 0) throw new Error('雲端目前沒有可載入的 AR 專案。');
-      setCloudProjectModal({ isOpen: true, isLoading: false, projects: cloudProjects, error: '' });
+      const remoteProjectIds = new Set(
+        normalizePublishedProjects(cloudData).map(item => item?.project?.id).filter(Boolean)
+      );
+      const cloudProjects = cloudSnapshotResult?.revision
+        ? mergePublishedProjectLists(packagedData, cloudData).filter(item => remoteProjectIds.has(item?.project?.id))
+        : normalizePublishedProjects(packagedData);
+      if (cloudProjects.length === 0) throw new Error('GitHub 與內建備援目前都沒有可載入的 AR 專案。');
+      if (cloudSnapshotResult?.revision) rememberCloudSnapshot(cloudSnapshotResult);
+      setCloudProjectModal({
+        isOpen: true,
+        isLoading: false,
+        projects: cloudProjects,
+        error: '',
+        revision: cloudSnapshotResult?.revision || null
+      });
     } catch (error) {
       setCloudProjectModal({
         isOpen: true,
         isLoading: false,
         projects: [],
-        error: `無法取得雲端專案列表：${error.message}`
+        error: `無法取得 GitHub 專案列表：${error.message}`,
+        revision: null
       });
     }
   };
 
-  const loadSelectedProjectFromCloud = async (projectId) => {
+  const performLoadSelectedProjectFromCloud = async (projectId) => {
     setCloudProjectModal(prev => ({ ...prev, isLoading: true, error: '' }));
     try {
       const packagedProject = cloudProjectModal.projects.find(item => item?.project?.id === projectId);
       let data = null;
-      try {
+      let sourceBlobSha = cloudProjectModal.revision || null;
+      if (sourceBlobSha) {
         const response = await fetch(`/api/ar-content?projectId=${encodeURIComponent(projectId)}&ts=${Date.now()}`, { cache: 'no-store' });
         if (!response.ok) throw new Error(`Load failed: ${response.status}`);
         data = await response.json();
-      } catch (apiError) {
-        if (!Array.isArray(packagedProject?.buildings) || packagedProject.buildings.length === 0) throw apiError;
+        sourceBlobSha = response.headers.get('x-ar-source-blob-sha') || sourceBlobSha;
+      } else {
+        if (!Array.isArray(packagedProject?.buildings) || packagedProject.buildings.length === 0) {
+          throw new Error('找不到可用的 GitHub 或內建備援資料。');
+        }
         data = packagedProject;
       }
-      const project = applyPublishedProjectData(data, projectId);
-      setCloudProjectModal({ isOpen: false, isLoading: false, projects: [], error: '' });
+      const project = applyPublishedProjectData(data, projectId, false, sourceBlobSha);
+      setCloudWriteState('idle');
+      setCloudProjectModal({ isOpen: false, isLoading: false, projects: [], error: '', revision: null });
       setAlertModal({
         isOpen: true,
-        message: `已從雲端載入「${project.name}」。同一專案會覆蓋本機暫存，不會累積重複版本。`
+        message: sourceBlobSha
+          ? `已用 GitHub 最新版本更新本機的「${project.name}」，並儲存至 IndexedDB。`
+          : `GitHub 目前不可用；已將內建備援版本「${project.name}」載入 IndexedDB，發布前仍須重新檢查 GitHub。`
       });
     } catch (error) {
       setCloudProjectModal(prev => ({
@@ -1911,6 +2150,20 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         error: `無法載入指定專案：${error.message}`
       }));
     }
+  };
+
+  const loadSelectedProjectFromCloud = (projectId) => {
+    const localProject = projects.find(project => project.id === projectId);
+    if (localProject && normalizeProjectSync(localProject).dirty) {
+      setConfirmModal({
+        isOpen: true,
+        title: '以 GitHub 更新本機草稿',
+        message: `這台裝置的「${localProject.name}」有尚未發布的變更。繼續會以 GitHub 版本覆蓋該專案的 IndexedDB 草稿；建議先下載 JSON 備份。確定繼續嗎？`,
+        onConfirm: () => performLoadSelectedProjectFromCloud(projectId)
+      });
+      return;
+    }
+    performLoadSelectedProjectFromCloud(projectId);
   };
 
   const addProject = () => {
@@ -1956,8 +2209,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
     setConfirmModal({
       isOpen: true,
-      title: '\u522a\u9664 AR \u5c0e\u5f15\u5c08\u6848',
-      message: `\u78ba\u5b9a\u8981\u522a\u9664\u300c${activeProject?.name || systemConfig.projectName}\u300d\u55ce\uff1f\u6b64\u5c08\u6848\u5167\u7684\u5e73\u9762\u5716\u3001\u8def\u5f91\u8207 AR \u9ede\u4f4d\u90fd\u6703\u4e00\u4f75\u79fb\u9664\u3002`,
+      title: '刪除本機 AR 導引專案',
+      message: `確定要刪除「${activeProject?.name || systemConfig.projectName}」嗎？此操作只會移除這台裝置 IndexedDB 內的平面圖、路徑與 AR 點位；GitHub 不會變更。`,
       onConfirm: () => {
         setProjects(prev => {
           const remaining = prev.filter(project => project.id !== activeProjectId);
@@ -2044,7 +2297,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     resetFloorEditingState();
     setAlertModal({
       isOpen: true,
-      message: `「${currentBuilding?.name || '目前場域'} / ${currentFloor.name || '目前樓層'}」的繪製內容已從後台草稿清除；平面圖、比例尺與其他樓層資料均已保留。如需套用到民眾端，請再按「同步雲端」。`
+      message: `「${currentBuilding?.name || '目前場域'} / ${currentFloor.name || '目前樓層'}」的繪製內容已從後台草稿清除；平面圖、比例尺與其他樓層資料均已保留。如需套用到民眾端，請再按「發布 GitHub」。`
     });
   };
 
@@ -2142,6 +2395,54 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
   const totalProjectMarkers = buildings.reduce((sum, b) => sum + b.floors.reduce((floorSum, f) => floorSum + (f.markers || []).length, 0), 0);
   const totalProjectFloors = buildings.reduce((sum, b) => sum + b.floors.length, 0);
+  const activeProjectSync = normalizeProjectSync(activeProject || {});
+  const activeRemoteProject = cloudSnapshot.projects.find(item => item?.project?.id === activeProjectId);
+  const syncStatus = (() => {
+    if (cloudWriteState === 'saving') {
+      return { tone: 'blue', label: '正在發布 GitHub', detail: '正在驗證版本並提交，請勿關閉頁面。' };
+    }
+    if (cloudWriteState === 'conflict') {
+      return { tone: 'red', label: '雙方皆有變更', detail: 'GitHub 版本已更新；本機草稿受保護且未被覆蓋。' };
+    }
+    if (cloudSnapshot.status === 'checking') {
+      return { tone: 'blue', label: '正在檢查 GitHub', detail: '正在取得最新資料版本。' };
+    }
+    if (cloudSnapshot.status === 'error') {
+      return { tone: 'amber', label: '無法確認 GitHub', detail: cloudSnapshot.error || '本機草稿仍可繼續編輯。' };
+    }
+    if (!cloudSnapshot.revision) {
+      return { tone: 'slate', label: '尚未檢查 GitHub', detail: '本機內容會自動儲存在 IndexedDB。' };
+    }
+    if (!activeRemoteProject) {
+      return {
+        tone: 'cyan',
+        label: '本機新專案',
+        detail: activeProjectSync.baseSha === cloudSnapshot.revision
+          ? '已建立安全版本基準，可發布到 GitHub。'
+          : '請重新檢查 GitHub 後再發布。'
+      };
+    }
+    if (!activeProjectSync.baseSha) {
+      return { tone: 'amber', label: 'GitHub 有既有版本', detail: '本機尚無版本基準，發布前請先以 GitHub 更新本機。' };
+    }
+    if (activeProjectSync.baseSha !== cloudSnapshot.revision) {
+      return activeProjectSync.dirty
+        ? { tone: 'red', label: '雙方皆有變更', detail: '請先下載 JSON 備份，再決定以 GitHub 更新本機。' }
+        : { tone: 'amber', label: 'GitHub 有更新', detail: '可用 GitHub 最新版本更新本機 IndexedDB。' };
+    }
+    if (activeProjectSync.dirty) {
+      return { tone: 'cyan', label: '本機有未發布變更', detail: 'IndexedDB 已保存；GitHub 尚未更新。' };
+    }
+    return { tone: 'green', label: '已與 GitHub 同步', detail: '本機與遠端使用相同資料版本。' };
+  })();
+  const syncToneClasses = {
+    blue: 'border-blue-500/30 bg-blue-500/10 text-blue-200',
+    red: 'border-red-500/30 bg-red-500/10 text-red-200',
+    amber: 'border-amber-500/30 bg-amber-500/10 text-amber-200',
+    cyan: 'border-cyan-500/30 bg-cyan-500/10 text-cyan-200',
+    green: 'border-green-500/30 bg-green-500/10 text-green-200',
+    slate: 'border-slate-700 bg-slate-950 text-slate-300'
+  };
 
   const renderProjectManager = () => (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 md:p-5 shadow-lg mb-5">
@@ -2170,22 +2471,42 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           <button onClick={editProject} className="inline-flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-3 py-2 rounded-lg text-xs transition-colors">
             <Edit className="w-4 h-4" />編輯
           </button>
-          <button onClick={saveActiveProject} className="inline-flex items-center justify-center gap-2 bg-green-500/10 hover:bg-green-500/20 text-green-400 border border-green-500/30 px-3 py-2 rounded-lg text-xs transition-colors">
-            <CheckCircle2 className="w-4 h-4" />儲存
+          <button onClick={saveLocalDraft} className="inline-flex items-center justify-center gap-2 bg-green-500/10 hover:bg-green-500/20 text-green-400 border border-green-500/30 px-3 py-2 rounded-lg text-xs transition-colors" title="只儲存到這台裝置的 IndexedDB，不會變更 GitHub">
+            <HardDrive className="w-4 h-4" />儲存本機
           </button>
-          <button onClick={saveActiveProject} className="inline-flex items-center justify-center gap-2 bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/30 px-3 py-2 rounded-lg text-xs transition-colors" title="把目前這台裝置的 AR 資料同步到雲端，讓其他裝置可以載入">
-            <Upload className="w-4 h-4" />同步雲端
+          <button onClick={saveActiveProject} disabled={cloudWriteState === 'saving'} className="inline-flex items-center justify-center gap-2 bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/30 px-3 py-2 rounded-lg text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed" title="版本檢查通過後，將 IndexedDB 草稿發布到 GitHub">
+            <Upload className="w-4 h-4" />發布 GitHub
           </button>
-          <button onClick={openCloudProjectList} className="inline-flex items-center justify-center gap-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 px-3 py-2 rounded-lg text-xs transition-colors" title="從雲端載入已上架的 AR 資料，會覆蓋目前後台顯示的本機暫存">
-            <Download className="w-4 h-4" />從雲端載入
+          <button onClick={openCloudProjectList} className="inline-flex items-center justify-center gap-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 px-3 py-2 rounded-lg text-xs transition-colors" title="選擇 GitHub 最新版本更新本機 IndexedDB；有未發布變更時會再次確認">
+            <Download className="w-4 h-4" />GitHub 更新本機
           </button>
           <button onClick={deleteProject} className="inline-flex items-center justify-center gap-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-2 rounded-lg text-xs transition-colors">
             <Trash2 className="w-4 h-4" />刪除
           </button>
         </div>
       </div>
+      <div className={`mt-4 rounded-xl border px-4 py-3 ${syncToneClasses[syncStatus.tone]}`}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <div className="text-xs font-black tracking-wide">{syncStatus.label}</div>
+            <div className="mt-1 text-[11px] opacity-80">{syncStatus.detail}</div>
+            {cloudSnapshot.checkedAt && (
+              <div className="mt-1 text-[10px] opacity-60">最後檢查：{new Date(cloudSnapshot.checkedAt).toLocaleString()}</div>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => refreshCloudStatus({ announceErrors: true }).catch(() => {})}
+            disabled={cloudSnapshot.status === 'checking' || cloudWriteState === 'saving'}
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-current/20 bg-black/10 px-3 py-2 text-xs font-bold transition-colors hover:bg-black/20 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${cloudSnapshot.status === 'checking' ? 'animate-spin' : ''}`} />
+            檢查 GitHub
+          </button>
+        </div>
+      </div>
       <div className="mt-3 text-xs text-slate-500">
-        每個專案都會獨立保存平面圖、路徑節點、AR 導引點與系統設定。切換專案後，下方維護區會載入該場域自己的資料。
+        編輯內容會自動保存到這台裝置的 IndexedDB；只有「發布 GitHub」會變更遠端資料。切換專案後，下方維護區會載入該場域自己的資料。
       </div>
     </div>
   );
@@ -2529,8 +2850,18 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 {projects.map(project => <option key={project.id} value={project.id} className="bg-slate-900">{project.name}</option>)}
               </select>
               <button onClick={addProject} className="ml-1 px-1 text-cyan-400 hover:text-cyan-300 transition-colors" title="新增專案"><Plus className="w-4 h-4"/></button>
-              <button onClick={saveActiveProject} className="px-1 text-green-400 hover:text-green-300 transition-colors" title="儲存專案"><CheckCircle2 className="w-4 h-4"/></button>
+              <button onClick={saveLocalDraft} className="px-1 text-green-400 hover:text-green-300 transition-colors" title="儲存本機 IndexedDB 草稿"><HardDrive className="w-4 h-4"/></button>
             </div>
+            <button
+              type="button"
+              onClick={() => refreshCloudStatus({ announceErrors: true }).catch(() => {})}
+              disabled={cloudSnapshot.status === 'checking' || cloudWriteState === 'saving'}
+              title={syncStatus.detail}
+              className={`inline-flex max-w-[190px] items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${syncToneClasses[syncStatus.tone]}`}
+            >
+              <RefreshCw className={`h-3.5 w-3.5 shrink-0 ${cloudSnapshot.status === 'checking' ? 'animate-spin' : ''}`} />
+              <span className="truncate">{syncStatus.label}</span>
+            </button>
             <div className="w-px h-5 bg-slate-700 mx-1"></div>
             <div className="flex items-center">
               <Building className="w-4 h-4 text-slate-500 ml-1 mr-2"/>
@@ -2568,20 +2899,21 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             <button
               onClick={openCloudProjectList}
               className="flex shrink-0 items-center justify-center gap-2 h-10 px-3 rounded-xl transition-all shadow-lg font-bold text-xs bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30"
-              title="從雲端載入已上架的 AR 資料"
+              title="以 GitHub 最新資料更新本機 IndexedDB"
             >
               <Download className="w-5 h-5" />
-              <span className="md:hidden">載入</span>
-              <span className="hidden md:inline">載入雲端</span>
+              <span className="md:hidden">拉取</span>
+              <span className="hidden md:inline">GitHub 更新本機</span>
             </button>
             <button
               onClick={saveActiveProject}
-              className="flex shrink-0 items-center justify-center gap-2 h-10 px-3 rounded-xl transition-all shadow-lg font-bold text-xs bg-green-500/10 hover:bg-green-500/20 text-green-300 border border-green-500/30"
-              title="把目前這台裝置的 AR 資料同步到雲端"
+              disabled={cloudWriteState === 'saving'}
+              className="flex shrink-0 items-center justify-center gap-2 h-10 px-3 rounded-xl transition-all shadow-lg font-bold text-xs bg-green-500/10 hover:bg-green-500/20 text-green-300 border border-green-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+              title="版本檢查通過後，將本機 IndexedDB 草稿發布到 GitHub"
             >
-              <HardDrive className="w-5 h-5" />
-              <span className="md:hidden">同步</span>
-              <span className="hidden md:inline">同步雲端</span>
+              <Upload className="w-5 h-5" />
+              <span className="md:hidden">發布</span>
+              <span className="hidden md:inline">發布 GitHub</span>
             </button>
             <button
               onClick={exportJSON}
@@ -3009,14 +3341,14 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           <div className="bg-slate-900 border border-amber-500/40 rounded-xl w-full max-w-2xl p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4 mb-5">
               <div>
-                <h3 className="text-lg font-bold text-amber-300">選擇要載入的雲端專案</h3>
-                <p className="text-xs text-slate-400 mt-1">同一專案會覆蓋本機暫存，不會累積歷史版本；其他後台專案仍會保留。除非再次按「同步雲端」，否則不會變更線上資料。</p>
+                <h3 className="text-lg font-bold text-amber-300">選擇 GitHub 專案更新本機</h3>
+                <p className="text-xs text-slate-400 mt-1">選擇 GitHub 專案後會更新同 ID 的本機 IndexedDB 草稿；若本機有未發布變更，系統會再次確認。此操作不會變更 GitHub。</p>
               </div>
-              <button onClick={() => setCloudProjectModal({ isOpen: false, isLoading: false, projects: [], error: '' })} className="text-slate-400 hover:text-white p-1"><X className="w-5 h-5" /></button>
+              <button onClick={() => setCloudProjectModal({ isOpen: false, isLoading: false, projects: [], error: '', revision: null })} className="text-slate-400 hover:text-white p-1"><X className="w-5 h-5" /></button>
             </div>
 
             {cloudProjectModal.isLoading && (
-              <div className="rounded-xl border border-slate-800 bg-slate-950 p-6 text-center text-sm text-slate-300">正在讀取雲端專案列表...</div>
+              <div className="rounded-xl border border-slate-800 bg-slate-950 p-6 text-center text-sm text-slate-300">正在讀取 GitHub 專案列表...</div>
             )}
 
             {!cloudProjectModal.isLoading && cloudProjectModal.error && (
@@ -5481,4 +5813,3 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     </div>
   );
 }
-

@@ -1,6 +1,28 @@
 {
   "routes": [
     {
+      "route": "/ar-v4-field.html",
+      "allowedRoles": ["ar_admin"],
+      "headers": { "Cache-Control": "no-store" }
+    },
+    {
+      "route": "/admin-ar-v4.html",
+      "allowedRoles": ["ar_admin"],
+      "headers": { "Cache-Control": "no-store" }
+    },
+    {
+      "route": "/assets/ar-v4/*",
+      "headers": { "Cache-Control": "no-store" }
+    },
+    {
+      "route": "/.local/*",
+      "statusCode": 404
+    },
+    {
+      "route": "/test-output/*",
+      "statusCode": 404
+    },
+    {
       "route": "/ar-v3.html",
       "headers": {
         "Cache-Control": "no-cache, no-store, must-revalidate"
@@ -32,15 +54,21 @@
     },
     {
       "route": "/admin-dashboard.html",
-      "allowedRoles": ["authenticated"]
+      "allowedRoles": ["ar_admin"]
     },
     {
       "route": "/admin-ar.html",
-      "allowedRoles": ["authenticated"]
+      "allowedRoles": ["ar_admin"]
     },
     {
       "route": "/api/save-content",
-      "allowedRoles": ["authenticated"]
+      "methods": ["POST"],
+      "allowedRoles": ["ar_admin"]
+    },
+    {
+      "route": "/api/save-ar-content",
+      "methods": ["POST"],
+      "allowedRoles": ["ar_admin"]
     }
   ],
   "responseOverrides": {

@@ -32,6 +32,7 @@ type WorkerRequest =
       width: number;
       height: number;
       pixels: ArrayBuffer;
+      fullScene?: boolean;
     };
 
 type TargetPattern = {
@@ -275,16 +276,17 @@ const polygonArea = (points: RecognitionPoint[]) =>
 const pointDistance = (start: RecognitionPoint, end: RecognitionPoint) =>
   Math.hypot(end.x - start.x, end.y - start.y);
 
-const isUsableQuadrilateral = (
+export const isUsableQuadrilateral = (
   corners: RecognitionPoint[],
   width: number,
   height: number,
+  fullScene = false,
 ) => {
   if (corners.length !== 4 || corners.some((point) => !Number.isFinite(point.x) || !Number.isFinite(point.y))) {
     return false;
   }
   const areaRatio = polygonArea(corners) / Math.max(1, width * height);
-  if (areaRatio < 0.018 || areaRatio > 0.88) return false;
+  if (areaRatio < 0.018 || areaRatio > (fullScene ? 1.2 : 0.88)) return false;
   const edgeLengths = corners.map((point, index) => pointDistance(point, corners[(index + 1) % 4]));
   const shortestEdge = Math.min(...edgeLengths);
   const longestEdge = Math.max(...edgeLengths);
@@ -322,6 +324,7 @@ const estimateDetection = (
   width: number,
   height: number,
   target: TargetPattern,
+  fullScene = false,
 ) => {
   if (matches.length < MIN_MATCHES) return null;
   const sourcePoints = matches.map((match) => {
@@ -357,7 +360,7 @@ const estimateDetection = (
   if (inliers < MIN_INLIERS || inliers / matches.length < MIN_INLIER_RATIO) return null;
   kernel.run(inlierSource, inlierDestination, homography, inliers);
   const corners = projectTargetCorners(target);
-  if (!isUsableQuadrilateral(corners, width, height)) return null;
+  if (!isUsableQuadrilateral(corners, width, height, fullScene)) return null;
   return {
     targetId: target.id,
     corners,
@@ -381,6 +384,7 @@ const detect = (request: WorkerRequest): RecognitionDetection | null => {
       request.width,
       request.height,
       target,
+      request.fullScene === true,
     );
     if (!detection) return bestDetection;
     if (!bestDetection) return detection;

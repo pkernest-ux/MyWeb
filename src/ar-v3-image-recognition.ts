@@ -16,6 +16,11 @@ export type RecognitionTarget = {
   imageUrl: string;
 };
 
+export type OrbImageTrackerOptions = {
+  /** Allow a field photograph to fill the frame; legacy marker tracking remains the default. */
+  fullScene?: boolean;
+};
+
 type WorkerResult = RecognitionDetection | null | { prepared: true };
 
 type WorkerResponse = {
@@ -62,6 +67,11 @@ export class OrbImageTracker {
   private prepared = false;
   private requestId = 0;
   private pending = new Map<number, PendingRequest>();
+  private readonly fullScene: boolean;
+
+  constructor(options: OrbImageTrackerOptions = {}) {
+    this.fullScene = options.fullScene === true;
+  }
 
   async prepare(imageUrl: string) {
     await this.prepareMany([{ id: "target", imageUrl }]);
@@ -125,6 +135,7 @@ export class OrbImageTracker {
         width: frameCanvas.width,
         height: frameCanvas.height,
         pixels: imageData.data.buffer,
+        fullScene: this.fullScene,
       },
       [imageData.data.buffer],
       10_000,

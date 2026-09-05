@@ -179,6 +179,7 @@ const updateProjectNodeGuideAngle = (
 
 const loadProjectOption = async (option: ProjectOption) => {
   let selected = option.localData;
+  let sourceBlobSha = "";
   if (option.source === "cloud") {
     try {
       const response = await fetch(
@@ -190,6 +191,7 @@ const loadProjectOption = async (option: ProjectOption) => {
         throw new Error(`雲端專案載入失敗 (${response.status})`);
       }
       selected = await response.json();
+      sourceBlobSha = response.headers.get("x-ar-source-blob-sha") || "";
     } catch (error) {
       if (!selected) throw error;
     }
@@ -198,7 +200,16 @@ const loadProjectOption = async (option: ProjectOption) => {
   if (!Array.isArray(selected?.buildings) || selected.buildings.length === 0) {
     throw new Error("此場域尚未建立可用的平面圖");
   }
-  return selected;
+  return sourceBlobSha
+    ? {
+        ...selected,
+        _sync: {
+          ...(selected?._sync || {}),
+          baseSha: sourceBlobSha,
+          source: "github",
+        },
+      }
+    : selected;
 };
 
 const loadCurrentClientPrincipal = async () => {
@@ -215,6 +226,10 @@ const loadCurrentClientPrincipal = async () => {
   const authData = await response.json();
   return authData?.clientPrincipal || null;
 };
+
+const hasArAdminRole = (clientPrincipal: any) => (
+  Array.isArray(clientPrincipal?.userRoles) && clientPrincipal.userRoles.includes("ar_admin")
+);
 
 const normalizeAngle = (value: number) => {
   let angle = value % 360;
@@ -1491,7 +1506,7 @@ export default function ARNavigationV3() {
     () => new URLSearchParams(window.location.search).get("calibrate") === "1",
   );
   const [fieldCalibrationAuth, setFieldCalibrationAuth] = useState<
-    "idle" | "checking" | "ready" | "login-required"
+    "idle" | "checking" | "ready" | "login-required" | "access-denied"
   >(fieldCalibrationEnabled ? "checking" : "idle");
   const [fieldCalibrationUser, setFieldCalibrationUser] = useState("");
   const [fieldCalibrationNodeId, setFieldCalibrationNodeId] = useState("");
@@ -1589,10 +1604,17 @@ export default function ARNavigationV3() {
     loadCurrentClientPrincipal()
       .then((clientPrincipal) => {
         if (!active) return;
-        if (clientPrincipal) {
+        if (clientPrincipal && hasArAdminRole(clientPrincipal)) {
           setFieldCalibrationUser(clientPrincipal.userDetails || "已驗證使用者");
           setFieldCalibrationAuth("ready");
           setFieldCalibrationMessage("登入完成，角度確認後可直接同步。");
+          return;
+        }
+
+        if (clientPrincipal) {
+          setFieldCalibrationUser(clientPrincipal.userDetails || "已驗證使用者");
+          setFieldCalibrationAuth("access-denied");
+          setFieldCalibrationMessage("此帳號沒有 AR 後台管理權限。");
           return;
         }
 
@@ -2212,6 +2234,15 @@ export default function ARNavigationV3() {
       return;
     }
 
+    const expectedSourceBlobSha = typeof project?._sync?.baseSha === "string"
+      ? project._sync.baseSha
+      : "";
+    if (!expectedSourceBlobSha) {
+      setFieldCalibrationSync("error");
+      setFieldCalibrationMessage("目前資料不是從 GitHub 最新版本載入，請重新整理後再校正。");
+      return;
+    }
+
     const angle = Math.round(normalizeHeading(fieldCalibrationAngle) * 10) / 10;
     setFieldCalibrationSync("saving");
     setFieldCalibrationMessage("正在同步目前節點角度...");
@@ -2222,6 +2253,11 @@ export default function ARNavigationV3() {
         setFieldCalibrationUser("");
         setFieldCalibrationAuth("login-required");
         throw new Error(`目前網域 ${window.location.host} 尚未登入，請登入後再同步。`);
+      }
+      if (!hasArAdminRole(clientPrincipal)) {
+        setFieldCalibrationUser(clientPrincipal.userDetails || "已驗證使用者");
+        setFieldCalibrationAuth("access-denied");
+        throw new Error("此帳號沒有 AR 後台管理權限。");
       }
       setFieldCalibrationUser(clientPrincipal.userDetails || "已驗證使用者");
       setFieldCalibrationAuth("ready");
@@ -2235,6 +2271,7 @@ export default function ARNavigationV3() {
           "X-AR-Save-Contract": "ar-angle-calibration-v1",
         },
         body: JSON.stringify({
+          expectedSourceBlobSha,
           calibration: {
             projectId: project.project.id,
             buildingId: fieldCalibrationTargetNode.bId,
@@ -2264,13 +2301,33 @@ export default function ARNavigationV3() {
         setFieldCalibrationAuth("login-required");
         throw new Error(`目前網域 ${window.location.host} 的登入狀態已失效，請重新登入。`);
       }
+      if (response.status === 403 && result?.code === "ADMIN_ROLE_REQUIRED") {
+        setFieldCalibrationAuth("access-denied");
+        throw new Error("此帳號沒有 AR 後台管理權限。");
+      }
+      if (response.status === 409 && result?.code === "SYNC_CONFLICT") {
+        throw new Error("GitHub 資料已更新，為避免覆蓋較新內容，請重新整理後再校正。");
+      }
       if (!response.ok) throw new Error(result?.error || `同步失敗 (${response.status})`);
 
       const savedAngle = normalizeHeading(Number(result?.calibration?.guideReferenceBearing ?? angle));
       const updatedAt = result?.calibration?.updatedAt || new Date().toISOString();
-      setProject((current: any) =>
-        updateProjectNodeGuideAngle(current, fieldCalibrationTargetNode, savedAngle, updatedAt),
-      );
+      const nextSourceBlobSha = typeof result?.sourceBlobSha === "string"
+        ? result.sourceBlobSha
+        : "";
+      if (!nextSourceBlobSha) {
+        throw new Error("GitHub 已回應成功，但未提供新的資料版本，請重新整理後再試。");
+      }
+      setProject((current: any) => ({
+        ...updateProjectNodeGuideAngle(current, fieldCalibrationTargetNode, savedAngle, updatedAt),
+        _sync: {
+          ...(current?._sync || {}),
+          baseSha: nextSourceBlobSha,
+          lastSyncedAt: updatedAt,
+          dirty: false,
+          source: "github",
+        },
+      }));
       setFieldCalibrationAngle(savedAngle);
       setFieldCalibrationSavedAngle(savedAngle);
       setFieldCalibrationSync("success");
@@ -2754,6 +2811,7 @@ export default function ARNavigationV3() {
 
   if (fieldCalibrationEnabled && fieldCalibrationAuth !== "ready") {
     const isCheckingAuth = fieldCalibrationAuth === "checking";
+    const isAccessDenied = fieldCalibrationAuth === "access-denied";
     return (
       <main className="v3-calibration-auth-gate">
         <section aria-live="polite">
@@ -2761,16 +2819,24 @@ export default function ARNavigationV3() {
             {isCheckingAuth ? <RefreshCw className="is-spinning" /> : <LogIn />}
           </div>
           <span>V3 現場角度校正</span>
-          <h1>{isCheckingAuth ? "正在確認登入狀態" : "請先登入後台"}</h1>
+          <h1>
+            {isCheckingAuth
+              ? "正在確認登入狀態"
+              : isAccessDenied
+                ? "帳號沒有校正權限"
+                : "請先登入後台"}
+          </h1>
           <p>
             {isCheckingAuth
               ? "正在向 Azure 確認目前帳號，完成後會自動進入校正流程。"
-              : "登入成功後會返回這一頁。登入狀態只適用目前網域，正式站與測試站需各自登入一次。"}
+              : isAccessDenied
+                ? "目前帳號已登入，但未獲派 ar_admin 角色；請由站台管理員完成角色指派後再重新整理。"
+                : "登入成功後會返回這一頁。登入狀態只適用目前網域，正式站與測試站需各自登入一次。"}
           </p>
           {!isCheckingAuth && (
             <small className="v3-calibration-auth-host">目前網域：{window.location.host}</small>
           )}
-          {!isCheckingAuth && (
+          {!isCheckingAuth && !isAccessDenied && (
             <a href={fieldCalibrationLoginUrl} rel="nofollow">
               <LogIn aria-hidden="true" />
               登入後開始校正
