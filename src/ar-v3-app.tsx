@@ -1,13 +1,16 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Camera,
   Check,
   ChevronLeft,
   ChevronRight,
+  CloudUpload,
   Compass,
   Crosshair,
   ExternalLink,
+  Footprints,
+  LogIn,
   LocateFixed,
   Map,
   MapPin,
@@ -18,8 +21,13 @@ import {
   Plus,
   RefreshCw,
   ScanLine,
-  X,
+  SlidersHorizontal,
 } from "lucide-react";
+import {
+  OrbImageTracker,
+  type RecognitionDetection,
+  type RecognitionPoint,
+} from "./ar-v3-image-recognition";
 
 type NodeData = {
   id: string;
@@ -36,12 +44,23 @@ type NodeData = {
   shaftId?: string | null;
   title?: string;
   code?: string;
+  description?: string;
   enabled?: boolean;
   navigable?: boolean;
+  canStop?: boolean;
+  publicSelectable?: boolean;
+  imageUrl?: string | null;
+  recognitionStatus?: string;
   guideTitle?: string;
   guideInstruction?: string;
   guideImageUrl?: string | null;
+  guideRecognitionStatus?: string;
   guideExternalUrl?: string;
+  guideDirectionMode?: "auto" | "manual" | "sensor";
+  guideReferenceBearing?: number | null;
+  guideDeviceHeading?: number | null;
+  guideHeadingAccuracy?: number | null;
+  guideHeadingCapturedAt?: string | null;
 };
 
 type FloorData = {
@@ -53,6 +72,9 @@ type FloorData = {
   waypoints?: any[];
   edges?: any[];
   bounds?: { blX: number; blY: number; trX: number; trY: number };
+  mapUpHeading?: number | null;
+  mapUpHeadingAccuracy?: number | null;
+  mapUpHeadingCapturedAt?: string | null;
   buildingId: string;
   buildingName: string;
 };
@@ -81,10 +103,29 @@ type ProjectOption = {
   summary?: any;
 };
 
+type RecognitionStatus =
+  | "disabled"
+  | "loading"
+  | "searching"
+  | "confirming"
+  | "locked"
+  | "grace"
+  | "lost"
+  | "error";
+
 const clamp = (value: number, min = 0, max = 1) => Math.min(max, Math.max(min, value));
 const DEFAULT_LABEL_SIZE = 15;
 const AR_TURN_ANGLE_THRESHOLD = 18;
 const AR_SCREEN_UNITS_PER_METER = 2.4;
+const RECOGNITION_FRAME_INTERVAL_MS = 120;
+const RECOGNITION_CONFIRMATION_FRAMES = 2;
+const RECOGNITION_LOST_DELAY_MS = 400;
+const RECOGNITION_GRACE_PERIOD_MS = 20_000;
+const RECOGNITION_GRACE_SECONDS = RECOGNITION_GRACE_PERIOD_MS / 1000;
+const RECOGNITION_GRACE_STEP_LIMIT = 5;
+const STEP_ACCELERATION_THRESHOLD = 0.9;
+const STEP_RELEASE_THRESHOLD = 0.34;
+const STEP_COOLDOWN_MS = 420;
 const DEFAULT_GUIDE_IMAGE_URL = "./assets/ar-v3/hsinchu-city-hall-navigation-clean.png";
 const DEFAULT_DESTINATION_LABEL = "產業發展處工商科(工商登記)";
 const DEFAULT_ORIGIN_LABELS = ["大門", "入口", "正門"];
@@ -98,8 +139,47 @@ const normalizeProjects = (raw: any) => {
 const projectName = (data: any) =>
   data?.project?.name || data?.systemConfig?.projectName || "未命名導引專案";
 
+const updateProjectNodeGuideAngle = (
+  currentProject: any,
+  target: NodeData,
+  angle: number,
+  updatedAt: string,
+) => ({
+  ...currentProject,
+  project: {
+    ...(currentProject?.project || {}),
+    updatedAt,
+  },
+  buildings: (currentProject?.buildings || []).map((building: any) =>
+    building.id !== target.bId
+      ? building
+      : {
+          ...building,
+          floors: (building.floors || []).map((floor: any) => {
+            if (floor.id !== target.fId) return floor;
+            const collectionKey = target.isMarker ? "markers" : "waypoints";
+            return {
+              ...floor,
+              [collectionKey]: (floor[collectionKey] || []).map((node: any) =>
+                node.id !== target.id
+                  ? node
+                  : {
+                      ...node,
+                      guideDirectionMode: "manual",
+                      guideReferenceBearing: angle,
+                      guideAngleCalibratedAt: updatedAt,
+                      guideAngleCalibrationSource: "v3-field-calibration",
+                    },
+              ),
+            };
+          }),
+        },
+  ),
+});
+
 const loadProjectOption = async (option: ProjectOption) => {
   let selected = option.localData;
+  let sourceBlobSha = "";
   if (option.source === "cloud") {
     try {
       const response = await fetch(
@@ -111,6 +191,7 @@ const loadProjectOption = async (option: ProjectOption) => {
         throw new Error(`雲端專案載入失敗 (${response.status})`);
       }
       selected = await response.json();
+      sourceBlobSha = response.headers.get("x-ar-source-blob-sha") || "";
     } catch (error) {
       if (!selected) throw error;
     }
@@ -119,8 +200,36 @@ const loadProjectOption = async (option: ProjectOption) => {
   if (!Array.isArray(selected?.buildings) || selected.buildings.length === 0) {
     throw new Error("此場域尚未建立可用的平面圖");
   }
-  return selected;
+  return sourceBlobSha
+    ? {
+        ...selected,
+        _sync: {
+          ...(selected?._sync || {}),
+          baseSha: sourceBlobSha,
+          source: "github",
+        },
+      }
+    : selected;
 };
+
+const loadCurrentClientPrincipal = async () => {
+  const response = await fetch(`/.auth/me?ts=${Date.now()}`, {
+    cache: "no-store",
+    credentials: "include",
+    headers: {
+      Accept: "application/json",
+      "Cache-Control": "no-cache",
+    },
+  });
+  const contentType = response.headers.get("content-type") || "";
+  if (!response.ok || !contentType.includes("application/json")) return null;
+  const authData = await response.json();
+  return authData?.clientPrincipal || null;
+};
+
+const hasArAdminRole = (clientPrincipal: any) => (
+  Array.isArray(clientPrincipal?.userRoles) && clientPrincipal.userRoles.includes("ar_admin")
+);
 
 const normalizeAngle = (value: number) => {
   let angle = value % 360;
@@ -129,10 +238,17 @@ const normalizeAngle = (value: number) => {
   return angle;
 };
 
+const normalizeHeading = (value: number) => ((value % 360) + 360) % 360;
+
+const normalizeOptionalHeading = (value: unknown) =>
+  value === null || value === undefined || !Number.isFinite(Number(value))
+    ? null
+    : normalizeHeading(Number(value));
+
 const nodeLabel = (node?: NodeData | null) =>
   node?.title && node.title !== "新增辨識點"
     ? node.title
-    : node?.code || node?.title || "未命名地點";
+    : node?.guideTitle?.trim?.() || node?.code || node?.title || "未命名停駐點";
 
 const getHeading = (event: DeviceOrientationEvent & { webkitCompassHeading?: number }) => {
   if (typeof event.webkitCompassHeading === "number" && Number.isFinite(event.webkitCompassHeading)) {
@@ -144,7 +260,7 @@ const getHeading = (event: DeviceOrientationEvent & { webkitCompassHeading?: num
   return null;
 };
 
-const buildGraph = (buildings: any[]): GraphData => {
+export const buildGraph = (buildings: any[]): GraphData => {
   const nodes: Record<string, NodeData> = {};
   const adjacency: Record<string, Record<string, number>> = {};
   const floors: FloorData[] = [];
@@ -181,6 +297,7 @@ const buildGraph = (buildings: any[]): GraphData => {
           bId: building.id,
           bName: building.name,
           isMarker,
+          canStop: rawNode.canStop !== false,
         };
         adjacency[rawNode.id] ||= {};
       });
@@ -209,7 +326,7 @@ const buildGraph = (buildings: any[]): GraphData => {
   return { nodes, adjacency, floors };
 };
 
-const shortestPath = (graph: GraphData, startId: string, destinationId: string) => {
+export const shortestPath = (graph: GraphData, startId: string, destinationId: string) => {
   const snapNode = (nodeId: string) => {
     const node = graph.nodes[nodeId];
     if (!node) return null;
@@ -269,6 +386,21 @@ const shortestPath = (graph: GraphData, startId: string, destinationId: string) 
   return path;
 };
 
+export const shortestPathThroughStops = (graph: GraphData, stopIds: string[]) => {
+  const normalizedStops = stopIds.filter(
+    (nodeId, index) => Boolean(graph.nodes[nodeId]) && stopIds[index - 1] !== nodeId,
+  );
+  if (normalizedStops.length < 2) return normalizedStops;
+
+  const route: string[] = [];
+  for (let index = 0; index < normalizedStops.length - 1; index += 1) {
+    const section = shortestPath(graph, normalizedStops[index], normalizedStops[index + 1]);
+    if (section.length < 2) return [];
+    route.push(...(route.length ? section.slice(1) : section));
+  }
+  return route;
+};
+
 const segmentBearing = (start: { physX: number; physY: number }, end: { physX: number; physY: number }) =>
   (Math.atan2(end.physX - start.physX, end.physY - start.physY) * 180) / Math.PI;
 
@@ -296,15 +428,98 @@ type GuideSegment = {
   externalUrl: string;
 };
 
+type RouteRecognitionCandidate = {
+  id: string;
+  imageUrl: string;
+  nodeId: string;
+  label: string;
+  floorId: string;
+  segmentIndex?: number;
+  source: "ar-location" | "waypoint-guide";
+  directionMode: "auto" | "manual" | "sensor";
+  referenceBearing: number | null;
+  capturedDeviceHeading: number | null;
+};
+
+type NodeRecognitionImage = {
+  id: string;
+  imageUrl: string;
+  source: RouteRecognitionCandidate["source"];
+};
+
+type RouteCalibrationBaseline = {
+  nodeId: string;
+  nodeLabel: string;
+  routeBearing: number;
+  referenceBearing: number;
+  offset: number;
+};
+
+export const nodeRecognitionImages = (point: any): NodeRecognitionImage[] => {
+  const images: NodeRecognitionImage[] = [];
+  const markerImageUrl = point?.imageUrl?.trim?.() || "";
+  const guideImageUrl = point?.guideImageUrl?.trim?.() || "";
+  if (markerImageUrl) {
+    images.push({
+      id: `ar-location-${point.id}`,
+      imageUrl: markerImageUrl,
+      source: "ar-location",
+    });
+  }
+  if (guideImageUrl && guideImageUrl !== markerImageUrl) {
+    images.push({
+      id: `waypoint-guide-${point.id}`,
+      imageUrl: guideImageUrl,
+      source: "waypoint-guide",
+    });
+  }
+  return images;
+};
+
+const explicitNodeReferenceBearing = (point: any) => {
+  if (point?.guideDirectionMode === "auto") return null;
+  return normalizeOptionalHeading(point?.guideReferenceBearing);
+};
+
+export const buildRouteCalibrationBaseline = (
+  points: Array<any>,
+): RouteCalibrationBaseline | null => {
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const point = points[index];
+    const nextPoint = points[index + 1];
+    const referenceBearing = explicitNodeReferenceBearing(point);
+    if (!nodeRecognitionImages(point).length || referenceBearing === null) continue;
+
+    const routeBearing = segmentBearing(point, nextPoint);
+    return {
+      nodeId: String(point.id || ""),
+      nodeLabel: nodeLabel(point),
+      routeBearing,
+      referenceBearing,
+      offset: normalizeAngle(referenceBearing - routeBearing),
+    };
+  }
+  return null;
+};
+
+export const deriveReferenceBearingFromBaseline = (
+  routeBearing: number,
+  baseline: RouteCalibrationBaseline | null,
+) => baseline ? normalizeHeading(routeBearing + baseline.offset) : null;
+
+export const isPublicStop = (node: NodeData) =>
+  node.canStop !== false &&
+  (node.isMarker ? node.navigable !== false : node.publicSelectable === true);
+
 const hasGuideDetails = (point: any) =>
   Boolean(
     point?.guideTitle?.trim?.() ||
       point?.guideInstruction?.trim?.() ||
-      point?.guideImageUrl ||
+      nodeRecognitionImages(point).length ||
       point?.guideExternalUrl?.trim?.(),
   );
 
-const buildGuideSegments = (points: Array<any>, destinationLabel: string): GuideSegment[] => {
+export const buildGuideSegments = (points: Array<any>, destinationLabel: string): GuideSegment[] => {
   if (points.length < 2) return [];
 
   const ranges: Array<[number, number]> = [];
@@ -339,6 +554,7 @@ const buildGuideSegments = (points: Array<any>, destinationLabel: string): Guide
     const segmentPoints = points.slice(startIndex, endIndex + 1);
     const start = segmentPoints[0];
     const end = segmentPoints[segmentPoints.length - 1];
+    const guideSource = hasGuideDetails(start) ? start : hasGuideDetails(end) ? end : start;
     const nextRange = ranges[index + 1];
     const nextStart = nextRange ? points[nextRange[0]] : null;
     const nextEnd = nextRange ? points[Math.min(nextRange[0] + 1, nextRange[1])] : null;
@@ -365,15 +581,98 @@ const buildGuideSegments = (points: Array<any>, destinationLabel: string): Guide
       floorId: start.fId,
       floorName: start.fName,
       distance: routeLength(segmentPoints),
-      title: start.guideTitle?.trim?.() || (index === 0 ? "起點定位" : `轉角 ${index}`),
+      title:
+        guideSource.guideTitle?.trim?.() ||
+        (guideSource.isMarker ? nodeLabel(guideSource) : index === 0 ? "起點定位" : `轉角 ${index}`),
       calibrationInstruction:
-        start.guideInstruction?.trim?.() || "請站在參考位置，拿起手機面向圖片所示方向",
+        guideSource.guideInstruction?.trim?.() || "請站在參考位置，讓現場畫面與半透明照片重合",
       travelInstruction,
-      referenceImageUrl: start.guideImageUrl || "",
-      externalUrl: start.guideExternalUrl?.trim?.() || "",
+      referenceImageUrl: nodeRecognitionImages(guideSource)[0]?.imageUrl || "",
+      externalUrl: guideSource.guideExternalUrl?.trim?.() || "",
     };
   });
 };
+
+const normalizedRecognitionDirection = (point: any) => {
+  const directionMode: RouteRecognitionCandidate["directionMode"] =
+    point?.guideDirectionMode === "sensor"
+      ? "sensor"
+      : point?.guideDirectionMode === "manual"
+        ? "manual"
+        : "auto";
+  return {
+    directionMode,
+    referenceBearing:
+      directionMode === "auto" ? null : normalizeOptionalHeading(point?.guideReferenceBearing),
+    capturedDeviceHeading: normalizeOptionalHeading(point?.guideDeviceHeading),
+  };
+};
+
+export const buildRecognitionAnchorCandidates = (
+  points: Array<any>,
+): RouteRecognitionCandidate[] => {
+  const candidatesByImage = new globalThis.Map<string, RouteRecognitionCandidate>();
+  points.forEach((point, pointIndex) => {
+    const recognitionImages = nodeRecognitionImages(point);
+    if (!recognitionImages.length) return;
+    const direction = normalizedRecognitionDirection(point);
+
+    recognitionImages.forEach((image) => {
+      const candidate: RouteRecognitionCandidate = {
+        id: image.id || `route-node-${point.id || pointIndex}`,
+        imageUrl: image.imageUrl,
+        nodeId: String(point.id || pointIndex),
+        label: point.guideTitle?.trim?.() || nodeLabel(point) || `路徑節點 ${pointIndex + 1}`,
+        floorId: point.fId || "",
+        source: image.source,
+        ...direction,
+      };
+      if (!candidatesByImage.has(image.imageUrl)) candidatesByImage.set(image.imageUrl, candidate);
+    });
+  });
+  return [...candidatesByImage.values()];
+};
+
+export const buildRouteRecognitionCandidates = (
+  points: Array<any>,
+  segments: GuideSegment[],
+): RouteRecognitionCandidate[] => {
+  const candidatesByImage = new globalThis.Map<string, RouteRecognitionCandidate>();
+  points.forEach((point, pointIndex) => {
+    const recognitionImages = nodeRecognitionImages(point);
+    if (!recognitionImages.length) return;
+    const exactSegment = segments.find((segment) => segment.startIndex === pointIndex);
+    const containingSegment = segments.find(
+      (segment) => pointIndex >= segment.startIndex && pointIndex <= segment.endIndex,
+    );
+    const targetSegment = exactSegment || containingSegment;
+    if (!targetSegment) return;
+    const direction = normalizedRecognitionDirection(point);
+
+    recognitionImages.forEach((image) => {
+      const candidate: RouteRecognitionCandidate = {
+        id: image.id || `route-node-${point.id || pointIndex}`,
+        imageUrl: image.imageUrl,
+        nodeId: String(point.id || pointIndex),
+        label: point.guideTitle?.trim?.() || nodeLabel(point) || `路徑節點 ${pointIndex + 1}`,
+        floorId: point.fId || targetSegment.floorId,
+        segmentIndex: targetSegment.index,
+        source: image.source,
+        ...direction,
+      };
+      const existing = candidatesByImage.get(image.imageUrl);
+      if (!existing || targetSegment.startIndex === pointIndex) {
+        candidatesByImage.set(image.imageUrl, candidate);
+      }
+    });
+  });
+  return [...candidatesByImage.values()];
+};
+
+const recognitionSourceKey = (source: string) =>
+  source.startsWith("data:")
+    ? `${source.length}:${source.slice(0, 32)}:${source.slice(-32)}`
+    : source;
 
 const safeExternalUrl = (value: string) => {
   try {
@@ -382,6 +681,96 @@ const safeExternalUrl = (value: string) => {
   } catch {
     return "";
   }
+};
+
+const smoothRecognitionCorners = (
+  previous: RecognitionPoint[] | null,
+  detection: RecognitionDetection,
+) =>
+  detection.corners.map((point, index) => {
+    const prior = previous?.[index];
+    if (!prior) return point;
+    return {
+      x: prior.x * 0.58 + point.x * 0.42,
+      y: prior.y * 0.58 + point.y * 0.42,
+    };
+  });
+
+const projectRecognitionPoint = (
+  corners: RecognitionPoint[],
+  horizontalRatio: number,
+  verticalRatio: number,
+) => {
+  const [topLeft, topRight, bottomRight, bottomLeft] = corners;
+  const top = {
+    x: topLeft.x + (topRight.x - topLeft.x) * horizontalRatio,
+    y: topLeft.y + (topRight.y - topLeft.y) * horizontalRatio,
+  };
+  const bottom = {
+    x: bottomLeft.x + (bottomRight.x - bottomLeft.x) * horizontalRatio,
+    y: bottomLeft.y + (bottomRight.y - bottomLeft.y) * horizontalRatio,
+  };
+  return {
+    x: top.x + (bottom.x - top.x) * verticalRatio,
+    y: top.y + (bottom.y - top.y) * verticalRatio,
+  };
+};
+
+export const recognitionVectorBearing = (
+  corners: RecognitionPoint[] | null,
+  mapBearing: number,
+) => {
+  if (!corners || corners.length !== 4) return null;
+  const center = projectRecognitionPoint(corners, 0.5, 0.5);
+  const radians = (mapBearing * Math.PI) / 180;
+  const target = projectRecognitionPoint(
+    corners,
+    0.5 + Math.sin(radians) * 0.22,
+    0.5 - Math.cos(radians) * 0.22,
+  );
+  const deltaX = target.x - center.x;
+  const deltaY = target.y - center.y;
+  if (Math.hypot(deltaX, deltaY) < 1) return null;
+  return normalizeAngle((Math.atan2(deltaX, -deltaY) * 180) / Math.PI);
+};
+
+export const recognitionImageUpBearing = (corners: RecognitionPoint[] | null) =>
+  recognitionVectorBearing(corners, 0);
+
+export const recognitionRouteBearing = (
+  corners: RecognitionPoint[] | null,
+  routeBearing: number,
+  directionMode: "auto" | "manual" | "sensor" = "auto",
+  manualReferenceBearing: number | null = null,
+) => {
+  const parsedReferenceBearing = Number(manualReferenceBearing);
+  const hasReferenceBearing =
+    directionMode !== "auto" &&
+    manualReferenceBearing !== null &&
+    Number.isFinite(parsedReferenceBearing);
+  const referenceBearing = hasReferenceBearing ? parsedReferenceBearing : routeBearing;
+  return recognitionVectorBearing(corners, normalizeAngle(routeBearing - referenceBearing));
+};
+
+export const sensorRouteBearing = (
+  routeBearing: number,
+  mapUpHeading: number | null,
+  deviceHeading: number | null,
+  headingOffset: number | null,
+) => {
+  if (
+    mapUpHeading === null ||
+    deviceHeading === null ||
+    headingOffset === null ||
+    !Number.isFinite(mapUpHeading) ||
+    !Number.isFinite(deviceHeading) ||
+    !Number.isFinite(headingOffset)
+  ) {
+    return null;
+  }
+  return normalizeAngle(
+    normalizeHeading(mapUpHeading) + routeBearing - normalizeHeading(deviceHeading + headingOffset),
+  );
 };
 
 type MapLabelPlacement = {
@@ -613,7 +1002,7 @@ function MapPanel({
     multiPointer: false,
   });
   const destinations = (Object.values(graph.nodes) as NodeData[]).filter(
-    (node) => node.isMarker && node.navigable !== false && node.fId === floor?.id,
+    (node) => isPublicStop(node) && node.fId === floor?.id,
   );
   const floorRoute = (routePoints || []).filter((point) => point.fId === floor?.id);
   const routePath =
@@ -733,7 +1122,7 @@ function MapPanel({
     if (event.pointerType === "mouse" && event.button !== 0) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     pointerMapRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    const pointers = Array.from(pointerMapRef.current.values());
+    const pointers = Array.from(pointerMapRef.current.values()) as Array<{ x: number; y: number }>;
     const gesture = gestureRef.current;
     gesture.moved = false;
     gesture.startPanX = mapTransform.x;
@@ -756,7 +1145,7 @@ function MapPanel({
   const movePointerGesture = (event: React.PointerEvent<HTMLDivElement>) => {
     if (!pointerMapRef.current.has(event.pointerId)) return;
     pointerMapRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    const pointers = Array.from(pointerMapRef.current.values());
+    const pointers = Array.from(pointerMapRef.current.values()) as Array<{ x: number; y: number }>;
     const gesture = gestureRef.current;
     const rect = event.currentTarget.getBoundingClientRect();
 
@@ -801,7 +1190,7 @@ function MapPanel({
 
     if (wasTap) selectOriginAtPointer(event);
 
-    const remaining = Array.from(pointerMapRef.current.values());
+    const remaining = Array.from(pointerMapRef.current.values()) as Array<{ x: number; y: number }>;
     if (remaining.length === 0) {
       gestureRef.current.multiPointer = false;
     } else if (remaining.length === 1) {
@@ -955,7 +1344,13 @@ function MapPanel({
               </div>
             )}
 
-            {origin && origin.floorId === floor?.id && !(mode === "destination" && graph.nodes[origin.snapId]?.isMarker) && (
+            {origin &&
+              origin.floorId === floor?.id &&
+              !(
+                mode === "destination" &&
+                graph.nodes[origin.snapId] &&
+                isPublicStop(graph.nodes[origin.snapId])
+              ) && (
               <div
                 className="v2-static-pin is-origin"
                 style={{ left: `${clamp(origin.x) * 100}%`, top: `${clamp(origin.y) * 100}%` }}
@@ -1095,12 +1490,99 @@ export default function ARNavigationV3() {
   const [mapFullscreen, setMapFullscreen] = useState(false);
   const [mapExpanded, setMapExpanded] = useState(false);
   const [mapFloorId, setMapFloorId] = useState<string | null>(null);
-  const [showAssistMenu, setShowAssistMenu] = useState(false);
+  const [recognitionStatus, setRecognitionStatus] = useState<RecognitionStatus>("disabled");
+  const [recognitionMessage, setRecognitionMessage] = useState("");
+  const [recognitionCorners, setRecognitionCorners] = useState<RecognitionPoint[] | null>(null);
+  const [recognizedCandidateId, setRecognizedCandidateId] = useState("");
+  const [runtimeAnchorId, setRuntimeAnchorId] = useState("");
+  const [recognitionHeadingOffset, setRecognitionHeadingOffset] = useState<number | null>(null);
+  const [recognitionGraceDeadline, setRecognitionGraceDeadline] = useState<number | null>(null);
+  const [recognitionGraceRemaining, setRecognitionGraceRemaining] = useState(0);
+  const [recognitionGraceSteps, setRecognitionGraceSteps] = useState(0);
+  const [motionSensorState, setMotionSensorState] = useState<
+    "idle" | "ready" | "denied" | "unavailable"
+  >("idle");
+  const [fieldCalibrationEnabled] = useState(
+    () => new URLSearchParams(window.location.search).get("calibrate") === "1",
+  );
+  const [fieldCalibrationAuth, setFieldCalibrationAuth] = useState<
+    "idle" | "checking" | "ready" | "login-required" | "access-denied"
+  >(fieldCalibrationEnabled ? "checking" : "idle");
+  const [fieldCalibrationUser, setFieldCalibrationUser] = useState("");
+  const [fieldCalibrationNodeId, setFieldCalibrationNodeId] = useState("");
+  const [fieldCalibrationAngle, setFieldCalibrationAngle] = useState(0);
+  const [fieldCalibrationSavedAngle, setFieldCalibrationSavedAngle] = useState(0);
+  const [fieldCalibrationConfirmed, setFieldCalibrationConfirmed] = useState(false);
+  const [fieldCalibrationSync, setFieldCalibrationSync] = useState<
+    "idle" | "saving" | "success" | "error"
+  >("idle");
+  const [fieldCalibrationMessage, setFieldCalibrationMessage] = useState("");
+  const fieldCalibrationLoginUrl = `/.auth/login/github?post_login_redirect_uri=${encodeURIComponent(
+    `${window.location.pathname}${window.location.search}${window.location.hash}`,
+  )}`;
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const recognitionCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const headingRef = useRef<number | null>(null);
   const calibrationHeadingRef = useRef<number | null>(null);
   const defaultsAppliedProjectRef = useRef<string | null>(null);
+  const recognitionFrameRef = useRef<number | null>(null);
+  const recognitionTrackerRef = useRef<OrbImageTracker | null>(null);
+  const recognitionStatusRef = useRef<RecognitionStatus>("disabled");
+  const recognitionMessageRef = useRef("");
+  const recognitionCornersRef = useRef<RecognitionPoint[] | null>(null);
+  const recognitionGraceDeadlineRef = useRef<number | null>(null);
+  const recognitionGraceStepCountRef = useRef(0);
+  const recognitionLossHeadingRef = useRef<number | null>(null);
+  const retainedArProjectionRotationRef = useRef(0);
+  const motionSampleRef = useRef({ filtered: 0, lastStepAt: 0, hasSample: false, armed: true });
+
+  const updateRecognitionFeedback = useCallback((
+    status: RecognitionStatus,
+    message: string,
+    corners: RecognitionPoint[] | null = recognitionCornersRef.current,
+  ) => {
+    recognitionStatusRef.current = status;
+    recognitionMessageRef.current = message;
+    recognitionCornersRef.current = corners;
+    setRecognitionStatus(status);
+    setRecognitionMessage(message);
+    setRecognitionCorners(corners);
+  }, []);
+
+  const resetRecognitionGrace = useCallback(() => {
+    recognitionGraceDeadlineRef.current = null;
+    recognitionGraceStepCountRef.current = 0;
+    recognitionLossHeadingRef.current = null;
+    motionSampleRef.current = { filtered: 0, lastStepAt: 0, hasSample: false, armed: true };
+    setRecognitionGraceDeadline(null);
+    setRecognitionGraceRemaining(0);
+    setRecognitionGraceSteps(0);
+  }, []);
+
+  const startRecognitionGrace = useCallback(() => {
+    const deadline = Date.now() + RECOGNITION_GRACE_PERIOD_MS;
+    recognitionGraceDeadlineRef.current = deadline;
+    recognitionGraceStepCountRef.current = 0;
+    recognitionLossHeadingRef.current = normalizeOptionalHeading(headingRef.current);
+    motionSampleRef.current = { filtered: 0, lastStepAt: 0, hasSample: false, armed: true };
+    setRecognitionGraceDeadline(deadline);
+    setRecognitionGraceRemaining(RECOGNITION_GRACE_SECONDS);
+    setRecognitionGraceSteps(0);
+  }, []);
+
+  const expireRecognitionGrace = useCallback((reason: "timeout" | "steps") => {
+    resetRecognitionGrace();
+    setRecognizedCandidateId("");
+    setRecognitionHeadingOffset(null);
+    updateRecognitionFeedback(
+      "lost",
+      reason === "steps"
+        ? `已離開辨識圖並走動 ${RECOGNITION_GRACE_STEP_LIMIT} 步，路線已隱藏，請重新掃描`
+        : "已離開辨識圖超過 20 秒，路線已隱藏，請重新掃描",
+      null,
+    );
+  }, [resetRecognitionGrace, updateRecognitionFeedback]);
 
   useEffect(() => {
     if (!mapFullscreen) return;
@@ -1115,6 +1597,107 @@ export default function ARNavigationV3() {
       window.removeEventListener("keydown", closeOnEscape);
     };
   }, [mapFullscreen]);
+
+  useEffect(() => {
+    if (!fieldCalibrationEnabled) return;
+    let active = true;
+    loadCurrentClientPrincipal()
+      .then((clientPrincipal) => {
+        if (!active) return;
+        if (clientPrincipal && hasArAdminRole(clientPrincipal)) {
+          setFieldCalibrationUser(clientPrincipal.userDetails || "已驗證使用者");
+          setFieldCalibrationAuth("ready");
+          setFieldCalibrationMessage("登入完成，角度確認後可直接同步。");
+          return;
+        }
+
+        if (clientPrincipal) {
+          setFieldCalibrationUser(clientPrincipal.userDetails || "已驗證使用者");
+          setFieldCalibrationAuth("access-denied");
+          setFieldCalibrationMessage("此帳號沒有 AR 後台管理權限。");
+          return;
+        }
+
+        setFieldCalibrationUser("");
+        setFieldCalibrationAuth("login-required");
+        setFieldCalibrationMessage("請先登入後台帳號，再開始現場角度校正。");
+      })
+      .catch(() => {
+        if (!active) return;
+        setFieldCalibrationUser("");
+        setFieldCalibrationAuth("login-required");
+        setFieldCalibrationMessage("無法確認登入狀態，請重新登入後再試。");
+      });
+    return () => {
+      active = false;
+    };
+  }, [fieldCalibrationEnabled]);
+
+  useEffect(() => {
+    if (screen !== "navigate" || recognitionGraceDeadline === null) return;
+
+    const updateCountdown = () => {
+      const remaining = Math.max(
+        0,
+        Math.ceil((recognitionGraceDeadline - Date.now()) / 1000),
+      );
+      setRecognitionGraceRemaining(remaining);
+      if (remaining === 0) expireRecognitionGrace("timeout");
+    };
+
+    updateCountdown();
+    const timer = window.setInterval(updateCountdown, 250);
+    return () => window.clearInterval(timer);
+  }, [expireRecognitionGrace, recognitionGraceDeadline, screen]);
+
+  useEffect(() => {
+    if (screen !== "navigate" || cameraState !== "ready" || motionSensorState !== "ready") return;
+
+    const onMotion = (event: DeviceMotionEvent) => {
+      if (recognitionGraceDeadlineRef.current === null) return;
+
+      const acceleration = event.acceleration;
+      const gravityAcceleration = event.accelerationIncludingGravity;
+      const values =
+        acceleration && [acceleration.x, acceleration.y, acceleration.z].some((value) => value !== null)
+          ? acceleration
+          : gravityAcceleration;
+      if (!values) return;
+
+      const x = Number(values.x) || 0;
+      const y = Number(values.y) || 0;
+      const z = Number(values.z) || 0;
+      const magnitude = Math.sqrt(x * x + y * y + z * z);
+      const dynamicMagnitude = values === gravityAcceleration ? Math.abs(magnitude - 9.81) : magnitude;
+      const previousFiltered = motionSampleRef.current.filtered;
+      const filtered = previousFiltered * 0.6 + dynamicMagnitude * 0.4;
+      motionSampleRef.current.filtered = filtered;
+
+      if (!motionSampleRef.current.hasSample) {
+        motionSampleRef.current.hasSample = true;
+        motionSampleRef.current.armed = filtered <= STEP_RELEASE_THRESHOLD;
+        return;
+      }
+      if (filtered <= STEP_RELEASE_THRESHOLD) motionSampleRef.current.armed = true;
+
+      const now = Date.now();
+      const isStep =
+        motionSampleRef.current.armed &&
+        filtered >= STEP_ACCELERATION_THRESHOLD &&
+        now - motionSampleRef.current.lastStepAt >= STEP_COOLDOWN_MS;
+      if (!isStep) return;
+
+      motionSampleRef.current.armed = false;
+      motionSampleRef.current.lastStepAt = now;
+      const nextStepCount = recognitionGraceStepCountRef.current + 1;
+      recognitionGraceStepCountRef.current = nextStepCount;
+      setRecognitionGraceSteps(nextStepCount);
+      if (nextStepCount >= RECOGNITION_GRACE_STEP_LIMIT) expireRecognitionGrace("steps");
+    };
+
+    window.addEventListener("devicemotion", onMotion, true);
+    return () => window.removeEventListener("devicemotion", onMotion, true);
+  }, [cameraState, expireRecognitionGrace, motionSensorState, screen]);
 
   useEffect(() => {
     let active = true;
@@ -1228,10 +1811,10 @@ export default function ARNavigationV3() {
   }, [screen, cameraState]);
 
   const graph = useMemo(() => buildGraph(project?.buildings || []), [project]);
-  const navigableMarkers = useMemo(
+  const publicStops = useMemo(
     () =>
       (Object.values(graph.nodes) as NodeData[])
-        .filter((node) => node.isMarker && node.navigable !== false)
+        .filter(isPublicStop)
         .sort(
           (a, b) =>
             a.bName.localeCompare(b.bName, "zh-Hant") ||
@@ -1241,13 +1824,13 @@ export default function ARNavigationV3() {
     [graph],
   );
   const defaultDestination = useMemo(
-    () => navigableMarkers.find((node) => nodeLabel(node).trim() === DEFAULT_DESTINATION_LABEL) || null,
-    [navigableMarkers],
+    () => publicStops.find((node) => nodeLabel(node).trim() === DEFAULT_DESTINATION_LABEL) || null,
+    [publicStops],
   );
   const defaultOrigin = useMemo(() => {
     if (!defaultDestination) return null;
 
-    const namedOrigin = navigableMarkers.find((node) =>
+    const namedOrigin = publicStops.find((node) =>
       DEFAULT_ORIGIN_LABELS.some((label) => nodeLabel(node).trim().includes(label)),
     );
     if (namedOrigin) return namedOrigin;
@@ -1268,14 +1851,14 @@ export default function ARNavigationV3() {
       })
       .filter((candidate) => candidate.connected)
       .sort((a, b) => b.distance - a.distance)[0]?.node || null;
-  }, [defaultDestination, graph, navigableMarkers]);
+  }, [defaultDestination, graph, publicStops]);
   const originOptions = useMemo(() => {
-    const options = navigableMarkers.map((node) => ({ node, label: nodeLabel(node) }));
+    const options = publicStops.map((node) => ({ node, label: nodeLabel(node) }));
     if (defaultOrigin && !options.some((option) => option.node.id === defaultOrigin.id)) {
       options.unshift({ node: defaultOrigin, label: "大門" });
     }
     return options;
-  }, [defaultOrigin, navigableMarkers]);
+  }, [defaultOrigin, publicStops]);
   const visibleFloors = graph.floors;
 
   useEffect(() => {
@@ -1310,13 +1893,23 @@ export default function ARNavigationV3() {
 
   const selectedFloor = graph.floors.find((floor) => floor.id === selectedFloorId) || visibleFloors[0];
   const destination = destinationId ? graph.nodes[destinationId] : null;
+  const calibrationRouteStartId = origin?.snapId || "";
+  const calibrationRouteIds = useMemo(() => {
+    if (!calibrationRouteStartId || !destinationId) return [];
+    return shortestPathThroughStops(graph, [calibrationRouteStartId, destinationId]);
+  }, [calibrationRouteStartId, destinationId, graph]);
+  const calibrationRoutePoints = calibrationRouteIds
+    .map((id) => graph.nodes[id])
+    .filter(Boolean);
+  const routeCalibrationBaseline = buildRouteCalibrationBaseline(calibrationRoutePoints);
+  const routeStartId = runtimeAnchorId || origin?.snapId || "";
   const routeIds = useMemo(() => {
-    if (!origin?.snapId || !destinationId) return [];
-    return shortestPath(graph, origin.snapId, destinationId);
-  }, [destinationId, graph, origin?.snapId]);
+    if (!routeStartId || !destinationId) return [];
+    return shortestPathThroughStops(graph, [routeStartId, destinationId]);
+  }, [destinationId, graph, routeStartId]);
   const routeNodes = routeIds.map((id) => graph.nodes[id]).filter(Boolean);
   const snappedOriginNode = origin?.snapId ? graph.nodes[origin.snapId] : null;
-  const originPoint = origin
+  const manualOriginPoint = origin
     ? {
         ...snappedOriginNode,
         id: "manual-origin",
@@ -1328,15 +1921,19 @@ export default function ARNavigationV3() {
         fName: graph.floors.find((floor) => floor.id === origin.floorId)?.name || "",
       }
     : null;
-  const navigationPoints = originPoint
+  const routeOriginPoint = runtimeAnchorId ? graph.nodes[runtimeAnchorId] : manualOriginPoint;
+  const navigationPoints = routeOriginPoint
     ? [
-        originPoint,
+        routeOriginPoint,
         ...routeNodes.filter(
           (node, index) =>
             !(
               index === 0 &&
-              node.id === origin.snapId &&
-              Math.hypot(node.physX - origin.physX, node.physY - origin.physY) < 0.001
+              node.fId === routeOriginPoint.fId &&
+              Math.hypot(
+                node.physX - routeOriginPoint.physX,
+                node.physY - routeOriginPoint.physY,
+              ) < 0.001
             ),
         ),
       ]
@@ -1354,16 +1951,36 @@ export default function ARNavigationV3() {
   const previousGuideSegment = guideSegments[currentSegment - 1];
   const nextGuideSegment = guideSegments[currentSegment + 1];
   const segmentStart = activeGuideSegment?.start;
-  const segmentEnd = activeGuideSegment?.end;
+  const recognitionAnchorPoints = destination
+    ? (Object.values(graph.nodes) as NodeData[]).filter((node) => node.bId === destination.bId)
+    : [];
+  const recognitionCandidates = buildRecognitionAnchorCandidates(recognitionAnchorPoints);
+  const recognitionCandidateSignature = recognitionCandidates
+    .map(
+      (candidate) =>
+        `${candidate.id}:${candidate.nodeId}:${candidate.floorId}:${candidate.directionMode}:${candidate.referenceBearing ?? "auto"}:${candidate.capturedDeviceHeading ?? "none"}:${recognitionSourceKey(candidate.imageUrl)}`,
+    )
+    .join("|");
+  const recognitionRequired = recognitionCandidates.length > 0;
+  const activeRecognitionNodeId =
+    segmentStart?.id === "manual-origin" ? origin?.snapId : segmentStart?.id;
+  const activeRecognitionCandidate =
+    recognitionCandidates.find((candidate) => candidate.id === recognizedCandidateId) ||
+    recognitionCandidates.find((candidate) => candidate.nodeId === activeRecognitionNodeId) ||
+    recognitionCandidates.find((candidate) => candidate.floorId === segmentStart?.fId) ||
+    recognitionCandidates[0];
   const activeNavigationPoints = activeGuideSegment?.points || navigationPoints;
-  const liveMapOrigin: ManualOrigin | null = segmentStart
+  const runtimeAnchorNode = runtimeAnchorId ? graph.nodes[runtimeAnchorId] : null;
+  const liveMapStart = segmentStart || runtimeAnchorNode;
+  const hasArrived = Boolean(destinationId && runtimeAnchorId === destinationId);
+  const liveMapOrigin: ManualOrigin | null = liveMapStart
     ? {
-        floorId: segmentStart.fId,
-        x: segmentStart.x,
-        y: segmentStart.y,
-        physX: segmentStart.physX,
-        physY: segmentStart.physY,
-        snapId: segmentStart.id,
+        floorId: liveMapStart.fId,
+        x: liveMapStart.x,
+        y: liveMapStart.y,
+        physX: liveMapStart.physX,
+        physY: liveMapStart.physY,
+        snapId: liveMapStart.id,
       }
     : origin;
   const firstBearing = activeNavigationPoints.length > 1
@@ -1382,7 +1999,113 @@ export default function ARNavigationV3() {
     projectionNavigationPoints.length > 1
       ? segmentBearing(projectionNavigationPoints[0], projectionNavigationPoints[1])
       : currentBearing;
-  const arProjectionRotation = normalizeAngle(projectionBearing - firstBearing - headingDelta);
+  const activeReferenceBearing = activeRecognitionCandidate?.referenceBearing ?? null;
+  const activeCapturedHeading = activeRecognitionCandidate?.capturedDeviceHeading ?? null;
+  const activeRecognitionFloor = graph.floors.find(
+    (floor) => floor.id === (activeRecognitionCandidate?.floorId || segmentStart?.fId),
+  );
+  const configuredMapUpHeading = normalizeOptionalHeading(activeRecognitionFloor?.mapUpHeading);
+  const inferredMapUpHeading =
+    activeCapturedHeading !== null && activeReferenceBearing !== null
+      ? normalizeHeading(activeCapturedHeading - activeReferenceBearing)
+      : null;
+  const effectiveMapUpHeading = configuredMapUpHeading ?? inferredMapUpHeading;
+  const capturedReferenceBearing =
+    activeCapturedHeading !== null && effectiveMapUpHeading !== null
+      ? normalizeHeading(activeCapturedHeading - effectiveMapUpHeading)
+      : null;
+  const routeDerivedReferenceBearing =
+    activeReferenceBearing === null && capturedReferenceBearing === null
+      ? deriveReferenceBearingFromBaseline(projectionBearing, routeCalibrationBaseline)
+      : null;
+  const effectiveReferenceBearing =
+    activeReferenceBearing ??
+    capturedReferenceBearing ??
+    routeDerivedReferenceBearing;
+  const effectiveDirectionMode: RouteRecognitionCandidate["directionMode"] =
+    routeDerivedReferenceBearing !== null
+      ? "manual"
+      : activeRecognitionCandidate?.directionMode || "auto";
+  const activeAngleIsRouteDerived = routeDerivedReferenceBearing !== null;
+  const recognitionGraceActive = Boolean(
+    recognitionGraceDeadline !== null &&
+      recognitionGraceRemaining > 0 &&
+      recognitionGraceSteps < RECOGNITION_GRACE_STEP_LIMIT,
+  );
+  const fieldCalibrationTargetNode =
+    fieldCalibrationEnabled &&
+    (recognitionStatus === "locked" || recognitionGraceActive) &&
+    activeRecognitionCandidate
+      ? graph.nodes[activeRecognitionCandidate.nodeId] || null
+      : null;
+
+  useEffect(() => {
+    if (!fieldCalibrationTargetNode || fieldCalibrationNodeId === fieldCalibrationTargetNode.id) return;
+    const initialAngle = normalizeHeading(effectiveReferenceBearing ?? 0);
+    setFieldCalibrationNodeId(fieldCalibrationTargetNode.id);
+    setFieldCalibrationAngle(initialAngle);
+    setFieldCalibrationSavedAngle(initialAngle);
+    setFieldCalibrationConfirmed(false);
+    setFieldCalibrationSync("idle");
+    setFieldCalibrationMessage(
+      activeAngleIsRouteDerived && routeCalibrationBaseline
+        ? `已依首點「${routeCalibrationBaseline.nodeLabel}」與目前路段方向自動帶入，可再單點微調。`
+        : "調整數值時，AR 路線會立即旋轉預覽。",
+    );
+  }, [
+    activeAngleIsRouteDerived,
+    effectiveReferenceBearing,
+    fieldCalibrationNodeId,
+    fieldCalibrationTargetNode,
+    routeCalibrationBaseline,
+  ]);
+
+  const fieldCalibrationPreviewActive = Boolean(
+    fieldCalibrationTargetNode && fieldCalibrationNodeId === fieldCalibrationTargetNode.id,
+  );
+  const projectionReferenceBearing = fieldCalibrationPreviewActive
+    ? fieldCalibrationAngle
+    : effectiveReferenceBearing;
+  const projectionDirectionMode = fieldCalibrationPreviewActive
+    ? "manual"
+    : effectiveDirectionMode;
+  const imageProjectedRouteBearing = recognitionRouteBearing(
+    recognitionCorners,
+    projectionBearing,
+    projectionDirectionMode,
+    projectionReferenceBearing,
+  );
+  const sensorProjectedRouteBearing =
+    !fieldCalibrationPreviewActive &&
+    recognitionRequired &&
+    recognitionStatus === "locked" &&
+    activeRecognitionCandidate?.directionMode === "sensor"
+      ? sensorRouteBearing(
+          projectionBearing,
+          effectiveMapUpHeading,
+          heading,
+          recognitionHeadingOffset,
+        )
+      : null;
+  const liveArProjectionRotation =
+    sensorProjectedRouteBearing ??
+    (recognitionRequired && recognitionStatus === "locked" && imageProjectedRouteBearing !== null
+      ? imageProjectedRouteBearing
+      : normalizeAngle(projectionBearing - firstBearing - headingDelta));
+  const recognitionGraceHeadingDelta =
+    recognitionGraceActive &&
+    heading !== null &&
+    recognitionLossHeadingRef.current !== null
+      ? normalizeAngle(heading - recognitionLossHeadingRef.current)
+      : 0;
+  const arProjectionRotation = recognitionGraceActive
+    ? normalizeAngle(retainedArProjectionRotationRef.current - recognitionGraceHeadingDelta)
+    : liveArProjectionRotation;
+
+  useEffect(() => {
+    if (recognitionStatus !== "locked" || !Number.isFinite(arProjectionRotation)) return;
+    retainedArProjectionRotationRef.current = arProjectionRotation;
+  }, [arProjectionRotation, recognitionStatus]);
   const toArRawPoint = (point: any) => {
     if (!segmentStart || !point) return { x: 0, y: 0 };
     const distance = Math.hypot(point.physX - segmentStart.physX, point.physY - segmentStart.physY);
@@ -1451,9 +2174,10 @@ export default function ARNavigationV3() {
   }));
   const activeArRoute = arProjectedSegments.find((segment) => segment.index === currentSegment);
   const nextArRoute = arProjectedSegments.find((segment) => segment.index === currentSegment + 1);
-  const arDirectionLabel = Math.abs(arrowRotation) < 18
+  const directionRotation = recognitionRequired ? arProjectionRotation : arrowRotation;
+  const arDirectionLabel = Math.abs(directionRotation) < 18
     ? "方向已對準"
-    : arrowRotation > 0
+    : directionRotation > 0
       ? "請向右轉動手機"
       : "請向左轉動手機";
   const mapFloor = graph.floors.find((floor) => floor.id === mapFloorId) ||
@@ -1466,13 +2190,452 @@ export default function ARNavigationV3() {
       Math.abs((mapFloorBounds.trX ?? 100) - (mapFloorBounds.blX ?? 0) - 100) < 0.01 &&
       Math.abs((mapFloorBounds.trY ?? 100) - (mapFloorBounds.blY ?? 0) - 100) < 0.01
     );
-  const guideReferenceImage = activeGuideSegment?.referenceImageUrl || DEFAULT_GUIDE_IMAGE_URL;
+  const guideReferenceImage =
+    activeRecognitionCandidate?.imageUrl ||
+    activeGuideSegment?.referenceImageUrl ||
+    DEFAULT_GUIDE_IMAGE_URL;
   const guideExternalUrl = safeExternalUrl(activeGuideSegment?.externalUrl || "");
+  const activeDirectionConfigured =
+    fieldCalibrationPreviewActive ||
+    !activeRecognitionCandidate ||
+    effectiveDirectionMode === "auto" ||
+    (effectiveDirectionMode === "manual" && effectiveReferenceBearing !== null) ||
+    (
+      effectiveDirectionMode === "sensor" &&
+      activeCapturedHeading !== null &&
+      effectiveMapUpHeading !== null
+    );
+  const isArRouteVisible =
+    !recognitionRequired ||
+    ((recognitionStatus === "locked" || recognitionGraceActive) && activeDirectionConfigured);
   const routeSegmentsForMap = guideSegments;
+  const fieldCalibrationHasChanges = Boolean(
+    fieldCalibrationTargetNode &&
+      (
+        fieldCalibrationTargetNode.guideDirectionMode !== "manual" ||
+        normalizeOptionalHeading(fieldCalibrationTargetNode.guideReferenceBearing) === null ||
+        Math.abs(normalizeAngle(fieldCalibrationAngle - fieldCalibrationSavedAngle)) >= 0.05
+      ),
+  );
+  const updateFieldCalibrationAngle = (value: number) => {
+    if (!Number.isFinite(value)) return;
+    setFieldCalibrationAngle(normalizeHeading(value));
+    setFieldCalibrationConfirmed(false);
+    setFieldCalibrationSync("idle");
+    setFieldCalibrationMessage("AR 路線已套用此角度預覽，請確認畫面方向。");
+  };
+
+  const syncFieldCalibrationAngle = async () => {
+    if (!fieldCalibrationTargetNode || !project?.project?.id) return;
+    if (fieldCalibrationAuth !== "ready") {
+      setFieldCalibrationAuth("login-required");
+      setFieldCalibrationSync("error");
+      setFieldCalibrationMessage("同步需要先登入後台帳號。");
+      return;
+    }
+
+    const expectedSourceBlobSha = typeof project?._sync?.baseSha === "string"
+      ? project._sync.baseSha
+      : "";
+    if (!expectedSourceBlobSha) {
+      setFieldCalibrationSync("error");
+      setFieldCalibrationMessage("目前資料不是從 GitHub 最新版本載入，請重新整理後再校正。");
+      return;
+    }
+
+    const angle = Math.round(normalizeHeading(fieldCalibrationAngle) * 10) / 10;
+    setFieldCalibrationSync("saving");
+    setFieldCalibrationMessage("正在同步目前節點角度...");
+
+    try {
+      const clientPrincipal = await loadCurrentClientPrincipal();
+      if (!clientPrincipal) {
+        setFieldCalibrationUser("");
+        setFieldCalibrationAuth("login-required");
+        throw new Error(`目前網域 ${window.location.host} 尚未登入，請登入後再同步。`);
+      }
+      if (!hasArAdminRole(clientPrincipal)) {
+        setFieldCalibrationUser(clientPrincipal.userDetails || "已驗證使用者");
+        setFieldCalibrationAuth("access-denied");
+        throw new Error("此帳號沒有 AR 後台管理權限。");
+      }
+      setFieldCalibrationUser(clientPrincipal.userDetails || "已驗證使用者");
+      setFieldCalibrationAuth("ready");
+
+      const response = await fetch("/api/save-ar-content", {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          "X-AR-Save-Contract": "ar-angle-calibration-v1",
+        },
+        body: JSON.stringify({
+          expectedSourceBlobSha,
+          calibration: {
+            projectId: project.project.id,
+            buildingId: fieldCalibrationTargetNode.bId,
+            floorId: fieldCalibrationTargetNode.fId,
+            nodeId: fieldCalibrationTargetNode.id,
+            nodeType: fieldCalibrationTargetNode.isMarker ? "marker" : "waypoint",
+            guideReferenceBearing: angle,
+          },
+        }),
+      });
+      if (response.status === 401 || response.redirected) {
+        setFieldCalibrationUser("");
+        setFieldCalibrationAuth("login-required");
+        throw new Error("登入狀態已失效，請重新登入後再同步。");
+      }
+
+      const responseText = await response.text();
+      let result: any = {};
+      try {
+        result = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        throw new Error(`同步服務回傳格式錯誤 (${response.status})`);
+      }
+
+      if (response.status === 403 && result?.code === "AUTH_REQUIRED") {
+        setFieldCalibrationUser("");
+        setFieldCalibrationAuth("login-required");
+        throw new Error(`目前網域 ${window.location.host} 的登入狀態已失效，請重新登入。`);
+      }
+      if (response.status === 403 && result?.code === "ADMIN_ROLE_REQUIRED") {
+        setFieldCalibrationAuth("access-denied");
+        throw new Error("此帳號沒有 AR 後台管理權限。");
+      }
+      if (response.status === 409 && result?.code === "SYNC_CONFLICT") {
+        throw new Error("GitHub 資料已更新，為避免覆蓋較新內容，請重新整理後再校正。");
+      }
+      if (!response.ok) throw new Error(result?.error || `同步失敗 (${response.status})`);
+
+      const savedAngle = normalizeHeading(Number(result?.calibration?.guideReferenceBearing ?? angle));
+      const updatedAt = result?.calibration?.updatedAt || new Date().toISOString();
+      const nextSourceBlobSha = typeof result?.sourceBlobSha === "string"
+        ? result.sourceBlobSha
+        : "";
+      if (!nextSourceBlobSha) {
+        throw new Error("GitHub 已回應成功，但未提供新的資料版本，請重新整理後再試。");
+      }
+      setProject((current: any) => ({
+        ...updateProjectNodeGuideAngle(current, fieldCalibrationTargetNode, savedAngle, updatedAt),
+        _sync: {
+          ...(current?._sync || {}),
+          baseSha: nextSourceBlobSha,
+          lastSyncedAt: updatedAt,
+          dirty: false,
+          source: "github",
+        },
+      }));
+      setFieldCalibrationAngle(savedAngle);
+      setFieldCalibrationSavedAngle(savedAngle);
+      setFieldCalibrationSync("success");
+      setFieldCalibrationMessage(`已同步 ${nodeLabel(fieldCalibrationTargetNode)}：${savedAngle.toFixed(0)}°`);
+    } catch (error: any) {
+      setFieldCalibrationSync("error");
+      setFieldCalibrationMessage(error?.message || "角度同步失敗，請稍後再試。");
+    }
+  };
 
   useEffect(() => {
     if (segmentStart?.fId) setMapFloorId(segmentStart.fId);
   }, [currentSegment, segmentStart?.fId]);
+
+  useEffect(() => {
+    resetRecognitionGrace();
+    if (recognitionFrameRef.current !== null) {
+      cancelAnimationFrame(recognitionFrameRef.current);
+      recognitionFrameRef.current = null;
+    }
+    recognitionTrackerRef.current?.dispose();
+    recognitionTrackerRef.current = null;
+    recognitionCornersRef.current = null;
+    setRecognitionCorners(null);
+    setRecognizedCandidateId("");
+    setRecognitionHeadingOffset(null);
+
+    if (screen !== "navigate") return;
+    if (!recognitionCandidates.length) {
+      updateRecognitionFeedback("disabled", "此節點未設定辨識照片，沿用人工方向校正", null);
+      return;
+    }
+    if (cameraState !== "ready") {
+      updateRecognitionFeedback("loading", "等待相機就緒", null);
+      return;
+    }
+
+    let cancelled = false;
+    let tracker: OrbImageTracker | null = null;
+    let lastProcessedAt = 0;
+    let lastDetectedAt = 0;
+    let consecutiveDetections = 0;
+    let detectionInFlight = false;
+    let pendingTargetId = "";
+    let lockedTargetId = "";
+    const candidateById = new globalThis.Map(
+      recognitionCandidates.map((candidate) => [candidate.id, candidate]),
+    );
+
+    const updateStatus = (
+      status: RecognitionStatus,
+      message: string,
+      corners: RecognitionPoint[] | null = recognitionCornersRef.current,
+    ) => {
+      if (cancelled) return;
+      if (
+        recognitionStatusRef.current === status &&
+        recognitionMessageRef.current === message &&
+        corners === recognitionCornersRef.current
+      ) return;
+      updateRecognitionFeedback(status, message, corners);
+    };
+
+    const reanchorToRecognizedNode = (candidate: RouteRecognitionCandidate) => {
+      const recognizedNode = graph.nodes[candidate.nodeId];
+      if (!recognizedNode || !destinationId) {
+        return { ok: false, message: "辨識到節點，但找不到目前目的地資料" };
+      }
+
+      const reroutedIds = shortestPathThroughStops(graph, [candidate.nodeId, destinationId]);
+      if (candidate.nodeId !== destinationId && reroutedIds.length < 2) {
+        return {
+          ok: false,
+          message: `已辨識「${candidate.label}」，但此節點與目的地之間沒有可用路徑`,
+        };
+      }
+
+      setRuntimeAnchorId(candidate.nodeId);
+      setSegmentIndex(0);
+      setCompletedSegmentIndex(0);
+      setReviewStepIndex(0);
+      setSelectedFloorId(recognizedNode.fId);
+      setMapFloorId(recognizedNode.fId);
+      setGuideImageExpanded(false);
+
+      const liveHeading = normalizeOptionalHeading(headingRef.current);
+      const referenceBearing = normalizeOptionalHeading(candidate.referenceBearing);
+      const capturedHeading = normalizeOptionalHeading(candidate.capturedDeviceHeading);
+      const candidateFloor = graph.floors.find((floor) => floor.id === recognizedNode.fId);
+      const configuredMapUp = normalizeOptionalHeading(candidateFloor?.mapUpHeading);
+      const inferredMapUp =
+        capturedHeading !== null && referenceBearing !== null
+          ? normalizeHeading(capturedHeading - referenceBearing)
+          : null;
+      const mapUpHeading = configuredMapUp ?? inferredMapUp;
+      const expectedReferenceHeading =
+        capturedHeading ??
+        (mapUpHeading !== null && referenceBearing !== null
+          ? normalizeHeading(mapUpHeading + referenceBearing)
+          : null);
+      const headingOffset =
+        candidate.directionMode === "sensor" &&
+        liveHeading !== null &&
+        expectedReferenceHeading !== null
+          ? normalizeAngle(expectedReferenceHeading - liveHeading)
+          : null;
+
+      setRecognitionHeadingOffset(headingOffset);
+      calibrationHeadingRef.current = liveHeading;
+      setCalibrationHeading(liveHeading);
+
+      if (candidate.nodeId === destinationId) {
+        return { ok: true, message: `已辨識「${candidate.label}」，目前已抵達目的地` };
+      }
+      if (
+        candidate.directionMode === "sensor" &&
+        (capturedHeading === null || mapUpHeading === null)
+      ) {
+        return {
+          ok: true,
+          message: `已定位「${candidate.label}」並重算路徑，但此照片尚未記錄現場方位`,
+        };
+      }
+      if (candidate.directionMode === "sensor" && headingOffset === null) {
+        return {
+          ok: true,
+          message: `已定位「${candidate.label}」並重算路徑；方向感測尚未就緒，暫依影像方位顯示`,
+        };
+      }
+      return {
+        ok: true,
+        message:
+          candidate.directionMode === "sensor"
+            ? `已定位「${candidate.label}」並校正方位，剩餘路徑已重新計算`
+            : candidate.directionMode === "manual"
+              ? `已定位「${candidate.label}」，已依照片方位重算剩餘路徑`
+              : `已定位「${candidate.label}」，已依路網向量重算剩餘路徑`,
+      };
+    };
+
+    const lockToRecognizedDirection = (
+      detection: RecognitionDetection,
+      candidate: RouteRecognitionCandidate,
+    ) => {
+      const smoothedCorners = smoothRecognitionCorners(recognitionCornersRef.current, detection);
+      if (lockedTargetId === candidate.id && recognitionStatusRef.current === "locked") {
+        updateStatus("locked", recognitionMessageRef.current, smoothedCorners);
+        return;
+      }
+
+      const reanchorResult = reanchorToRecognizedNode(candidate);
+      if (!reanchorResult.ok) {
+        lockedTargetId = "";
+        setRecognizedCandidateId("");
+        setRecognitionHeadingOffset(null);
+        updateStatus("error", reanchorResult.message, null);
+        return;
+      }
+
+      lockedTargetId = candidate.id;
+      resetRecognitionGrace();
+      setRecognizedCandidateId(candidate.id);
+      updateStatus("locked", reanchorResult.message, smoothedCorners);
+    };
+
+    const processFrame = (timestamp: number) => {
+      recognitionFrameRef.current = requestAnimationFrame(processFrame);
+      if (timestamp - lastProcessedAt < RECOGNITION_FRAME_INTERVAL_MS) return;
+
+      const video = videoRef.current;
+      const canvas = recognitionCanvasRef.current;
+      if (!tracker || !video || !canvas || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      if (!context || !video.videoWidth || !video.videoHeight) return;
+
+      lastProcessedAt = timestamp;
+      const processingWidth = 360;
+      const processingHeight = Math.max(
+        240,
+        Math.round(processingWidth * (video.videoHeight / video.videoWidth)),
+      );
+      if (canvas.width !== processingWidth || canvas.height !== processingHeight) {
+        canvas.width = processingWidth;
+        canvas.height = processingHeight;
+      }
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      if (detectionInFlight) return;
+      detectionInFlight = true;
+      tracker.detect(canvas).then((detection) => {
+        if (cancelled) return;
+        const detectedAt = performance.now();
+        if (detection) {
+          const targetId = detection.targetId || recognitionCandidates[0]?.id || "";
+          const candidate = candidateById.get(targetId);
+          if (!candidate) {
+            consecutiveDetections = 0;
+            pendingTargetId = "";
+            return;
+          }
+          if (pendingTargetId === targetId) {
+            consecutiveDetections += 1;
+          } else {
+            pendingTargetId = targetId;
+            consecutiveDetections = 1;
+          }
+          lastDetectedAt = detectedAt;
+          if (consecutiveDetections >= RECOGNITION_CONFIRMATION_FRAMES) {
+            lockToRecognizedDirection(detection, candidate);
+          } else if (
+            recognitionStatusRef.current !== "locked" &&
+            recognitionStatusRef.current !== "grace"
+          ) {
+            updateStatus("confirming", `正在確認「${candidate.label}」節點照片`);
+          }
+          return;
+        }
+
+        consecutiveDetections = 0;
+        pendingTargetId = "";
+        if (
+          recognitionStatusRef.current === "locked" &&
+          detectedAt - lastDetectedAt <= RECOGNITION_LOST_DELAY_MS
+        ) {
+          return;
+        }
+
+        if (recognitionStatusRef.current === "locked") {
+          lockedTargetId = "";
+          startRecognitionGrace();
+          updateStatus(
+            "grace",
+            "已離開辨識圖，路線將保留 20 秒；重新掃描可再次校正",
+            recognitionCornersRef.current,
+          );
+        } else if (recognitionStatusRef.current === "confirming") {
+          updateStatus("searching", "請讓現場畫面與半透明參考圖重合", null);
+        } else if (
+          recognitionStatusRef.current !== "grace" &&
+          recognitionStatusRef.current !== "lost"
+        ) {
+          updateStatus("searching", "請讓現場畫面與半透明參考圖重合", null);
+        }
+      }).catch((error: any) => {
+        if (cancelled) return;
+        if (recognitionFrameRef.current !== null) {
+          cancelAnimationFrame(recognitionFrameRef.current);
+          recognitionFrameRef.current = null;
+        }
+        updateStatus("error", error?.message || "圖像辨識處理失敗", null);
+      }).finally(() => {
+        detectionInFlight = false;
+      });
+    };
+
+    const startRecognition = async () => {
+      updateRecognitionFeedback("loading", "正在準備圖像辨識", null);
+      try {
+        tracker = new OrbImageTracker();
+        await tracker.prepareMany(
+          recognitionCandidates.map((candidate) => ({
+            id: candidate.id,
+            imageUrl: candidate.imageUrl,
+          })),
+        );
+        if (cancelled) {
+          tracker.dispose();
+          return;
+        }
+        recognitionTrackerRef.current = tracker;
+        updateRecognitionFeedback("searching", "請讓現場畫面與半透明參考圖重合", null);
+        recognitionFrameRef.current = requestAnimationFrame(processFrame);
+      } catch (error: any) {
+        tracker?.dispose();
+        tracker = null;
+        updateRecognitionFeedback(
+          "error",
+          error?.message || "路徑節點辨識照片無法使用，請回後台驗證或更換照片",
+          null,
+        );
+      }
+    };
+
+    startRecognition();
+
+    return () => {
+      cancelled = true;
+      if (recognitionFrameRef.current !== null) {
+        cancelAnimationFrame(recognitionFrameRef.current);
+        recognitionFrameRef.current = null;
+      }
+      tracker?.dispose();
+      if (recognitionTrackerRef.current === tracker) recognitionTrackerRef.current = null;
+    };
+  }, [
+    cameraState,
+    destinationId,
+    recognitionCandidateSignature,
+    resetRecognitionGrace,
+    screen,
+    startRecognitionGrace,
+  ]);
+
+  const resetRuntimeLocalization = () => {
+    setRuntimeAnchorId("");
+    setRecognizedCandidateId("");
+    setRecognitionHeadingOffset(null);
+  };
 
   const goToGuideSegment = (index: number, openCalibration = true) => {
     const nextIndex = clamp(index, 0, Math.max(0, guideSegments.length - 1));
@@ -1485,14 +2648,18 @@ export default function ARNavigationV3() {
     setMapFloorId(target.floorId);
     calibrationHeadingRef.current = null;
     setCalibrationHeading(null);
+    setRecognizedCandidateId("");
+    setRecognitionHeadingOffset(null);
     setCameraMessage("");
     setMapExpanded(false);
     setGuideImageExpanded(false);
+    updateRecognitionFeedback("disabled", "", null);
     if (openCalibration) setScreen("calibrate");
   };
 
   const selectOrigin = ({ x, y }: { x: number; y: number }) => {
     if (!selectedFloor) return;
+    resetRuntimeLocalization();
     const bounds = selectedFloor.bounds || { blX: 0, blY: 0, trX: 100, trY: 100 };
     const physX = bounds.blX + x * (bounds.trX - bounds.blX);
     const physY = bounds.trY - y * (bounds.trY - bounds.blY);
@@ -1510,6 +2677,7 @@ export default function ARNavigationV3() {
   };
 
   const selectOriginMarker = (markerId: string) => {
+    resetRuntimeLocalization();
     setOriginSelection(markerId);
     if (!markerId || markerId === "map") {
       setOrigin(null);
@@ -1530,6 +2698,7 @@ export default function ARNavigationV3() {
   };
 
   const selectDestinationMarker = (markerId: string) => {
+    resetRuntimeLocalization();
     setDestinationId(markerId || null);
     const marker = graph.nodes[markerId];
     if (marker) setSelectedFloorId(marker.fId);
@@ -1548,12 +2717,32 @@ export default function ARNavigationV3() {
   const requestCameraAndOrientation = async () => {
     if (cameraState === "loading") return;
     setCameraState("loading");
+    setMotionSensorState("idle");
     setCameraMessage("");
     try {
       const Orientation = window.DeviceOrientationEvent as any;
+      const Motion = window.DeviceMotionEvent as any;
+      const permissionWarnings: string[] = [];
       if (Orientation?.requestPermission) {
         const permission = await Orientation.requestPermission();
-        if (permission !== "granted") throw new Error("未允許動作與方向權限");
+        if (permission !== "granted") {
+          if (!recognitionRequired) throw new Error("未允許動作與方向權限");
+          permissionWarnings.push("未開啟方向感測，將以節點照片與路網向量進行導引");
+        }
+      }
+      if (!Motion) {
+        setMotionSensorState("unavailable");
+        permissionWarnings.push("此裝置不支援步行感測，離開照片後將只使用 20 秒倒數");
+      } else if (Motion.requestPermission) {
+        const permission = await Motion.requestPermission();
+        if (permission === "granted") {
+          setMotionSensorState("ready");
+        } else {
+          setMotionSensorState("denied");
+          permissionWarnings.push("未開啟步行感測，離開照片後將只使用 20 秒倒數");
+        }
+      } else {
+        setMotionSensorState("ready");
       }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: { ideal: "environment" } },
@@ -1567,7 +2756,14 @@ export default function ARNavigationV3() {
       }
       setCameraState("ready");
       setPermissionGranted(true);
-      setCameraMessage("");
+      setCameraMessage(permissionWarnings.join("；"));
+      if (recognitionRequired) {
+        calibrationHeadingRef.current = null;
+        setCalibrationHeading(null);
+        updateRecognitionFeedback("loading", "正在準備圖像辨識", null);
+        setMapExpanded(false);
+        setScreen("navigate");
+      }
     } catch (error: any) {
       setCameraState("denied");
       setCameraMessage(error?.message || "無法開啟相機或方向感測");
@@ -1575,18 +2771,30 @@ export default function ARNavigationV3() {
   };
 
   const beginNavigation = () => {
+    if (recognitionRequired) {
+      calibrationHeadingRef.current = null;
+      setCalibrationHeading(null);
+      updateRecognitionFeedback("loading", "正在準備圖像辨識", null);
+      setMapExpanded(false);
+      setScreen("navigate");
+      return;
+    }
+
     const nextCalibrationHeading = headingRef.current ?? heading;
     if (nextCalibrationHeading === null) {
       setCameraMessage("正在取得手機方向，請保持面向道路並稍候");
       return;
     }
+
     calibrationHeadingRef.current = nextCalibrationHeading;
     setCalibrationHeading(nextCalibrationHeading);
+    updateRecognitionFeedback("disabled", "此節點未設定辨識照片，沿用人工方向校正", null);
     setMapExpanded(false);
     setScreen("navigate");
   };
 
   const restart = () => {
+    resetRuntimeLocalization();
     setDestinationId(null);
     setOriginSelection("map");
     setOrigin(null);
@@ -1597,9 +2805,47 @@ export default function ARNavigationV3() {
     setReviewStepIndex(0);
     setGuideImageExpanded(false);
     setMapExpanded(false);
-    setShowAssistMenu(false);
+    updateRecognitionFeedback("disabled", "", null);
     setScreen("destination");
   };
+
+  if (fieldCalibrationEnabled && fieldCalibrationAuth !== "ready") {
+    const isCheckingAuth = fieldCalibrationAuth === "checking";
+    const isAccessDenied = fieldCalibrationAuth === "access-denied";
+    return (
+      <main className="v3-calibration-auth-gate">
+        <section aria-live="polite">
+          <div className="v3-calibration-auth-icon">
+            {isCheckingAuth ? <RefreshCw className="is-spinning" /> : <LogIn />}
+          </div>
+          <span>V3 現場角度校正</span>
+          <h1>
+            {isCheckingAuth
+              ? "正在確認登入狀態"
+              : isAccessDenied
+                ? "帳號沒有校正權限"
+                : "請先登入後台"}
+          </h1>
+          <p>
+            {isCheckingAuth
+              ? "正在向 Azure 確認目前帳號，完成後會自動進入校正流程。"
+              : isAccessDenied
+                ? "目前帳號已登入，但未獲派 ar_admin 角色；請由站台管理員完成角色指派後再重新整理。"
+                : "登入成功後會返回這一頁。登入狀態只適用目前網域，正式站與測試站需各自登入一次。"}
+          </p>
+          {!isCheckingAuth && (
+            <small className="v3-calibration-auth-host">目前網域：{window.location.host}</small>
+          )}
+          {!isCheckingAuth && !isAccessDenied && (
+            <a href={fieldCalibrationLoginUrl} rel="nofollow">
+              <LogIn aria-hidden="true" />
+              登入後開始校正
+            </a>
+          )}
+        </section>
+      </main>
+    );
+  }
 
   if (loading) {
     return (
@@ -1629,10 +2875,17 @@ export default function ARNavigationV3() {
 
   if (screen === "navigate") {
     const isLastGuideSegment = !nextGuideSegment;
+    const recognitionCanvasWidth = recognitionCanvasRef.current?.width || 360;
+    const recognitionCanvasHeight = recognitionCanvasRef.current?.height || 480;
+    const recognitionGraceLabel = `離開影像 · ${recognitionGraceRemaining} 秒 · ${recognitionGraceSteps}/${RECOGNITION_GRACE_STEP_LIMIT} 步`;
+    const recognitionPolygon = recognitionCorners
+      ?.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`)
+      .join(" ");
 
     return (
       <main className="v2-ar-screen">
         <video ref={videoRef} className="v2-camera" playsInline muted />
+        <canvas ref={recognitionCanvasRef} className="v3-recognition-canvas" aria-hidden="true" />
         <div className="v2-camera-shade" />
 
         <header className="v2-ar-header">
@@ -1648,79 +2901,237 @@ export default function ARNavigationV3() {
           </button>
         </header>
 
-        <div className="v2-heading-chip">
-          <Compass aria-hidden="true" />
-          {heading === null ? "等待方向感測" : `${Math.round(heading)}°`}
+        <div className={`v2-heading-chip ${recognitionGraceActive ? "is-grace" : ""}`}>
+          {recognitionRequired ? <ScanLine aria-hidden="true" /> : <Compass aria-hidden="true" />}
+          {recognitionRequired
+            ? recognitionGraceActive
+              ? recognitionGraceLabel
+              : recognitionStatus === "locked"
+              ? !activeDirectionConfigured
+                ? "方位尚未設定"
+                : sensorProjectedRouteBearing !== null
+                  ? "位置與方位已校正"
+                  : "影像已定位"
+              : "等待影像對位"
+            : heading === null
+              ? "等待方向感測"
+              : `${Math.round(heading)}°`}
         </div>
 
-        <div className="v2-ar-route-zone" aria-live="polite">
-          <svg
-            key={`ar-guide-segment-${currentSegment}`}
-            className="v2-ar-route-projection"
-            viewBox="0 0 100 100"
-            preserveAspectRatio="xMidYMid meet"
-            aria-label={`第 ${currentSegment + 1} 段 AR 導引路線，方向 ${Math.round(arProjectionRotation)} 度`}
+        {fieldCalibrationEnabled &&
+          !mapExpanded &&
+          fieldCalibrationTargetNode &&
+          fieldCalibrationNodeId === fieldCalibrationTargetNode.id && (
+            <aside className="v3-field-calibration" aria-label="V3 AR 現場角度校正">
+              <div className="v3-field-calibration-title">
+                <SlidersHorizontal aria-hidden="true" />
+                <div>
+                  <span>現場角度校正</span>
+                  <strong>{nodeLabel(fieldCalibrationTargetNode)}</strong>
+                </div>
+                <output>{fieldCalibrationAngle.toFixed(0)}°</output>
+              </div>
+
+              <div className="v3-field-calibration-metrics">
+                <span>照片基準 <strong>{fieldCalibrationAngle.toFixed(0)}°</strong></span>
+                <span>
+                  角度來源 <strong>{activeAngleIsRouteDerived ? "首點推算" : "單點設定"}</strong>
+                </span>
+                <span>手機方位 <strong>{heading === null ? "--" : `${Math.round(heading)}°`}</strong></span>
+                <span>
+                  畫面旋轉 <strong>{arProjectionRotation > 0 ? "+" : ""}{Math.round(arProjectionRotation)}°</strong>
+                </span>
+              </div>
+
+              <div className="v3-field-calibration-input">
+                <button
+                  type="button"
+                  onClick={() => updateFieldCalibrationAngle(fieldCalibrationAngle - 1)}
+                  aria-label="角度減少一度"
+                >
+                  <Minus />
+                </button>
+                <label>
+                  <span>角度</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="359"
+                    step="1"
+                    inputMode="numeric"
+                    value={Math.round(fieldCalibrationAngle)}
+                    onChange={(event) => updateFieldCalibrationAngle(Number(event.target.value))}
+                  />
+                  <em>°</em>
+                </label>
+                <button
+                  type="button"
+                  onClick={() => updateFieldCalibrationAngle(fieldCalibrationAngle + 1)}
+                  aria-label="角度增加一度"
+                >
+                  <Plus />
+                </button>
+              </div>
+              <input
+                className="v3-field-calibration-range"
+                type="range"
+                min="0"
+                max="359"
+                step="1"
+                value={fieldCalibrationAngle}
+                onChange={(event) => updateFieldCalibrationAngle(Number(event.target.value))}
+                aria-label="調整 AR 起始角度"
+              />
+
+              <div className="v3-field-calibration-actions">
+                <button
+                  type="button"
+                  className={fieldCalibrationConfirmed ? "is-confirmed" : ""}
+                  onClick={() => {
+                    setFieldCalibrationConfirmed(true);
+                    setFieldCalibrationMessage("效果已確認，可以同步此節點角度。");
+                  }}
+                  disabled={fieldCalibrationSync === "saving"}
+                >
+                  <Check />
+                  {fieldCalibrationConfirmed ? "已確認" : "確認效果"}
+                </button>
+                <button
+                  type="button"
+                  className="is-sync"
+                  onClick={syncFieldCalibrationAngle}
+                  disabled={
+                    !fieldCalibrationConfirmed ||
+                    !fieldCalibrationHasChanges ||
+                    fieldCalibrationSync === "saving" ||
+                    fieldCalibrationAuth !== "ready"
+                  }
+                >
+                  <CloudUpload />
+                  {fieldCalibrationSync === "saving"
+                    ? "同步中"
+                    : fieldCalibrationHasChanges
+                      ? "同步角度"
+                      : "已同步"}
+                </button>
+              </div>
+
+              {fieldCalibrationAuth === "checking" ? (
+                <p className="v3-field-calibration-message">正在確認後台登入狀態...</p>
+              ) : fieldCalibrationAuth === "login-required" ? (
+                <a className="v3-field-calibration-login" href={fieldCalibrationLoginUrl}>
+                  登入後台以同步
+                </a>
+              ) : (
+                <p className={`v3-field-calibration-message is-${fieldCalibrationSync}`}>
+                  {fieldCalibrationMessage}
+                  {fieldCalibrationUser ? `（${fieldCalibrationUser}）` : ""}
+                </p>
+              )}
+            </aside>
+          )}
+
+        {recognitionRequired && (
+          <section
+            className={`v3-recognition-overlay is-${recognitionStatus}`}
+            aria-live="polite"
+            aria-label={recognitionGraceActive ? recognitionGraceLabel : recognitionMessage}
           >
-            <defs>
-              <filter id="v2-ar-route-glow" x="-80%" y="-80%" width="260%" height="260%">
-                <feGaussianBlur stdDeviation="1.4" result="blur" />
-                <feMerge>
-                  <feMergeNode in="blur" />
-                  <feMergeNode in="SourceGraphic" />
-                </feMerge>
-              </filter>
-            </defs>
-            <g
-              className="v2-ar-route-rotation"
-              style={
-                {
-                  "--v2-route-rotation": `${arProjectionRotation}deg`,
-                  "--v2-route-origin-x": `${arOriginX}%`,
-                  "--v2-route-origin-y": `${arOriginY}%`,
-                } as React.CSSProperties
-              }
+            <svg
+              viewBox={`0 0 ${recognitionCanvasWidth} ${recognitionCanvasHeight}`}
+              preserveAspectRatio="xMidYMid slice"
+              aria-hidden="true"
             >
-              {nextArRoute && (
-                <>
-                  <path className="v3-ar-route-network-outline" d={nextArRoute.path} />
-                  <path className="v3-ar-route-network-base" d={nextArRoute.path} />
-                </>
-              )}
-              {activeArRoute && (
-                <>
-                  <path className="v3-ar-route-network-outline" d={activeArRoute.path} />
-                  <path id={activeArRoute.pathId} className="v2-ar-route-line" d={activeArRoute.path} />
-                  {Array.from({ length: 7 }, (_, index) => (
-                    <g className="v2-ar-flow-arrow" key={`ar-flow-arrow-${index}`}>
-                      <path d="M -2.4 -2 L 0 0 L -2.4 2" />
-                      <animateMotion
-                        dur="4.2s"
-                        begin={`${(-index * 0.6).toFixed(1)}s`}
-                        repeatCount="indefinite"
-                        rotate="auto"
+              {recognitionPolygon && <polygon points={recognitionPolygon} />}
+            </svg>
+            <div className="v3-recognition-frame" aria-hidden="true">
+              <img
+                className="v3-recognition-reference"
+                src={guideReferenceImage}
+                alt=""
+                draggable={false}
+              />
+              <i /><i /><i /><i />
+            </div>
+            <div className="v3-recognition-status">
+              <ScanLine aria-hidden="true" />
+              <strong>{recognitionGraceActive ? recognitionGraceLabel : recognitionMessage}</strong>
+            </div>
+          </section>
+        )}
+
+        <div className="v2-ar-route-zone" aria-live="polite">
+          {isArRouteVisible && (
+            <>
+              <svg
+                key={`ar-guide-segment-${currentSegment}`}
+                className="v2-ar-route-projection"
+                viewBox="0 0 100 100"
+                preserveAspectRatio="xMidYMid meet"
+                aria-label={`第 ${currentSegment + 1} 段 AR 導引路線，方向 ${Math.round(arProjectionRotation)} 度`}
+              >
+                <defs>
+                  <filter id="v2-ar-route-glow" x="-80%" y="-80%" width="260%" height="260%">
+                    <feGaussianBlur stdDeviation="1.4" result="blur" />
+                    <feMerge>
+                      <feMergeNode in="blur" />
+                      <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                  </filter>
+                </defs>
+                <g
+                  className="v2-ar-route-rotation"
+                  style={
+                    {
+                      "--v2-route-rotation": `${arProjectionRotation}deg`,
+                      "--v2-route-origin-x": `${arOriginX}%`,
+                      "--v2-route-origin-y": `${arOriginY}%`,
+                    } as React.CSSProperties
+                  }
+                >
+                  {nextArRoute && (
+                    <>
+                      <path className="v3-ar-route-network-outline" d={nextArRoute.path} />
+                      <path className="v3-ar-route-network-base" d={nextArRoute.path} />
+                    </>
+                  )}
+                  {activeArRoute && (
+                    <>
+                      <path className="v3-ar-route-network-outline" d={activeArRoute.path} />
+                      <path id={activeArRoute.pathId} className="v2-ar-route-line" d={activeArRoute.path} />
+                      {Array.from({ length: 7 }, (_, index) => (
+                        <g className="v2-ar-flow-arrow" key={`ar-flow-arrow-${index}`}>
+                          <path d="M -2.4 -2 L 0 0 L -2.4 2" />
+                          <animateMotion
+                            dur="4.2s"
+                            begin={`${(-index * 0.6).toFixed(1)}s`}
+                            repeatCount="indefinite"
+                            rotate="auto"
+                          >
+                            <mpath href={`#${activeArRoute.pathId}`} />
+                          </animateMotion>
+                        </g>
+                      ))}
+                      <image
+                        className="v2-ar-route-mascot"
+                        href="./assets/ar/mascot-walking-small.png"
+                        x="-6.5"
+                        y="-12"
+                        width="13"
+                        height="13"
+                        preserveAspectRatio="xMidYMid meet"
                       >
-                        <mpath href={`#${activeArRoute.pathId}`} />
-                      </animateMotion>
-                    </g>
-                  ))}
-                  <image
-                    className="v2-ar-route-mascot"
-                    href="./assets/ar/mascot-walking-small.png"
-                    x="-6.5"
-                    y="-12"
-                    width="13"
-                    height="13"
-                    preserveAspectRatio="xMidYMid meet"
-                  >
-                    <animateMotion dur="6.4s" repeatCount="indefinite" rotate="0">
-                      <mpath href={`#${activeArRoute.pathId}`} />
-                    </animateMotion>
-                  </image>
-                </>
-              )}
-            </g>
-          </svg>
-          <span className="v2-ar-route-direction">{arDirectionLabel}</span>
+                        <animateMotion dur="6.4s" repeatCount="indefinite" rotate="0">
+                          <mpath href={`#${activeArRoute.pathId}`} />
+                        </animateMotion>
+                      </image>
+                    </>
+                  )}
+                </g>
+              </svg>
+              <span className="v2-ar-route-direction">{arDirectionLabel}</span>
+            </>
+          )}
         </div>
 
         <div className={`v2-nav-map ${mapExpanded ? "is-expanded" : ""}`}>
@@ -1763,10 +3174,13 @@ export default function ARNavigationV3() {
           </button>
           <div className="v2-nav-console-info">
             <div className="v2-nav-status">
-              <span>{activeGuideSegment?.title}</span>
+              <span>{activeGuideSegment?.title || (hasArrived ? "已抵達目的地" : "等待定位")}</span>
               <span>{currentSegment + 1}/{Math.max(1, guideSegments.length)}</span>
             </div>
-            <strong>{activeGuideSegment?.travelInstruction}</strong>
+            <strong>
+              {activeGuideSegment?.travelInstruction ||
+                (hasArrived ? `您已抵達 ${nodeLabel(destination)}` : "請掃描節點照片以取得目前路徑")}
+            </strong>
             <small className="v3-segment-distance">本段約 {remainingDistance.toFixed(1)} m</small>
             {isScaleUncalibrated && (
               <small className="v2-scale-warning">比例尺仍為預設 100×100 公尺，距離僅供估算</small>
@@ -1783,25 +3197,6 @@ export default function ARNavigationV3() {
           </button>
         </section>
 
-        <button
-          type="button"
-          className="v2-assist-button"
-          onClick={() => setShowAssistMenu((value) => !value)}
-          aria-label="影像辨識輔助"
-        >
-          <ScanLine />
-        </button>
-        {showAssistMenu && (
-          <aside className="v2-assist-menu">
-            <button type="button" onClick={() => setShowAssistMenu(false)} aria-label="關閉">
-              <X />
-            </button>
-            <ScanLine />
-            <strong>需要重新校正？</strong>
-            <p>附近若有既有導引圖，可切換原版影像辨識重新定位。</p>
-            <a href="./ar.html">開啟影像辨識輔助</a>
-          </aside>
-        )}
       </main>
     );
   }
@@ -1822,12 +3217,19 @@ export default function ARNavigationV3() {
           <div className="v2-step-label">AR 導引</div>
           <h1>
             {showPermissionStep
-              ? "開啟相機與動作方向"
-              : activeGuideSegment?.calibrationInstruction || "請面向圖片所示方向"}
+              ? "開啟相機、方向與步行感測"
+              : activeGuideSegment?.calibrationInstruction || "請讓現場畫面與半透明照片重合"}
           </h1>
           <p className="v3-guide-segment-summary">
             {activeGuideSegment?.title || "起點定位"} · 第 {currentSegment + 1}/{Math.max(1, guideSegments.length)} 段 · 約 {remainingDistance.toFixed(1)} 公尺
           </p>
+          {!showPermissionStep && (
+            <p className={`v3-recognition-note ${recognitionRequired ? "" : "is-warning"}`}>
+              {recognitionRequired
+                ? "下一步請讓現場畫面與半透明參考圖重合；離開照片後，路線會保留 20 秒，或偵測到 5 步後提前隱藏。重新掃描即可再次校正。"
+                : "此節點尚未設定辨識照片，這一段會沿用人工面向校正。可由後台的路徑節點補上照片。"}
+            </p>
+          )}
           {guideExternalUrl && (
             <a className="v3-guide-external-link" href={guideExternalUrl} target="_blank" rel="noreferrer">
               <ExternalLink aria-hidden="true" />
@@ -1846,23 +3248,42 @@ export default function ARNavigationV3() {
                 <span>動作與方向</span>
                 <strong>{heading === null ? "等待允許" : `${Math.round(heading)}°`}</strong>
               </div>
+              <div>
+                <Footprints aria-hidden="true" />
+                <span>步行感測</span>
+                <strong>
+                  {motionSensorState === "ready"
+                    ? "已開啟"
+                    : motionSensorState === "denied"
+                      ? "未允許"
+                      : motionSensorState === "unavailable"
+                        ? "不支援"
+                        : "等待允許"}
+                </strong>
+              </div>
             </div>
           )}
           {cameraMessage && <div className={`v2-message ${cameraState === "denied" ? "is-error" : ""}`}>{cameraMessage}</div>}
           {showPermissionStep ? (
             <button type="button" className="v2-primary-button" onClick={requestCameraAndOrientation}>
               <Camera />
-              {cameraState === "loading" ? "正在開啟..." : "開啟相機與動作方向"}
+              {cameraState === "loading"
+                ? "正在開啟..."
+                : "開啟相機、方向與步行感測"}
             </button>
           ) : (
             <button
               type="button"
               className="v2-primary-button"
               onClick={beginNavigation}
-              disabled={heading === null}
+              disabled={!recognitionRequired && heading === null}
             >
-              <Navigation />
-              {heading === null ? "等待方向感測..." : "我已面向照片方向，開始 AR 導引"}
+              {recognitionRequired ? <ScanLine /> : <Navigation />}
+              {recognitionRequired
+                ? "開始掃描節點照片"
+                : heading === null
+                  ? "等待方向感測..."
+                  : "我已面向照片方向，開始 AR 導引"}
             </button>
           )}
         </section>
@@ -2078,7 +3499,7 @@ export default function ARNavigationV3() {
             <span><MapPin aria-hidden="true" />終點</span>
             <select value={destinationId || ""} onChange={(event) => selectDestinationMarker(event.target.value)}>
               <option value="">請選擇導航終點</option>
-              {navigableMarkers
+              {publicStops
                 .filter((marker) => marker.id !== origin?.snapId)
                 .map((marker) => (
                   <option key={`destination-${marker.id}`} value={marker.id}>
@@ -2100,8 +3521,8 @@ export default function ARNavigationV3() {
         {hasRouteSelection && !canPlanRoute && (
           <small className="v3-route-unavailable">目前選擇的起點與終點之間尚未建立完整路網</small>
         )}
-        {navigableMarkers.length === 0 && (
-          <small className="v3-route-unavailable">後台尚未指定可導航的 AR 點位</small>
+        {publicStops.length === 0 && (
+          <small className="v3-route-unavailable">後台尚未指定可公開選擇的停駐點</small>
         )}
       </section>
     </main>

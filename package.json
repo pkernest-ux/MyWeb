@@ -4,12 +4,24 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
+    "dev:ar-v4": "vite --config vite.config.v4.ts --host 127.0.0.1 --port 5176 --open ar-v4-field-dev.html",
+    "preview:ar-v4": "node scripts/ar-v4-local-server.mjs",
+    "build:ar-v4": "vite build --config vite.config.v4.ts",
+    "typecheck:ar-v4": "tsc --project tsconfig.v4.json --noEmit",
+    "test:ar-v4": "node --test api/test/ar-field-survey.test.js api/test/ar-sync.test.js test/ar-v4-field-core.test.mjs test/ar-v4-local-server.test.mjs test/ar-v4-recognition-profile.test.mjs",
+    "test:ar-v4-browser": "node test/ar-v4-browser.mjs && node test/ar-v4-safety-browser.mjs",
     "dev:ar": "vite --host 127.0.0.1 --port 5173 ar-dev.html",
+    "dev:ar-v2": "vite --host 127.0.0.1 --port 5174 ar-v2-dev.html",
+    "dev:ar-v3": "vite --host 127.0.0.1 --port 5175 ar-v3-dev.html",
+    "test:ar-sync-browser": "node test/ar-sync-browser.mjs",
     "build": "vite build",
-    "build:ar": "vite build"
+    "build:ar": "vite build",
+    "build:ar-v2": "vite build --config vite.config.v2.ts",
+    "build:ar-v3": "vite build --config vite.config.v3.ts"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.3.4",
+    "jsfeat": "^0.0.8",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

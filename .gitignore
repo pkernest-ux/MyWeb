@@ -5,8 +5,12 @@ Thumbs.db
 .env.*
 .swa
 .swa-cli.config.json
+swa-cli.config.json
+local.settings.json
 .stitch-import/
 *.zip
 node_modules/
 dist/
 build/
+.local/
+test-output/

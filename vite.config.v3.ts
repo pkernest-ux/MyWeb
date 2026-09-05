@@ -16,15 +16,15 @@ export default defineConfig({
     emptyOutDir: false,
     cssCodeSplit: false,
     rollupOptions: {
-      input: "src/ar-entry.tsx",
+      input: "src/ar-v3-entry.tsx",
       output: {
-        entryFileNames: "assets/ar/ar-app.js",
-        chunkFileNames: "assets/ar/[name].js",
+        entryFileNames: "assets/ar-v3/ar-v3-app.js",
+        chunkFileNames: "assets/ar-v3/[name].js",
         assetFileNames: (assetInfo) => {
-          if (assetInfo.name?.endsWith(".css")) return "assets/ar/ar-app.css";
-          return "assets/ar/[name][extname]";
-        }
-      }
-    }
-  }
+          if (assetInfo.name?.endsWith(".css")) return "assets/ar-v3/ar-v3-app.css";
+          return "assets/ar-v3/[name][extname]";
+        },
+      },
+    },
+  },
 });
