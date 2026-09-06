@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src/ar-v4-demo-entry.tsx", "src/ar-v4-field-core.ts", "src/ar-v3-image-recognition.ts", "src/jsfeat.d.ts"]
+}

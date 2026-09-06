@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUp, Camera, Check, ChevronRight, CloudUpload, Compass, Download, Expand, ImagePlus, Info, Layers, MapPin, Navigation, RefreshCw, ScanLine, SlidersHorizontal, VideoOff, WifiOff } from 'lucide-react';
+import { ArrowUp, Camera, Check, ChevronRight, CloudUpload, Compass, Download, Expand, ImagePlus, Info, Layers, MapPin, Navigation, RefreshCw, Route, ScanLine, SlidersHorizontal, VideoOff, WifiOff } from 'lucide-react';
 import { OrbImageTracker } from './ar-v3-image-recognition';
 import {
   EMPTY_SENSOR, bearingBetween, encodeObservationImage, extractPanoramaView, flattenProject,
@@ -8,9 +8,10 @@ import {
 } from './ar-v4-field-core';
 import { downloadJson, draftStore, readJson } from './ar-v4-field-storage';
 
-type Tab = 'location' | 'camera' | 'capture' | 'calibrate' | 'records';
+type Tab = 'location' | 'graph' | 'camera' | 'capture' | 'calibrate' | 'records';
 const FIELD_TABS = [
   { id: 'location', label: '作業位置', short: '位置', icon: MapPin, hint: '選擇樓層與節點，確認這次作業的位置。' },
+  { id: 'graph', label: '路網編輯', short: '路網', icon: Route, hint: '管理平面圖、路徑節點與 AR 點位，保存後接著做現場採集。' },
   { id: 'camera', label: '相機測試', short: '相機', icon: ScanLine, hint: '現場取景、拍照，或測試已保存的節點照片。' },
   { id: 'capture', label: '照片採集', short: '照片', icon: ImagePlus, hint: '整理現場照片與環景取景，確認後再上傳。' },
   { id: 'calibrate', label: '方向校正', short: '校正', icon: Compass, hint: '微調節點方向，讓地圖與現場的朝向一致。' },
@@ -38,6 +39,16 @@ export default function FieldApp() {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [online, setOnline] = useState(navigator.onLine);
   const [tab, setTab] = useState<Tab>(location.pathname.includes('admin-ar-v4') || new URLSearchParams(location.search).get('view') === 'records' ? 'records' : 'location');
+  const editorFrame = useRef<HTMLIFrameElement>(null);
+  const [editorSrc, setEditorSrc] = useState('');
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  // Navigation owns a separate camera lifecycle. Leaving this tab or changing
+  // the saved project disposes its iframe rather than leaving a hidden camera.
+  useEffect(() => { setNavigationOpen(false); }, [tab, projectId, revision]);
+  const [editorReady, setEditorReady] = useState(false);
+  const [editorStatus, setEditorStatus] = useState({ dirty: false, busy: false });
+  const editorMessage = useRef<(data: any) => void>(() => {});
+  const editorLocked = editorStatus.dirty || editorStatus.busy;
   const tabRef = useRef(tab);
   const tabScroll = useRef<Partial<Record<Tab, number>>>({});
   const cameraGeneration = useRef(0);
@@ -78,6 +89,8 @@ export default function FieldApp() {
   const floor = floors.find((f) => `${f.buildingId}/${f.id}` === floorKey) || floors[0];
   const node = floor?.nodes.find((n) => n.id === nodeId);
   const scope = node ? [projectId, floor.buildingId, floor.id, node.nodeType, node.id].join('/') : '';
+  const activeScope = useRef(scope);
+  activeScope.current = scope;
   const neighbors = useMemo(() => {
     if (!node || !floor) return [];
     const ids = new Set((floor.edges || []).flatMap((edge: any) => edge.start === node.id ? [edge.end] : edge.end === node.id ? [edge.start] : []));
@@ -136,8 +149,9 @@ export default function FieldApp() {
     setLock(null);
     setCameraMessage('相機已關閉，仍可匯入照片與校正節點');
   }
-  async function loadProject(id: string) {
-    const generation = ++loadGeneration.current;
+  async function loadProject(id: string, selected?: { buildingId: string; floorId: string }, refreshGeneration?: number) {
+    const generation = refreshGeneration ?? ++loadGeneration.current;
+    if (generation !== loadGeneration.current) return;
     setLoading(true);
     try {
       const result = await readJson(`./api/ar-content?projectId=${encodeURIComponent(id)}&ts=${Date.now()}`);
@@ -150,7 +164,9 @@ export default function FieldApp() {
       // Refresh the displayed server calibration too; a new revision must not
       // silently authorize overwriting it with an old local angle after a 409.
       const refreshedFloors = flattenProject(result.body);
-      const refreshedFloor = refreshedFloors.find((f) => `${f.buildingId}/${f.id}` === floorKey);
+      const selectedKey = selected ? `${selected.buildingId}/${selected.floorId}` : floorKey;
+      const refreshedFloor = refreshedFloors.find((f) => `${f.buildingId}/${f.id}` === selectedKey);
+      if (selected && refreshedFloor) setFloorKey(selectedKey);
       const refreshedNode = refreshedFloor?.nodes.find((n) => n.id === nodeId);
       if (refreshedNode) {
         setBearing(optionalAngle(refreshedNode.guideReferenceBearing) ?? 0);
@@ -160,6 +176,7 @@ export default function FieldApp() {
       setLock(null);
       setCandidate(null);
       stopDetection();
+      return true;
     } catch (error) {
       if (generation !== loadGeneration.current) return;
       const raw = await readJson('./ar-data.json');
@@ -171,8 +188,71 @@ export default function FieldApp() {
       setRevision('');
       setStorage('readonly');
       setNotice({ kind: 'error', text: `目前僅載入靜態資料（唯讀），不可上傳。${(error as Error).message}` });
+      return false;
     } finally { if (generation === loadGeneration.current) setLoading(false); }
   }
+
+  // The editor stays mounted across tabs so switching tools never destroys its draft.
+  useEffect(() => {
+    if (tab !== 'graph' || editorSrc || !canWrite || loading || busy || storage === 'readonly') return;
+    const params = new URLSearchParams({ embedded: '1', v4: '1', projectId,
+      buildingId: floor?.buildingId || '', floorId: floor?.id || '' });
+    setEditorSrc(`./admin-ar.html?${params}`);
+  }, [tab, editorSrc, canWrite, loading, busy, storage, projectId, floor]);
+
+  useEffect(() => {
+    // Do not unmount a dirty frame on a temporary read/auth failure.
+    // Keep the editor's export/reload controls usable after a failed refresh.
+    // Its API still enforces write permissions and revision checks independently.
+    if (editorFrame.current) editorFrame.current.inert = Boolean(busy) || loading;
+  }, [editorSrc, busy, loading, canWrite, storage]);
+
+  useEffect(() => {
+    if (!editorReady || tab !== 'graph') return;
+    editorFrame.current?.contentWindow?.postMessage({ type: 'ar-v4-editor-context', projectId,
+      buildingId: floor?.buildingId || '', floorId: floor?.id || '', sourceBlobSha: revision }, location.origin);
+  }, [editorReady, tab, projectId, floorKey, revision]);
+
+  editorMessage.current = (data) => {
+    if (data.type === 'ar-v4-editor-ready') { setEditorReady(true); return; }
+    if (data.type === 'ar-v4-editor-status' && typeof data.dirty === 'boolean' && typeof data.busy === 'boolean') {
+      setEditorStatus((old) => old.dirty === data.dirty && old.busy === data.busy ? old : { dirty: data.dirty, busy: data.busy });
+      return;
+    }
+    if (data.type !== 'ar-v4-editor-saved' || typeof data.projectId !== 'string' || !data.projectId ||
+        typeof data.buildingId !== 'string' || typeof data.floorId !== 'string' ||
+        typeof data.sourceBlobSha !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(data.sourceBlobSha)) return;
+    // A message is only a refresh hint. Read authoritative data rather than accepting a frame's payload.
+    const generation = ++loadGeneration.current;
+    setLoading(true);
+    void (async () => {
+      try {
+        const result = await readJson('./api/ar-content?list=1');
+        if (generation !== loadGeneration.current) return;
+        if (!result.body.projects?.some((p: any) => p.project?.id === data.projectId)) throw new Error('找不到剛保存的專案，請重新讀取後台。');
+        setProjects(result.body.projects);
+        const refreshed = await loadProject(data.projectId, { buildingId: data.buildingId, floorId: data.floorId }, generation);
+        if (refreshed && generation === loadGeneration.current) setNotice({ kind: 'success', text: `路網已保存到${result.storage === 'local' ? '本機後台（未同步 GitHub）' : '後台'}，位置頁已更新。請選擇節點後拍照或校正。` });
+      } catch (error) {
+        if (generation === loadGeneration.current) setNotice({ kind: 'error', text: `路網保存後未能更新位置頁：${(error as Error).message}。請重新讀取後台。` });
+      } finally { if (generation === loadGeneration.current) setLoading(false); }
+    })();
+  };
+  useEffect(() => {
+    const receive = (event: MessageEvent) => {
+      if (event.origin !== location.origin || event.source !== editorFrame.current?.contentWindow ||
+          !event.data || typeof event.data !== 'object') return;
+      editorMessage.current(event.data);
+    };
+    window.addEventListener('message', receive);
+    return () => window.removeEventListener('message', receive);
+  }, []);
+  useEffect(() => {
+    if (!editorLocked) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [editorLocked]);
 
   useEffect(() => {
     window.scrollTo({ top: tabScroll.current[tab] || 0, behavior: 'instant' as ScrollBehavior });
@@ -203,6 +283,7 @@ export default function FieldApp() {
         const result = await readJson('./api/ar-content?list=1');
         summaries = result.body.projects || [];
         activeId = result.body.activeProjectId;
+        if (mounted) { setStorage(result.storage); setRevision(result.revision); }
       } catch {
         const fallback = await readJson('./ar-data.json');
         summaries = getProjects(fallback.body);
@@ -211,7 +292,7 @@ export default function FieldApp() {
       if (!mounted) return;
       setProjects(summaries);
       const selected = summaries.find((p) => p.project.id === activeId) || summaries[0];
-      if (!selected) throw new Error('尚未建立專案，請先在 V3 後台建立樓層與節點。');
+      if (!selected) throw new Error('尚未建立專案，請到「路網」建立場域、樓層與節點。');
       await loadProject(selected.project.id);
     })().catch((error) => { if (mounted) { setNotice({ kind: 'error', text: error.message }); setLoading(false); } });
     const onOnline = () => setOnline(navigator.onLine);
@@ -375,7 +456,9 @@ export default function FieldApp() {
     finally { setBusy(''); }
   }
   async function save(mode: 'photo' | 'calibration') {
-    if (!node || !floor || !revision || !canWrite || (mode === 'photo' && !draft)) return;
+    if (busy || loading || editorLocked || !node || !floor || !revision || !canWrite || (mode === 'photo' && !draft)) return;
+    const generation = loadGeneration.current;
+    const stillCurrent = () => generation === loadGeneration.current && activeScope.current === scope;
     const photo = draft;
     if (mode === 'photo' && promote && !window.confirm('將取代此節點在 V3 使用的導引照片。V4 歷史觀測照片會保留，確定繼續？')) return;
     if (mode === 'calibration' && saveMapUp && optionalAngle(mapUp) === null) { setNotice({ kind: 'error', text: '請先填入樓層地圖上方對應的方位。' }); return; }
@@ -387,16 +470,15 @@ export default function FieldApp() {
       };
       const result = await readJson('./api/save-ar-content', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-AR-Save-Contract': 'ar-field-survey-v1' }, body: JSON.stringify({ expectedSourceBlobSha: revision, fieldSurvey }) });
       if (!result.body.ok) throw new Error('後台未確認儲存成功，草稿已保留。');
-      setRevision(result.revision || result.body.sourceBlobSha || '');
+      if (stillCurrent()) setRevision(result.revision || result.body.sourceBlobSha || '');
       if (mode === 'photo') {
-        setDraft(null);
         await draftStore(scope, null).catch(() => {});
-        setDraftMessage('照片已上傳，本機待傳草稿已清除');
+        if (stillCurrent()) { setDraft(null); setDraftMessage('照片已上傳，本機待傳草稿已清除'); }
       }
       const updated = await readJson(`./api/ar-content?projectId=${encodeURIComponent(projectId)}&ts=${Date.now()}`).catch(() => null);
-      if (updated) { setProject(updated.body); setRevision(updated.revision); }
-      setNotice({ kind: 'success', text: `${mode === 'photo' ? '照片與方位紀錄' : '節點角度'}已保存到${storage === 'local' ? '本機後台（未同步 GitHub）' : '後台'}。${updated ? '' : '重新讀取失敗，請稍後刷新後台。'}` });
-    } catch (error) { setNotice({ kind: 'error', text: (error as Error).message }); }
+      if (updated && stillCurrent()) { setProject(updated.body); setRevision(updated.revision); }
+      if (stillCurrent()) setNotice({ kind: 'success', text: `${mode === 'photo' ? '照片與方位紀錄' : '節點角度'}已保存到${storage === 'local' ? '本機後台（未同步 GitHub）' : '後台'}。${updated ? '' : '重新讀取失敗，請稍後刷新後台。'}` });
+    } catch (error) { if (stillCurrent()) setNotice({ kind: 'error', text: (error as Error).message }); }
     finally { setBusy(''); }
   }
   async function runRecognition(still?: HTMLCanvasElement) {
@@ -470,7 +552,7 @@ export default function FieldApp() {
     setNotice({ kind: 'info', text: confirmedBearing === null ? '已選取候選節點；這張照片尚未記錄方向，請到「方向校正」設定。' : ref.nodeId !== nodeId ? '已切換到此節點。請核對地圖，面向參考照片同方向後，在校正工具確認朝向。' : '已由你確認節點與朝向。感測器僅短暫追蹤轉動，20 秒後須重新校正，沒有量測行走距離。' });
   }
   const disabled = Boolean(busy) || loading;
-  const writeDisabled = disabled || !canWrite || !revision || storage === 'readonly' || !online;
+  const writeDisabled = disabled || editorLocked || !canWrite || !revision || storage === 'readonly' || !online;
   const sensorDerived = draft ? mapBearingFromSensor(draft.sensor, optionalAngle(mapUp), Date.parse(draft.capturedAt)) : null;
 
   return <div className={`field-app app-tabs-layout active-${tab}`}>
@@ -479,15 +561,16 @@ export default function FieldApp() {
       <div className="header-links"><span className="version-tag">V4 · 試作版</span><a href="./ar-v3.html" target="_blank" rel="noreferrer">開啟 V3 <ChevronRight size={14} /></a><a href="./admin-ar-v4.html" target="_blank" rel="noreferrer">現場資料後台 <ChevronRight size={14} /></a></div>
     </header>
     <main>
-      <div className="page-heading"><div><div className="eyebrow">FIELD WORKSPACE · 0{FIELD_TABS.findIndex((item) => item.id === tab) + 1} / 05</div><h1>{activeTab.label}</h1><p>{activeTab.hint}</p></div><button className="soft-button refresh-action" disabled={disabled || !projectId} onClick={() => loadProject(projectId).catch((e) => setNotice({ kind: 'error', text: e.message }))}><RefreshCw size={16} /><span>重新讀取後台</span></button></div>
+      <div className="page-heading"><div><div className="eyebrow">FIELD WORKSPACE · 0{FIELD_TABS.findIndex((item) => item.id === tab) + 1} / 0{FIELD_TABS.length}</div><h1>{activeTab.label}</h1><p>{activeTab.hint}</p></div><button className="soft-button refresh-action" disabled={disabled || editorLocked || !projectId} onClick={() => loadProject(projectId).catch((e) => setNotice({ kind: 'error', text: e.message }))}><RefreshCw size={16} /><span>重新讀取後台</span></button></div>
       <div className="environment-strip"><span className={`status-dot ${revision ? 'good' : ''}`} /><strong>{storage === 'local' ? '本機後台 · 不會同步 GitHub' : storage === 'readonly' ? '靜態資料 · 唯讀模式' : storage === 'loading' ? '正在連接後台…' : '雲端後台'}</strong><span>{revision ? `資料版本 ${revision.slice(0, 8)}` : '尚無可寫入的資料版本'}</span><span className="strip-end">{!online ? <><WifiOff size={14} />離線，照片先留草稿</> : canWrite ? '現場作業權限已就緒' : <a href="./admin.html" target="_blank" rel="noreferrer">登入 ar_admin 後才可上傳</a>}</span></div>
       {notice && <div className={`notice ${notice.kind}`} role={notice.kind === 'error' ? 'alert' : 'status'}><Info size={18} /><span>{notice.text}</span><button aria-label="關閉提示" onClick={() => setNotice(null)}>×</button></div>}
+      {editorLocked && <div className="editor-draft-notice" role="status"><Route size={18} /><span>{editorStatus.busy ? '路網正在讀取或保存，請稍候。' : '路網有尚未保存的變更。可以切換頁籤整理照片草稿；請先回路網保存，再切換場域或上傳照片與校正。'}</span>{tab !== 'graph' && <button onClick={() => selectTab('graph')}>返回路網</button>}</div>}
       <button className="workspace-context" onClick={() => selectTab('location')} aria-label="切換作業位置"><MapPin size={16} /><span><small>{project?.project?.name || '正在載入場域'} · {floor?.name || '—'}</small><b>{node ? nodeLabel(node) : '請選擇作業節點'}</b></span><em>{tab === 'location' ? '目前位置' : '切換位置'}</em><ChevronRight size={16} /></button>
       <div className="field-grid">
         <section id="field-panel-location" role="tabpanel" aria-labelledby="field-tab-location" tabIndex={0} hidden={tab !== 'location'} className="location-panel panel">
           <div className="panel-title"><span className="step-number">01</span><div><h2>選擇作業位置</h2><p>照片將綁定此節點</p></div><Layers size={19} /></div>
-          <label>場域<select aria-label="場域" disabled={disabled} value={projectId} onChange={(e) => loadProject(e.target.value).catch((error) => setNotice({ kind: 'error', text: error.message }))}>{projects.map((p) => <option key={p.project.id} value={p.project.id}>{p.project.name || p.project.id}</option>)}</select></label>
-          <label>建物／樓層<select aria-label="樓層" disabled={disabled} value={floor ? `${floor.buildingId}/${floor.id}` : ''} onChange={(e) => setFloorKey(e.target.value)}>{floors.map((f) => <option key={`${f.buildingId}/${f.id}`} value={`${f.buildingId}/${f.id}`}>{f.buildingName} · {f.name}</option>)}</select></label>
+          <label>場域<select aria-label="場域" disabled={disabled || editorLocked} value={projectId} onChange={(e) => loadProject(e.target.value).catch((error) => setNotice({ kind: 'error', text: error.message }))}>{projects.map((p) => <option key={p.project.id} value={p.project.id}>{p.project.name || p.project.id}</option>)}</select></label>
+          <label>建物／樓層<select aria-label="樓層" disabled={disabled || editorLocked} value={floor ? `${floor.buildingId}/${floor.id}` : ''} onChange={(e) => setFloorKey(e.target.value)}>{floors.map((f) => <option key={`${f.buildingId}/${f.id}`} value={`${f.buildingId}/${f.id}`}>{f.buildingName} · {f.name}</option>)}</select></label>
           <label>目前節點<select aria-label="目前節點" disabled={disabled || !floor?.nodes.length} value={nodeId} onChange={(e) => setNodeId(e.target.value)}>{floor?.nodes.map((n, i) => <option key={`${n.nodeType}/${n.id}`} value={n.id}>{String(i + 1).padStart(2, '0')} · {nodeLabel(n)}</option>)}</select></label>
           <div className="map-heading"><strong>點選地圖切換節點</strong><button aria-label="切換地圖放大" onClick={() => setMapZoom(mapZoom === 1 ? 1.7 : 1)}><Expand size={15} /></button></div>
           <div className="map-scroll"><div className="floor-map" style={{ width: `${mapZoom * 100}%` }}>
@@ -498,9 +581,32 @@ export default function FieldApp() {
           <div className="map-legend"><span><i />作業節點</span><span>地圖上方為 0°</span></div>
           <div className="coverage"><span>本樓層照片覆蓋</span><strong>{coveredNodes}<small> / {floor?.nodes.length || 0} 節點</small></strong><progress max={floor?.nodes.length || 1} value={coveredNodes} /><p>包含 V3 參考照；有照片不代表已通過辨識。</p></div>
           <div className="field-tip"><Info size={17} /><p>站在選定節點附近，拍固定、容易辨認的地標。不要只拍地板、玻璃反光或人群。</p></div>
+          <button className="soft-button full-width location-edit" onClick={() => selectTab('graph')}><Route size={17} />編輯地圖、路徑與 AR 點位 <ChevronRight size={16} /></button>
           <button className="primary-button full-width location-next" disabled={disabled || !node} onClick={() => selectTab('camera')}>位置確認，開始相機作業 <ChevronRight size={16} /></button>
         </section>
+        <section id="field-panel-graph" role="tabpanel" aria-labelledby="field-tab-graph" tabIndex={0} hidden={tab !== 'graph'} className="graph-panel">
+          <div className="graph-workspace-actions">
+            <details className="graph-instructions">
+              <summary><Info size={16} />操作說明與資料安全</summary>
+              <div className="graph-help-content"><b>展開需要的工具，用完收合回到地圖</b><p>「樓層與底圖」切換樓層 →「路徑節點」畫連線 →「AR 點位」放置目的地 →「路網測試」檢查連通 →「資料保存」寫入後台。</p><small>編輯變更會自動暫存於此瀏覽器。{storage === 'local' ? '仍需按「保存到本機後台」，V4 才會讀到更新；不會推送 GitHub。' : '雲端發布會更新 GitHub，請先核對場域與保存確認。'}平面圖點位不是真實空間的 3D 錨點。</small><p className="graph-footnote">切換底部頁籤會保留路網草稿。刪除節點也會移除該節點的已上傳照片，請先匯出備份再確認刪除；單純移動節點不會刪照片。</p></div>
+            </details>
+            <button className="soft-button graph-return" onClick={() => selectTab('location')}><Camera size={17} />回位置採集</button>
+          </div>
+          {(!canWrite || storage === 'readonly') && <div className="panel empty-draft"><Route size={34} /><b>請確認後台連線與作業權限</b><p>目前位置頁未連上可寫入後台。已開啟的路網草稿仍保留，可先在編輯器匯出草稿或重新讀取後台；後台仍會檢查權限與版本。</p></div>}
+          {canWrite && storage !== 'readonly' && !editorReady && <p className="helper" role="status">正在載入路網編輯器…</p>}
+          {editorSrc && <iframe ref={editorFrame} src={editorSrc} title="地圖與路網編輯器" className="graph-editor-frame" allow="camera; accelerometer; gyroscope; magnetometer" />}
+        </section>
         <section id="field-panel-camera" role="tabpanel" aria-labelledby="field-tab-camera" tabIndex={0} hidden={tab !== 'camera'} className="capture-column">
+          <div className="camera-mode-switch" role="group" aria-label="選擇導引測試方式">
+            <button aria-pressed={!navigationOpen} onClick={() => setNavigationOpen(false)}><ScanLine size={17} />照片與方向</button>
+            <a href="./ar-v4-demo.html?mode=scan" target="_blank" rel="noopener noreferrer">螢幕辨識 Demo（模擬資料）</a>
+            <button aria-pressed={navigationOpen} disabled={loading || !!busy || editorLocked || !projectId} onClick={() => { stopCamera(); setNavigationOpen(true); }}><Navigation size={17} />導航流程</button>
+          </div>
+          {navigationOpen && tab === 'camera' && !editorLocked && <section className="navigation-test panel" aria-label="導航流程測試">
+            <div className="navigation-test-help"><h2>導航流程測試</h2><p>V4 獨立導航測試：路線預覽會自動聚焦目前路段，按「下一轉角」重新縮放。請在下方選擇「{project?.project?.name || '目前場域'}」，再選起終點；不會自動套用工作台節點。</p><p>使用已保存的後台路網；AR 與辨識仍沿用 V3 流程，V4 採集的觀測照片尚未接入。這不是完整 V4 自動定位導航。</p><small>切換頁籤、場域或重新讀取資料會結束此測試；照片與路網草稿不受影響。</small></div>
+            <iframe src="./ar-v4-navigation.html" title="AR 導航流程測試" className="navigation-test-frame" allow="camera; accelerometer; gyroscope; magnetometer; fullscreen" allowFullScreen />
+          </section>}
+          <div hidden={navigationOpen}>
           <div className="camera-card">
             <video ref={video} autoPlay playsInline muted className={cameraState === 'ready' ? 'camera-video visible' : 'camera-video'} />
             <div className="camera-top"><span className="camera-label"><span className={`status-dot ${cameraState === 'ready' ? 'good' : ''}`} />{cameraState === 'ready' ? 'LIVE CAMERA' : 'CAMERA STANDBY'}</span><span>{floor?.name || '—'} · {node ? nodeLabel(node) : '請選節點'}</span></div>
@@ -518,8 +624,9 @@ export default function FieldApp() {
             {refs.length > 24 && <p className="helper">為控制記憶體，本輪僅測試 24 張，優先目前節點。請切換節點測試其餘照片。</p>}
             {candidate && <div className="candidate"><img src={candidate.reference.imageUrl} alt="匹配的參考照片" /><div><b>{candidate.reference.label}</b><small>{candidate.reference.source} · 參考朝向 {angleText(candidate.reference.bearing)}</small><small>幾何內點 {candidate.inliers}／匹配 {candidate.matches}，不是定位正確率</small><button disabled={disabled} onClick={confirmCandidate}>我確認在此節點，且面向照片同方向 <Check size={15} /></button></div></div>}
           </section>
+          </div>
         </section>
-        <section id="field-tools" hidden={tab === 'location' || tab === 'camera'} className="tools-panel panel">
+        <section id="field-tools" hidden={tab !== 'capture' && tab !== 'calibrate' && tab !== 'records'} className="tools-panel panel">
           {tab === 'capture' && <div id="field-panel-capture" role="tabpanel" aria-labelledby="field-tab-capture" tabIndex={0} className="tool-content">
             <div className="panel-title"><span className="step-number">02</span><div><h2>建立節點參考照片</h2><p>多個方向可分別拍攝、保存</p></div></div>
             <div className="capture-actions"><button className="primary-button" disabled={disabled || !node || draftLoadedKey !== scope} onClick={() => selectTab('camera')}><Camera size={18} />前往相機拍攝</button><button disabled={disabled || !node || draftLoadedKey !== scope} onClick={() => photoInput.current?.click()}><ImagePlus size={17} />匯入照片</button><button disabled={disabled || !node || draftLoadedKey !== scope} onClick={() => panoramaInput.current?.click()}><Expand size={17} />360 環景取景</button></div>
@@ -540,17 +647,18 @@ export default function FieldApp() {
             <div className="helper-box"><b>三種資訊分開保存</b><p>照片：找出候選節點。<br />感測器：記錄手機方位來源與時間。<br />人工校正：確認照片／節點在地圖上的方向。</p><p>修改節點角度不會改寫歷史照片的拍攝方向。</p></div>
           </div>}
           {tab === 'records' && <div id="field-panel-records" role="tabpanel" aria-labelledby="field-tab-records" tabIndex={0} className="tool-content">
+            <p><a href="./ar-v4-demo.html?mode=records" target="_blank" rel="noopener noreferrer">查看獨立模擬素材後台（唯讀，不屬於正式節點）</a></p>
             <div className="panel-title"><span className="step-number">04</span><div><h2>後台現場紀錄</h2><p>本樓層 {records.length} 筆 V4 觀測</p></div></div><p className="helper">{storage === 'local' ? '以下是本機後台持久保存的資料，不是 GitHub 雲端資料。' : '以下是目前讀取版本的後台資料。'}點選照片對應節點可繼續補拍。</p>
             <div className="button-row"><button className="soft-button" disabled={disabled || !project} onClick={() => downloadJson(`ar-v4-field-${projectId}.json`, { exportedAt: new Date().toISOString(), storage, revision, project })}><Download size={16} />匯出專案備份</button></div>
             <div className="records-list">{records.length ? records.slice().reverse().map(({ observation: o, label, nodeId: id }) => <article key={`${id}/${o.id}`} className="record-card"><button className="record-image" disabled={disabled} onClick={() => setNodeId(id)}><img src={o.imageUrl} alt={`${label} 的現場觀測照片`} /></button><div><b>{label}</b><span>{sourceText[o.source]} · {angleText(o.mapBearing)}</span><small>{readableDate(o.capturedAt)} · {o.headingSource === 'unconfirmed' ? '方向待確認' : o.headingSource === 'manual' ? '人工標記方向' : '羅盤換算方向'}</small>{o.note && <p>{o.note}</p>}</div></article>) : <div className="empty-draft"><Layers size={34} strokeWidth={1.3} /><b>尚無 V4 上傳紀錄</b><p>照片上傳成功後，會在這裡看到節點、朝向與現場備註。V3 既有參考照不列入新觀測。</p></div>}</div>
           </div>}
-          {!node && !loading && <div className="notice error">此樓層沒有節點，請先在 V3 後台建立節點與路線。</div>}
+          {!node && !loading && <div className="notice error">此樓層沒有節點，請到「路網」建立並保存節點與路線。</div>}
         </section>
       </div>
       {busy && <div className="busy-indicator" role="status"><RefreshCw size={16} />{busy}…</div>}
       <footer className="field-footer"><span>V4 FIELD LAB · 現場採集與校正工具</span><span>相機辨識是節點候選，不是精確座標。請站定操作，留意周遭動線。</span></footer>
     </main>
-    <nav className="bottom-nav" aria-label="現場工作台分頁"><div className="bottom-tabs" role="tablist" aria-label="現場工具">{FIELD_TABS.map(({ id, label, short, icon: Icon }, index) => <button key={id} id={`field-tab-${id}`} type="button" role="tab" aria-label={label} aria-selected={tab === id} aria-controls={`field-panel-${id}`} tabIndex={tab === id ? 0 : -1} onClick={() => selectTab(id)} onKeyDown={(event) => tabKeyDown(event, index)}><span className="tab-icon"><Icon size={21} strokeWidth={tab === id ? 2 : 1.6} />{id === 'capture' && draft && <i className="draft-dot" aria-label="有待上傳草稿" />}</span><span>{short}</span></button>)}</div></nav>
+    <nav className="bottom-nav" aria-label="現場工作台分頁"><div className="bottom-tabs" role="tablist" aria-label="現場工具">{FIELD_TABS.map(({ id, label, short, icon: Icon }, index) => <button key={id} id={`field-tab-${id}`} type="button" role="tab" aria-label={label} aria-selected={tab === id} aria-controls={`field-panel-${id}`} tabIndex={tab === id ? 0 : -1} onClick={() => selectTab(id)} onKeyDown={(event) => tabKeyDown(event, index)}><span className="tab-icon"><Icon size={21} strokeWidth={tab === id ? 2 : 1.6} />{((id === 'capture' && draft) || (id === 'graph' && editorStatus.dirty)) && <i className="draft-dot" aria-label="有待上傳草稿" />}</span><span>{short}</span></button>)}</div></nav>
     <input ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(e) => { importPhoto(e.target.files?.[0]); e.target.value = ''; }} />
     <input ref={panoramaInput} type="file" accept="image/jpeg,image/png" hidden onChange={(e) => { importPanorama(e.target.files?.[0]); e.target.value = ''; }} />
     <input ref={testInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(e) => { testPhoto(e.target.files?.[0]); e.target.value = ''; }} />

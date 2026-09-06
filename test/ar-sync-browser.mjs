@@ -285,6 +285,7 @@ const run = async () => {
     `--user-data-dir=${profileDir}`,
     "about:blank"
   ], { stdio: "ignore" });
+  const chromeClosed = new Promise(resolve => chrome.once("close", resolve));
   let session;
 
   try {
@@ -345,8 +346,9 @@ const run = async () => {
   } finally {
     session?.close();
     chrome.kill("SIGTERM");
+    await chromeClosed;
     await server.close();
-    await rm(profileDir, { recursive: true, force: true });
+    await rm(profileDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
 };
 

@@ -351,7 +351,7 @@ try {
   await switchTab(page, '作業位置');
   await page.getByRole('tab', { name: '作業位置', exact: true }).focus();
   await page.keyboard.press('ArrowRight');
-  assert.equal(await page.getByRole('tab', { name: '相機測試', exact: true }).getAttribute('aria-selected'), 'true');
+  assert.equal(await page.getByRole('tab', { name: '路網編輯', exact: true }).getAttribute('aria-selected'), 'true');
   await page.keyboard.press('End');
   assert.equal(await page.getByRole('tab', { name: '後台紀錄', exact: true }).getAttribute('aria-selected'), 'true');
   await page.keyboard.press('Home');

@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { fitRouteSegment, V4_ROUTE_MAX_ZOOM } from './ar-v4-route-focus';
 import {
   ArrowLeft,
   Camera,
@@ -959,6 +960,7 @@ function MapPanel({
   scaleMarkersWithMap = false,
   isFullscreen = false,
   onToggleFullscreen,
+  focusActiveSegment = false,
 }: {
   floor?: FloorData;
   graph: GraphData;
@@ -980,6 +982,7 @@ function MapPanel({
   scaleMarkersWithMap?: boolean;
   isFullscreen?: boolean;
   onToggleFullscreen?: () => void;
+  focusActiveSegment?: boolean;
 }) {
   const [ratio, setRatio] = useState(1.25);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
@@ -1076,6 +1079,22 @@ function MapPanel({
     setMapTransform({ scale: 1, x: 0, y: 0 });
   }, [floor?.id, floorImageUrl]);
 
+  // Opt-in only from the separately built V4 navigation entry. A stable key
+  // avoids resetting the map on unrelated sensor/state updates.
+  const focusPoints = focusActiveSegment
+    ? (routeSegments?.find(segment => segment.index === activeRouteIndex)?.points || []).filter(point => point.fId === floor?.id)
+    : [];
+  const focusKey = JSON.stringify(focusPoints.map(point => [point.x, point.y]));
+  useEffect(() => {
+    if (!focusActiveSegment || mode !== 'route') return;
+    const points = (JSON.parse(focusKey) as number[][]).map(([x, y]) => ({ x, y }));
+    const transform = fitRouteSegment(points, viewportSize, {
+      width: viewportSize.width * fittedWorld.width / 100,
+      height: viewportSize.height * fittedWorld.height / 100,
+    });
+    setMapTransform(transform || { scale: 1, x: 0, y: 0 });
+  }, [focusActiveSegment, mode, activeRouteIndex, floor?.id, floorImageUrl, focusKey, viewportSize.width, viewportSize.height, fittedWorld.width, fittedWorld.height]);
+
   useEffect(() => {
     const element = mapPlaneRef.current;
     if (!element) return;
@@ -1090,7 +1109,7 @@ function MapPanel({
     transform: { scale: number; x: number; y: number },
     rect: DOMRect,
   ) => {
-    const scale = clamp(transform.scale, 1, 4);
+    const scale = clamp(transform.scale, focusActiveSegment ? 0.1 : 1, focusActiveSegment ? V4_ROUTE_MAX_ZOOM : 4);
     const initialPanRatio = compact ? 0 : 0.18;
     const maxX = (rect.width * (scale - 1)) / 2 + rect.width * initialPanRatio;
     const maxY = (rect.height * (scale - 1)) / 2 + rect.height * initialPanRatio;
@@ -1217,8 +1236,12 @@ function MapPanel({
     changeMapZoom(event.deltaY < 0 ? 0.25 : -0.25);
   };
 
+  // Convert 32 CSS pixels to SVG world units on each axis, so the mascot
+  // remains small and undistorted while V4 focuses different route segments.
+  const routeMascotWidth = focusActiveSegment ? 3200 / Math.max(1, viewportSize.width * fittedWorld.width / 100 * mapTransform.scale) : 12;
+  const routeMascotHeight = focusActiveSegment ? 3200 / Math.max(1, viewportSize.height * fittedWorld.height / 100 * mapTransform.scale) : 12;
   return (
-    <div className={`v2-map-frame ${compact ? "is-compact" : ""} ${mode === "destination" ? "is-browsing" : ""}`}>
+    <div className={`v2-map-frame ${focusActiveSegment ? "v4-route-focus" : ""} ${compact ? "is-compact" : ""} ${mode === "destination" ? "is-browsing" : ""}`}>
       <div
         ref={mapPlaneRef}
         className={`v2-map-plane ${mode === "origin" || allowOriginSelection ? "is-selecting" : ""} ${!compact ? "is-pannable" : ""}`}
@@ -1305,10 +1328,10 @@ function MapPanel({
                     <image
                       className="v2-route-mascot"
                       href="./assets/ar/mascot-walking-small.png"
-                      x="-6"
-                      y="-11"
-                      width="12"
-                      height="12"
+                      x={-routeMascotWidth / 2}
+                      y={-routeMascotHeight * 11 / 12}
+                      width={routeMascotWidth}
+                      height={routeMascotHeight}
                       preserveAspectRatio="xMidYMid meet"
                     >
                       <animateMotion dur="7s" repeatCount="indefinite" rotate="0">
@@ -1466,7 +1489,7 @@ function WelcomeScreen({ config, onStart }: { config?: any; onStart: () => void 
   );
 }
 
-export default function ARNavigationV3() {
+export default function ARNavigationV3({ v4RouteFocus = false }: { v4RouteFocus?: boolean } = {}) {
   const [showWelcome, setShowWelcome] = useState(true);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -3346,6 +3369,7 @@ export default function ARNavigationV3() {
               routePoints={navigationPoints}
               routeSegments={routeSegmentsForMap}
               activeRouteIndex={safeReviewStepIndex}
+              focusActiveSegment={v4RouteFocus}
               completedRouteIndex={completedSegmentIndex}
               compact
               imageMode="navigation"

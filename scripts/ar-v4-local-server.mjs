@@ -8,15 +8,18 @@ import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const contract = "ar-field-survey-v1";
+const projectContract = "ar-project-collection-v4";
 const label = "本機後台（不會同步 GitHub）";
 const bodyLimit = 512 * 1024;
+const projectBodyLimit = 24 * 1024 * 1024;
 const rootFiles = new Set([
   "index.html", "about.html", "services.html", "works.html", "journal.html", "toolkit.html",
   "expertise.html", "video.html", "admin.html", "admin-dashboard.html", "admin-ar.html",
-  "ar.html", "ar-v2.html", "ar-v3.html", "ar-v4.html", "ar-v4-field.html", "admin-ar-v4.html",
+  "ar.html", "ar-v2.html", "ar-v3.html", "ar-v4.html", "ar-v4-field.html", "ar-v4-navigation.html", "admin-ar-v4.html",
   "styles.css", "script.js", "content.js", "content.json", "admin-cms.js", "THIRD_PARTY_NOTICES.md",
 ]);
-const assetDirectories = new Set(["ar", "ar-v2", "ar-v3", "ar-v4", "stitch"]);
+rootFiles.add("ar-v4-demo.html");
+const assetDirectories = new Set(["ar", "ar-v2", "ar-v3", "ar-v4", "ar-v4-navigation", "ar-v4-demo", "stitch"]);
 const dashboardFiles = new Set([
   "agri-dashboard/index.html", "agri-dashboard/data/cache.json", "agri-dashboard/static/echarts.min.js",
   "agri-dashboard/static/dashboard.js", "agri-dashboard/static/style.css", "agri-dashboard/static/taiwan.json",
@@ -93,12 +96,12 @@ function staticAllowed(relative) {
   return Object.hasOwn(contentTypes, path.extname(relative).toLowerCase()) && !relative.endsWith(".md");
 }
 
-async function jsonBody(req) {
+async function jsonBody(req, limit = bodyLimit) {
   const chunks = [];
   let size = 0;
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > bodyLimit) throw fail(413, "PAYLOAD_TOO_LARGE", "Field survey payload is too large.");
+    if (size > limit) throw fail(413, "PAYLOAD_TOO_LARGE", `AR payload exceeds the ${limit / (1024 * 1024)} MiB request limit.`);
     chunks.push(chunk);
   }
   try {
@@ -106,7 +109,7 @@ async function jsonBody(req) {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
     return parsed;
   } catch {
-    throw fail(400, "INVALID_PAYLOAD", "Invalid JSON field survey payload.");
+    throw fail(400, "INVALID_PAYLOAD", "Invalid JSON AR payload.");
   }
 }
 
@@ -155,8 +158,35 @@ export async function startLocalServer(options = {}) {
     return { bytes, json, collection: normalizeCollection(json), sha: digest(bytes) };
   }
 
-  async function writeSnapshot(collection) {
+  async function writeSnapshot(collection, previousSnapshot) {
     const bytes = Buffer.from(`${JSON.stringify(collection, null, 2)}\n`, "utf8");
+    if (digest(bytes) === previousSnapshot.sha) return previousSnapshot.sha;
+    // Keep the exact previous bytes before replacing the main file. Backups live
+    // outside the static allowlist and are never uploaded or exposed by an API.
+    const backupsDir = path.join(dataDir, "backups");
+    await fs.mkdir(backupsDir, { mode: 0o700 }).catch(error => { if (error.code !== "EEXIST") throw error; });
+    const backupsStat = await fs.lstat(backupsDir);
+    if (!backupsStat.isDirectory() || backupsStat.isSymbolicLink()) throw new Error("Local backups must be a regular directory.");
+    const backup = path.join(backupsDir, `ar-data-${previousSnapshot.sha}.json`);
+    try {
+      const stat = await fs.lstat(backup);
+      if (!stat.isFile() || stat.isSymbolicLink() || digest(await fs.readFile(backup)) !== previousSnapshot.sha) throw new Error("Local backup is not valid.");
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      const backupTemporary = path.join(backupsDir, `.backup-${randomUUID()}.tmp`);
+      let backupFile;
+      try {
+        backupFile = await fs.open(backupTemporary, "wx", 0o600);
+        await backupFile.writeFile(previousSnapshot.bytes);
+        await backupFile.sync();
+        await backupFile.close();
+        backupFile = null;
+        await fs.rename(backupTemporary, backup);
+      } finally {
+        await backupFile?.close();
+        await fs.unlink(backupTemporary).catch(error => { if (error.code !== "ENOENT") throw error; });
+      }
+    }
     const temporary = path.join(dataDir, `.ar-data-${randomUUID()}.tmp`);
     let file;
     try {
@@ -203,6 +233,12 @@ export async function startLocalServer(options = {}) {
         return;
       }
       const query = new URL(req.url, origin).searchParams;
+      if (pathname === "/api/ar-demo-library") {
+        const context = {};
+        await require("../api/ar-demo-library/index.js")(context, { method: req.method });
+        respond(res, context.res.status, context.res.body, "", context.res.headers);
+        return;
+      }
       if (req.method === "GET" && isLocalAuth) {
         respond(res, 200, {
           clientPrincipal: {
@@ -213,7 +249,7 @@ export async function startLocalServer(options = {}) {
         return;
       }
       if (req.method === "GET" && pathname === "/api/field-status") {
-        respond(res, 200, { storage: "local", writesEnabled: true, label });
+        respond(res, 200, { storage: "local", writesEnabled: true, projectWritesEnabled: true, label });
         return;
       }
       if (req.method === "GET" && ["/api/ar-content", "/api/ar-field-export", "/ar-data.json"].includes(pathname)) {
@@ -242,13 +278,15 @@ export async function startLocalServer(options = {}) {
       }
       if (req.method === "POST" && pathname === "/api/save-ar-content") {
         if (req.headers.origin !== origin) throw fail(403, "LOCAL_ORIGIN_REQUIRED", "The exact local Origin header is required.");
-        if (req.headers["x-ar-save-contract"] !== contract) {
-          throw fail(428, "SYNC_CONTRACT_REQUIRED", "Only the ar-field-survey-v1 contract is supported locally.");
+        const requestContract = req.headers["x-ar-save-contract"];
+        if (![contract, projectContract].includes(requestContract)) {
+          throw fail(428, "SYNC_CONTRACT_REQUIRED", "Use the ar-field-survey-v1 or ar-project-collection-v4 local save contract.");
         }
         if (!/^application\/json(?:\s*;.*)?$/i.test(req.headers["content-type"] || "")) {
           throw fail(415, "JSON_REQUIRED", "Content-Type application/json is required.");
         }
-        const body = await jsonBody(req);
+        const isProjectSave = requestContract === projectContract;
+        const body = await jsonBody(req, isProjectSave ? projectBodyLimit : bodyLimit);
         if (typeof body.expectedSourceBlobSha !== "string" || !body.expectedSourceBlobSha.trim()) {
           throw fail(428, "SYNC_REVISION_REQUIRED", "The source revision is required before saving.");
         }
@@ -264,12 +302,13 @@ export async function startLocalServer(options = {}) {
             }, sha);
             return;
           }
-          const { applyFieldSurvey } = require("../api/shared/ar-field-survey.js");
-          const result = applyFieldSurvey(snapshot.collection, body.fieldSurvey);
-          sha = await writeSnapshot(result.collection);
+          const result = isProjectSave
+            ? require("../api/shared/ar-local-project.js").applyLocalProject(snapshot.collection, body.payload)
+            : require("../api/shared/ar-field-survey.js").applyFieldSurvey(snapshot.collection, body.fieldSurvey);
+          sha = await writeSnapshot(result.collection, snapshot);
           respond(res, 200, {
             ok: true, storage: "local", label, sourceBlobSha: sha, revision: sha,
-            observationId: result.observationId, calibration: result.calibration,
+            ...(isProjectSave ? { projectId: result.projectId } : { observationId: result.observationId, calibration: result.calibration }),
           }, sha);
         });
         writeQueue = transaction.catch(() => {});

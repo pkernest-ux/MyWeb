@@ -20,3 +20,140 @@ body {
 #ar-root[data-embedded="true"] {
   min-height: 760px;
 }
+
+.v4-editor-notice {
+  padding: 12px 16px;
+  border-bottom: 1px solid #334155;
+  background: #0f172a;
+  color: #cbd5e1;
+  font: 12px/1.6 system-ui, sans-serif;
+}
+
+.v4-editor-notice strong { color: #67e8f9; }
+.v4-editor-notice p { margin: 4px 0 0; }
+.v4-map-editor {
+  min-height: 100dvh;
+  height: auto;
+  overflow: visible;
+}
+
+#ar-root[data-embedded="true"]:has(.v4-map-editor) { min-height: 100dvh; }
+
+.v4-editor-workspace {
+  display: grid;
+  grid-template-columns: minmax(260px, 310px) minmax(0, 1fr);
+  grid-template-rows: auto minmax(540px, 1fr);
+  align-content: start;
+  min-width: 0;
+  min-height: 100dvh;
+  overflow: visible;
+}
+
+.v4-editor-workspace [hidden] { display: none !important; }
+.v4-editor-context {
+  grid-column: 1 / -1;
+  position: sticky;
+  top: 0;
+  z-index: 70;
+  padding: 12px 16px;
+  border-bottom: 1px solid #334155;
+  background: #0b1426;
+  box-shadow: 0 4px 16px #02061744;
+}
+.v4-editor-location, .v4-editor-mode { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.v4-editor-location > svg { width: 22px; height: 22px; color: #67e8f9; flex-shrink: 0; }
+.v4-editor-location > div { flex: 1; min-width: 0; }
+.v4-editor-location small { display: block; color: #94a3b8; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.v4-editor-location strong { display: block; color: #f8fafc; font-size: 17px; line-height: 1.5; }
+.v4-editor-location > .v4-tool-button { width: auto; flex-shrink: 0; }
+.v4-editor-mode { flex-wrap: wrap; margin-top: 8px; font-size: 12px; }
+.v4-editor-mode > .v4-tool-button { width: auto; }
+.v4-mode-badge { color: #cbd5e1; font-weight: 700; }
+.v4-mode-badge.is-active { color: #67e8f9; }
+.v4-save-state { color: #94a3b8; }
+.v4-save-state.is-dirty { color: #fcd34d; }
+.v4-end-mode { margin-left: auto; }
+.v4-mode-guidance { margin: 6px 0 0; color: #cbd5e1; font-size: 12px; line-height: 1.55; }
+.v4-editor-tools { grid-column: 1; grid-row: 2; min-width: 0; padding: 12px; background: #0f172a; border-right: 1px solid #334155; }
+.v4-tool-group { border: 1px solid #334155; border-radius: 12px; overflow: hidden; background: #131e33; }
+.v4-tool-group + .v4-tool-group { margin-top: 8px; }
+.v4-tool-group.is-open { border-color: #0891b2; }
+.v4-tool-group h3 { margin: 0; }
+.v4-tool-toggle {
+  width: 100%; min-height: 58px; display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; border: 0; text-align: left; color: #e2e8f0; background: transparent;
+}
+.v4-tool-toggle:hover { background: #1e293b; }
+.v4-tool-toggle > svg { width: 20px; height: 20px; flex-shrink: 0; color: #67e8f9; }
+.v4-tool-toggle > span { min-width: 0; flex: 1; }
+.v4-tool-toggle strong { display: block; font-size: 14px; line-height: 1.45; }
+.v4-tool-toggle small { display: block; font-size: 11px; line-height: 1.5; font-weight: 400; color: #94a3b8; overflow-wrap: anywhere; }
+.v4-tool-toggle .v4-tool-chevron { width: 18px; height: 18px; color: #94a3b8; transition: transform .18s; }
+.v4-tool-toggle[aria-expanded="true"] .v4-tool-chevron { transform: rotate(180deg); }
+.v4-tool-panel { padding: 12px; border-top: 1px solid #334155; display: flex; flex-direction: column; gap: 12px; }
+.v4-tool-panel p { margin: 0; color: #cbd5e1; font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.v4-tool-field, .v4-tool-label { display: block; font-size: 12px; font-weight: 600; color: #cbd5e1; }
+.v4-tool-field select { display: block; width: 100%; min-width: 0; min-height: 46px; margin-top: 5px; padding: 10px; border: 1px solid #475569; border-radius: 8px; background: #020617; color: #e2e8f0; font: inherit; font-size: 14px; }
+.v4-tool-button {
+  display: flex; width: 100%; min-width: 0; min-height: 46px; align-items: center; justify-content: center; gap: 8px;
+  padding: 10px 12px; border: 1px solid #475569; border-radius: 9px;
+  background: #1e293b; color: #e2e8f0; font-size: 13px; font-weight: 700; line-height: 1.45; white-space: normal;
+}
+.v4-tool-button > svg { width: 18px; height: 18px; flex-shrink: 0; }
+.v4-tool-button:hover { background: #334155; }
+.v4-tool-button:disabled, .v4-tool-field select:disabled { opacity: .45; cursor: not-allowed; }
+.v4-tool-primary { background: #0e7490; border-color: #22d3ee; color: white; }
+.v4-tool-primary:hover { background: #155e75; }
+.v4-tool-button[aria-pressed="true"] { background: #164e63; border-color: #67e8f9; color: #a5f3fc; box-shadow: inset 0 0 0 1px #67e8f9; }
+.v4-tool-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.v4-tool-divider { height: 1px; background: #334155; margin: 2px 0; }
+.v4-tool-secondary, .v4-tool-danger { border: 1px solid #475569; border-radius: 8px; padding: 0 10px; }
+.v4-tool-secondary > summary, .v4-tool-danger > summary { min-height: 46px; padding: 12px 0; cursor: pointer; font-size: 12px; font-weight: 600; }
+.v4-tool-secondary[open] > :not(summary), .v4-tool-danger[open] > :not(summary) { margin-bottom: 10px; }
+.v4-tool-danger { border-color: #7f1d1d; color: #fca5a5; }
+.v4-tool-danger .v4-tool-button { color: #fecaca; border-color: #991b1b; background: #450a0a; }
+.v4-tool-panel .v4-tool-warning { color: #fcd34d; }
+.v4-tool-panel .v4-editor-notice { padding: 10px; border: 1px solid #334155; border-radius: 8px; }
+.v4-editor-workspace [data-testid="editor-map"] { grid-column: 2; grid-row: 2; min-width: 0; min-height: 540px; position: sticky; top: 154px; height: calc(100dvh - 154px); align-self: start; scroll-margin-top: 174px; }
+.v4-editor-tools[hidden] + [data-testid="editor-map"] { grid-column: 1 / -1; }
+.v4-map-zoom { bottom: 16px; right: 12px; }
+.v4-map-zoom button { width: 46px; height: 46px; }
+.v4-map-scale { pointer-events: none; max-width: calc(100% - 84px); overflow: hidden; }
+.v4-node-inspector { z-index: 80; min-height: 0; }
+.v4-node-hit-area { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+.v4-inspector-actions { display: flex; flex-direction: column; gap: 8px; }
+.v4-inspector-actions p { font-size: 12px; line-height: 1.6; }
+.v4-node-inspector > .overflow-y-auto { min-height: 0; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.v4-inspector-header { position: sticky; top: 0; z-index: 1; }
+.v4-inspector-header > button { display: flex; align-items: center; gap: 5px; min-width: 64px; min-height: 46px; border: 1px solid #475569; border-radius: 9px; }
+.v4-inspector-header > button > span { font-size: 12px; }
+.v4-node-inspector > .pb-safe { position: sticky; bottom: 0; padding-bottom: max(12px, env(safe-area-inset-bottom)); }
+.v4-node-inspector button { min-height: 44px; }
+.v4-editor-modal > div { max-height: calc(100dvh - 32px); overflow-y: auto; overscroll-behavior: contain; }
+.v4-map-editor :is(button, select, input, textarea, summary):focus-visible { outline: 3px solid #67e8f9; outline-offset: 3px; }
+
+@media (max-width: 767px) {
+  .v4-editor-workspace { display: flex; min-height: 100dvh; }
+  .v4-editor-context { padding: 10px 12px; }
+  .v4-editor-location { gap: 8px; }
+  .v4-editor-location > svg { display: none; }
+  .v4-editor-location small { font-size: 11px; }
+  .v4-editor-location strong { font-size: 16px; }
+  .v4-editor-mode { gap: 8px; }
+  .v4-editor-mode .v4-tool-button { min-height: 44px; padding: 8px 10px; font-size: 12px; }
+  .v4-save-state { margin-left: auto; font-size: 11px; }
+  .v4-editor-mode:has(.v4-end-mode) .v4-save-state { flex-basis: auto; margin-left: 0; }
+  .v4-editor-tools { border-right: 0; border-bottom: 1px solid #334155; padding: 10px 12px; }
+  .v4-tool-group + .v4-tool-group { margin-top: 6px; }
+  .v4-tool-toggle { min-height: 54px; padding: 8px 11px; }
+  .v4-tool-field select, .v4-node-inspector input:not([type="checkbox"]), .v4-node-inspector textarea, .v4-node-inspector select { font-size: 16px; }
+  .v4-editor-workspace [data-testid="editor-map"] { position: relative; top: auto; flex: 1 0 440px; min-height: 440px; height: calc(100dvh - 174px); width: 100%; scroll-margin-top: 174px; }
+  .v4-node-inspector { max-height: 88dvh; }
+  .v4-node-inspector > .overflow-y-auto { padding-bottom: 16px; }
+  .v4-inspector-header { min-height: 64px; height: auto; padding: 8px 12px; gap: 8px; }
+  .v4-inspector-header h2 { font-size: 14px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .v4-tool-chevron, .v4-node-inspector { transition: none; }
+}

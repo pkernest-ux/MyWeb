@@ -8,7 +8,7 @@ import {
   ArrowUp, ArrowDown, ArrowLeft, ArrowRight,
   ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, Minus, Navigation,
   Building, Layers, ArrowUpDown, Eye, Ruler, Route, GitCommit, MousePointer2, Activity, RefreshCw,
-  Eraser, Undo2
+  Eraser, Undo2, ChevronDown, Save
 } from 'lucide-react';
 import { OrbImageTracker } from './src/ar-v3-image-recognition';
 
@@ -235,12 +235,12 @@ const readLocalStoredProjects = () => {
   }
 };
 
-const openProjectCache = () => new Promise((resolve, reject) => {
+const openProjectCache = (databaseName = AR_PROJECT_CACHE_DB) => new Promise((resolve, reject) => {
   if (!window.indexedDB) {
     reject(new Error('此瀏覽器不支援 IndexedDB 專案暫存。'));
     return;
   }
-  const request = window.indexedDB.open(AR_PROJECT_CACHE_DB, 1);
+  const request = window.indexedDB.open(databaseName, 1);
   request.onupgradeneeded = () => {
     const database = request.result;
     if (!database.objectStoreNames.contains(AR_PROJECT_CACHE_STORE)) {
@@ -252,8 +252,8 @@ const openProjectCache = () => new Promise((resolve, reject) => {
   request.onblocked = () => reject(new Error('IndexedDB 正被其他後台分頁使用，請關閉舊分頁後重試。'));
 });
 
-const readIndexedProjectCache = async () => {
-  const database = await openProjectCache();
+const readIndexedProjectCache = async (databaseName = AR_PROJECT_CACHE_DB) => {
+  const database = await openProjectCache(databaseName);
   try {
     return await new Promise((resolve, reject) => {
       const transaction = database.transaction(AR_PROJECT_CACHE_STORE, 'readonly');
@@ -270,8 +270,8 @@ const readIndexedProjectCache = async () => {
   }
 };
 
-const replaceIndexedProjectCache = async (projects) => {
-  const database = await openProjectCache();
+const replaceIndexedProjectCache = async (projects, databaseName = AR_PROJECT_CACHE_DB) => {
+  const database = await openProjectCache(databaseName);
   try {
     await new Promise((resolve, reject) => {
       const transaction = database.transaction(AR_PROJECT_CACHE_STORE, 'readwrite');
@@ -663,7 +663,30 @@ const hasPublishedFloorPlan = (project) =>
     (building?.floors || []).some(floor => Boolean(floor?.imageUrl || floor?.navigationImageUrl))
   );
 
-export default function ARManagerApp({ embedded = false, initialTab = 'map', publicOnly = false }) {
+const projectContentFingerprint = (project, config = project?.systemConfig, projectBuildings = project?.buildings) => JSON.stringify({
+  name: config?.projectName || project?.name || '',
+  description: project?.description || '',
+  systemConfig: config,
+  buildings: projectBuildings
+});
+
+export default function ARManagerApp({ embedded = false, initialTab = 'map', publicOnly = false, v4Integration = false }) {
+  const cacheDatabaseName = v4Integration ? 'ar-v4-map-editor-cache-v1' : AR_PROJECT_CACHE_DB;
+  const activeProjectCacheKey = v4Integration ? 'arV4MapEditor_activeProjectId' : AR_ACTIVE_PROJECT_KEY;
+  const [v4Storage, setV4Storage] = useState('unknown');
+  const [v4Ready, setV4Ready] = useState(false);
+  const [v4Busy, setV4Busy] = useState(false);
+  const [v4Notice, setV4Notice] = useState('正在讀取後台路網，請稍候。');
+  const [v4ProjectOptions, setV4ProjectOptions] = useState([]);
+  const [v4ToolGroup, setV4ToolGroup] = useState(null);
+  const [v4ToolsVisible, setV4ToolsVisible] = useState(true);
+  const [v4LoadFailed, setV4LoadFailed] = useState(false);
+  const v4EndModeRef = useRef(null);
+  const v4ToolsToggleRef = useRef(null);
+  const v4InspectorCloseRef = useRef(null);
+  const v4StateRef = useRef({});
+  const v4ContextRef = useRef(Object.fromEntries(new URLSearchParams(window.location.search)));
+  const v4PendingContextRef = useRef(null);
   const [activeTab, setActiveTab] = useState(initialTab);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
@@ -693,9 +716,9 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const [isCapturingFloorHeading, setIsCapturingFloorHeading] = useState(false);
   const isLoadingProjectRef = useRef(false);
   const localCacheWarningShownRef = useRef(false);
-  const [initialLocalProjects] = useState(() => publicOnly ? [] : readLocalStoredProjects());
+  const [initialLocalProjects] = useState(() => publicOnly || v4Integration ? [] : readLocalStoredProjects());
   const [hadLegacyDataOnLoad] = useState(() => {
-    if (publicOnly) return false;
+    if (publicOnly || v4Integration) return false;
     return Boolean(
       localStorage.getItem(AR_LEGACY_BUILDINGS_KEY) ||
       localStorage.getItem(AR_LEGACY_CONFIG_KEY)
@@ -708,6 +731,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
   const [projects, setProjects] = useState(() => {
     if (publicOnly) return [createProjectFromPublishedData({})];
+    if (v4Integration) return [createProject('待載入後台專案')];
     if (initialLocalProjects.length > 0) return initialLocalProjects;
 
     let migratedConfig = createDefaultConfig('預設導引專案');
@@ -736,7 +760,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   });
   const [activeProjectId, setActiveProjectId] = useState(() => {
     if (publicOnly) return projects[0]?.id;
-    const savedActiveProjectId = localStorage.getItem(AR_ACTIVE_PROJECT_KEY);
+    const savedActiveProjectId = localStorage.getItem(activeProjectCacheKey);
     return projects.some(project => project.id === savedActiveProjectId)
       ? savedActiveProjectId
       : projects[0]?.id;
@@ -785,6 +809,172 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
   const [mapTransform, setMapTransform] = useState({ x: 0, y: 0, scale: 1 });
   const [deleteUndo, setDeleteUndo] = useState(null);
+
+  const v4ActiveDirty = v4Integration && v4Ready && (!activeProject?._v4Base
+    || projectContentFingerprint(activeProject, systemConfig, buildings) !== activeProject._v4Base);
+  const v4Dirty = v4Integration && v4Ready && projects.some(project => {
+    const content = project.id === activeProjectId
+      ? projectContentFingerprint(project, systemConfig, buildings)
+      : projectContentFingerprint(project);
+    return !project._v4Base || content !== project._v4Base;
+  });
+  v4StateRef.current = { dirty: v4Dirty, busy: v4Busy, ready: v4Ready, projects, activeProjectId,
+    activeBuildingId, activeFloorId, systemConfig, buildings, storage: v4Storage,
+    revision: activeProject?._sync?.baseSha };
+  const sendV4Message = (type, details = {}) => {
+    if (v4Integration && window.parent !== window) {
+      window.parent.postMessage({ type, ...details }, window.location.origin);
+    }
+  };
+  const loadV4Backend = async (context = {}, { cachedProjects = null } = {}) => {
+    if (v4StateRef.current.busy) return;
+    v4StateRef.current.busy = true;
+    setV4Busy(true);
+    setV4LoadFailed(false);
+    try {
+      const [response, status] = await Promise.all([
+        fetch(`/api/ar-content?list=1&ts=${Date.now()}`, { cache: 'no-store', credentials: 'include', headers: { Accept: 'application/json' } }),
+        fetch('/api/field-status', { cache: 'no-store', credentials: 'include' })
+          .then(result => result.ok ? result.json() : null).catch(() => null)
+      ]);
+      if (!response.ok) throw new Error(`後台讀取失敗 (${response.status})`);
+      const summary = await response.json();
+      const storage = response.headers.get('x-ar-storage') === 'local' || status?.storage === 'local' ? 'local' : 'github';
+      const revision = response.headers.get('x-ar-source-blob-sha');
+      if (!revision || !(storage === 'local' ? /^[a-f\d]{64}$/i : /^[a-f\d]{40}$/i).test(revision)) {
+        throw new Error('後台未提供有效的版本基準，暫不允許覆寫。');
+      }
+      const available = normalizePublishedProjects(summary).filter(item => item?.project?.id);
+      const requestedId = available.find(item => item.project.id === context.projectId)?.project.id
+        || available.find(item => item.project.id === summary.activeProjectId)?.project.id || available[0]?.project.id;
+      let data = { projects: [], activeProjectId: requestedId };
+      if (requestedId) {
+        const projectResponse = await fetch(`/api/ar-content?projectId=${encodeURIComponent(requestedId)}&ts=${Date.now()}`,
+          { cache: 'no-store', credentials: 'include', headers: { Accept: 'application/json' } });
+        if (!projectResponse.ok) throw new Error(`指定專案讀取失敗 (${projectResponse.status})`);
+        if (projectResponse.headers.get('x-ar-source-blob-sha') !== revision) throw new Error('讀取期間後台版本已改變，請重新讀取。');
+        data = await projectResponse.json();
+      }
+      const remoteProjects = normalizePublishedProjects(data).filter(item => item?.project?.id && Array.isArray(item.buildings));
+      if (requestedId && !remoteProjects.length) throw new Error('指定專案沒有有效的樓層資料。');
+      const nextProjects = remoteProjects.map(item => {
+        const project = createProjectFromPublishedData(item, revision);
+        project._v4Published = cloneData(item);
+        project._v4Base = projectContentFingerprint(project);
+        project._sync.source = storage;
+        return project;
+      });
+      let restored = 0;
+      const preservedDrafts = cachedProjects || v4StateRef.current.projects.filter(project => project.id !== v4StateRef.current.activeProjectId);
+      for (const cached of preservedDrafts) {
+        if (!cached._v4Base || projectContentFingerprint(cached) !== cached._v4Base) {
+          const index = nextProjects.findIndex(project => project.id === cached.id);
+          if (index < 0) nextProjects.push(cached); else nextProjects[index] = cached;
+          restored += 1;
+        }
+      }
+      if (!nextProjects.length) {
+        const firstProject = createProject('新導引專案');
+        firstProject._sync = { baseSha: revision, dirty: false, source: storage, lastSyncedAt: null };
+        firstProject._v4Base = projectContentFingerprint(firstProject);
+        nextProjects.push(firstProject);
+      }
+      const restoredDraft = nextProjects.find(project => !project._v4Base || projectContentFingerprint(project) !== project._v4Base);
+      const selected = restoredDraft || nextProjects.find(project => project.id === context.projectId) || nextProjects[0];
+      const building = selected.buildings.find(item => item.id === context.buildingId) || selected.buildings[0];
+      const floor = building?.floors.find(item => item.id === context.floorId) || building?.floors[0];
+      v4ContextRef.current = { projectId: selected.id, buildingId: building?.id, floorId: floor?.id };
+      isLoadingProjectRef.current = true;
+      setProjects(nextProjects);
+      setActiveProjectId(selected.id);
+      setSystemConfig(cloneData(selected.systemConfig));
+      setBuildings(cloneData(selected.buildings));
+      setActiveBuildingId(building?.id);
+      setActiveFloorId(floor?.id);
+      setSelectedMarkerId(null); setSelectedWaypointId(null); setPathStartNodeId(null);
+      setDeleteUndo(null); setReferenceFloorId(''); setMapTransform({ x: 0, y: 0, scale: 1 });
+      setV4Storage(storage);
+      setV4ProjectOptions(available.map(item => ({ id: item.project.id, name: item.project.name || item.project.id })));
+      setCloudWriteState('idle');
+      setV4Ready(true); setLocalCacheReady(true);
+      setV4Notice(restored
+        ? `已保留 ${restored} 個尚未保存的 V4 路網草稿；請先匯出或保存，再讀取較新的後台資料。`
+        : `已讀取${storage === 'local' ? '本機後台' : 'GitHub'}。編輯先暫存於此瀏覽器，完成後請按「${storage === 'local' ? '保存到本機後台' : '發布 GitHub'}」。`);
+    } catch (error) {
+      if (cachedProjects?.length) {
+        const selected = cachedProjects.find(item => item.id === context.projectId) || cachedProjects[0];
+        isLoadingProjectRef.current = true;
+        setProjects(cachedProjects); setActiveProjectId(selected.id);
+        setSystemConfig(cloneData(selected.systemConfig)); setBuildings(cloneData(selected.buildings));
+        setLocalCacheReady(true); setV4Ready(true);
+      }
+      setV4Notice(`${error.message} 現有草稿不會被覆蓋；可先匯出草稿，再重試讀取。`);
+      setV4LoadFailed(true);
+      setV4ToolsVisible(true);
+      setV4ToolGroup('save');
+    } finally {
+      v4StateRef.current.busy = false;
+      setV4Busy(false);
+    }
+  };
+  const requestV4Reload = () => {
+    if (v4Busy) return;
+    const context = { projectId: activeProjectId, buildingId: activeBuildingId, floorId: activeFloorId };
+    if (v4Dirty) {
+      setConfirmModal({ isOpen: true, title: '重新讀取後台？',
+        message: '重新讀取會捨棄此編輯器尚未保存的路網草稿。請先按「匯出草稿」保留備份，再確認重新讀取。照片頁的拍照草稿不受影響。',
+        onConfirm: () => loadV4Backend(context) });
+    } else loadV4Backend(context);
+  };
+
+  useEffect(() => {
+    if (!v4Integration) return;
+    let cancelled = false;
+    sendV4Message('ar-v4-editor-ready');
+    readIndexedProjectCache(cacheDatabaseName).catch(() => []).then(cachedProjects => {
+      if (!cancelled) loadV4Backend(v4ContextRef.current, { cachedProjects });
+    });
+    const receiveContext = event => {
+      if (event.origin !== window.location.origin || event.source !== window.parent || event.data?.type !== 'ar-v4-editor-context') return;
+      const state = v4StateRef.current;
+      const context = event.data;
+      if (!state.ready) { v4PendingContextRef.current = context; return; }
+      const sameContext = context.projectId === state.activeProjectId && context.buildingId === state.activeBuildingId && context.floorId === state.activeFloorId;
+      if (sameContext && (!context.sourceBlobSha || context.sourceBlobSha === state.revision)) return;
+      if (state.dirty || state.busy) {
+        if (!state.dirty) v4PendingContextRef.current = context;
+        setV4Notice('外層位置或後台版本已改變，但路網草稿尚未保存／正在處理；未自動重讀。請先保存或匯出，再按讀取後台。');
+        return;
+      }
+      loadV4Backend(context);
+    };
+    const protectDraft = event => {
+      if (v4StateRef.current.dirty || v4StateRef.current.busy) { event.preventDefault(); event.returnValue = ''; }
+    };
+    window.addEventListener('message', receiveContext);
+    window.addEventListener('beforeunload', protectDraft);
+    return () => { cancelled = true; window.removeEventListener('message', receiveContext); window.removeEventListener('beforeunload', protectDraft); };
+  }, [v4Integration]);
+
+  useEffect(() => {
+    if (!v4Integration || !v4Ready || v4Busy || !v4PendingContextRef.current) return;
+    const context = v4PendingContextRef.current;
+    v4PendingContextRef.current = null;
+    if (v4Dirty) {
+      setV4Notice('已保留原有未保存的路網草稿，未依外層位置自動重讀。請先保存或匯出，再選擇要編輯的場域。');
+      return;
+    }
+    const state = v4StateRef.current;
+    if (context.projectId === state.activeProjectId && context.buildingId === state.activeBuildingId && context.floorId === state.activeFloorId
+      && (!context.sourceBlobSha || context.sourceBlobSha === state.revision)) return;
+    loadV4Backend(context);
+  }, [v4Integration, v4Ready, v4Busy, v4Dirty]);
+
+  useEffect(() => {
+    if (!v4Integration) return;
+    sendV4Message('ar-v4-editor-status', { dirty: v4Dirty, busy: v4Busy,
+      projectId: activeProjectId, buildingId: activeBuildingId, floorId: activeFloorId });
+  }, [v4Integration, v4Dirty, v4Busy, v4Ready, activeProjectId, activeBuildingId, activeFloorId]);
 
   const applyPublishedProjectData = (data, projectId = null, replaceProjectList = false, sourceBlobSha = null) => {
     const selectedData = selectPublishedProjectData(data, projectId);
@@ -847,6 +1037,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   };
 
   const refreshCloudStatus = async ({ announceErrors = false } = {}) => {
+    if (v4Integration) { requestV4Reload(); return; }
     setCloudSnapshot(previous => ({ ...previous, status: 'checking', error: '' }));
     try {
       const snapshot = await loadCloudProjectSummary();
@@ -868,7 +1059,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   };
 
   useEffect(() => {
-    if (publicOnly) return;
+    if (publicOnly || v4Integration) return;
     let cancelled = false;
 
     const hydrateProjectCache = async () => {
@@ -919,9 +1110,9 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     if (publicOnly || !localCacheReady) return;
     const saveTimer = window.setTimeout(async () => {
       try {
-        await replaceIndexedProjectCache(projects);
-        removeLargeLegacyLocalCache();
-        setSmallLocalCacheValue('arManager_cacheVersion', 'indexeddb-v1');
+        await replaceIndexedProjectCache(projects, cacheDatabaseName);
+        if (!v4Integration) removeLargeLegacyLocalCache();
+        setSmallLocalCacheValue(v4Integration ? 'arV4MapEditor_cacheVersion' : 'arManager_cacheVersion', 'indexeddb-v1');
         localCacheWarningShownRef.current = false;
       } catch (error) {
         console.error('IndexedDB project save error:', error);
@@ -939,11 +1130,11 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
   useEffect(() => {
     if (publicOnly || !localCacheReady || !activeProjectId) return;
-    setSmallLocalCacheValue(AR_ACTIVE_PROJECT_KEY, activeProjectId);
+    setSmallLocalCacheValue(activeProjectCacheKey, activeProjectId);
   }, [activeProjectId, localCacheReady, publicOnly]);
 
   useEffect(() => {
-    if (publicOnly || !localCacheReady) return;
+    if (publicOnly || v4Integration || !localCacheReady) return;
     refreshCloudStatus().catch(() => {
       // The local IndexedDB draft remains usable when the cloud is unavailable.
     });
@@ -1004,7 +1195,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   }, [publicOnly]);
 
   useEffect(() => {
-    if (publicOnly || !localCacheReady) return;
+    if (publicOnly || v4Integration || !localCacheReady) return;
 
     let cancelled = false;
     fetch(`/ar-data.json?ts=${Date.now()}`, { cache: 'no-store' })
@@ -1052,8 +1243,10 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     const nextBuildings = cloneData(activeProject.buildings || createDefaultBuildings());
     setSystemConfig(cloneData(activeProject.systemConfig || createDefaultConfig(activeProject.name)));
     setBuildings(nextBuildings);
-    setActiveBuildingId(nextBuildings[0]?.id);
-    setActiveFloorId(nextBuildings[0]?.floors[0]?.id);
+    const nextBuilding = (v4Integration && nextBuildings.find(item => item.id === v4ContextRef.current.buildingId)) || nextBuildings[0];
+    const nextFloor = (v4Integration && nextBuilding?.floors.find(item => item.id === v4ContextRef.current.floorId)) || nextBuilding?.floors[0];
+    setActiveBuildingId(nextBuilding?.id);
+    setActiveFloorId(nextFloor?.id);
     setSelectedMarkerId(null);
     setSelectedWaypointId(null);
     setReferenceFloorId('');
@@ -1104,6 +1297,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   useEffect(() => { setIsConfirmingDelete(false); }, [selectedMarkerId, selectedWaypointId]);
 
   useEffect(() => {
+    if (v4Integration) return;
     const hasAsked = sessionStorage.getItem('ar_permissions_asked');
     if (!hasAsked) setPermissionsModal(true);
   }, []);
@@ -1721,6 +1915,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
   const handleMapPointerDown = (e) => {
     if (e.button !== undefined && e.button !== 0) return;
+    if (e.target.closest('button, input, select, textarea, label, a, [data-map-control]')) return;
     if (e.target.closest('.marker-pin') || e.target.closest('.waypoint-pin')) return;
     setIsPanning(true);
     setPanStart({ x: e.clientX - mapTransform.x, y: e.clientY - mapTransform.y });
@@ -1757,6 +1952,12 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   };
 
   const handleMapPointerUp = (e) => {
+    if (e.target.closest('button, input, select, textarea, label, a, [data-map-control]')) {
+      setIsPanning(false);
+      setDraggingId(null);
+      if (e.target.hasPointerCapture?.(e.pointerId)) e.target.releasePointerCapture(e.pointerId);
+      return;
+    }
     if (draggingId) setDraggingId(null);
     if (isPanning) {
       setIsPanning(false); e.target.releasePointerCapture(e.pointerId);
@@ -1890,7 +2091,85 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     return stats.floorPlans > 0 || stats.markers > 0 || stats.waypoints > 0 || stats.edges > 0;
   };
 
+  const performV4Save = async () => {
+    if (v4StateRef.current.busy || !v4Ready || v4Storage === 'unknown') return;
+    const expectedSourceBlobSha = activeProject?._sync?.baseSha;
+    if (!expectedSourceBlobSha) {
+      setV4Notice('尚無後台版本基準。請先匯出草稿，再讀取後台資料。');
+      return;
+    }
+    const updatedAt = new Date().toISOString();
+    const payload = {
+      ...(activeProject._v4Published || {}),
+      version: activeProject._v4Published?.version || '7.0',
+      project: { ...(activeProject._v4Published?.project || {}), id: activeProjectId,
+        name: systemConfig.projectName || activeProject.name,
+        description: activeProject.description || '', updatedAt },
+      systemConfig: cloneData(systemConfig), buildings: cloneData(buildings)
+    };
+    const draftProject = { ...activeProject, name: payload.project.name, systemConfig: payload.systemConfig,
+      buildings: payload.buildings, updatedAt };
+    const draftProjects = projects.map(project => project.id === activeProjectId ? draftProject : project);
+    v4StateRef.current.busy = true;
+    setV4Busy(true); setCloudWriteState('saving');
+    try {
+      // A failed write must leave a recoverable V4-only draft, never a V3 cache overwrite.
+      await replaceIndexedProjectCache(draftProjects, cacheDatabaseName);
+      const response = await fetch('/api/save-ar-content', { method: 'POST', credentials: 'include',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-AR-Save-Contract': 'ar-project-collection-v4' },
+        body: JSON.stringify({ payload, expectedSourceBlobSha }) });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.ok !== true) {
+        const error = new Error(result.error || `保存失敗 (${response.status})`);
+        error.code = response.status === 409 ? 'SYNC_CONFLICT' : result.code;
+        throw error;
+      }
+      const revision = result.sourceBlobSha;
+      if (!(v4Storage === 'local' ? /^[a-f\d]{64}$/i : /^[a-f\d]{40}$/i).test(revision || '')) throw new Error('後台回應成功但缺少有效新版本，請先保留草稿並重新讀取確認。');
+      const savedProject = { ...draftProject, _v4Published: payload,
+        _v4Base: projectContentFingerprint(draftProject),
+        _sync: { baseSha: revision, dirty: false, source: v4Storage, lastSyncedAt: updatedAt } };
+      const savedProjects = draftProjects.map(project => project.id === activeProjectId ? savedProject : {
+        ...project, _sync: { ...normalizeProjectSync(project), baseSha: project._sync?.baseSha === expectedSourceBlobSha ? revision : project._sync?.baseSha }
+      });
+      setProjects(savedProjects);
+      let cacheWarning = '';
+      try { await replaceIndexedProjectCache(savedProjects, cacheDatabaseName); }
+      catch { cacheWarning = ' 瀏覽器草稿版本更新失敗；後台已保存，請先匯出備份後重新讀取。'; }
+      setCloudWriteState('success');
+      setV4Notice((v4Storage === 'local'
+        ? '路網、節點與 AR 點位已保存到本機後台；V4 位置與校正會重新讀取。尚未同步 GitHub。'
+        : '路網、節點與 AR 點位已發布 GitHub；V4 將重新讀取後台資料。網站部署是否完成仍需另外確認。') + cacheWarning);
+      const remainingDirty = savedProjects.some(project => !project._v4Base || projectContentFingerprint(project) !== project._v4Base);
+      v4StateRef.current = { ...v4StateRef.current, dirty: remainingDirty, busy: false, revision };
+      sendV4Message('ar-v4-editor-status', { dirty: remainingDirty, busy: false, projectId: activeProjectId, buildingId: activeBuildingId, floorId: activeFloorId });
+      sendV4Message('ar-v4-editor-saved', { projectId: activeProjectId, buildingId: activeBuildingId, floorId: activeFloorId, sourceBlobSha: revision });
+    } catch (error) {
+      setCloudWriteState(error.code === 'SYNC_CONFLICT' ? 'conflict' : 'error');
+      setV4Notice(error.code === 'SYNC_CONFLICT'
+        ? '後台版本已更新，已停止保存。路網草稿完整保留；請先「匯出草稿」，再讀取後台並核對／重做變更，不會強制覆寫。'
+        : `${error.message} 路網草稿仍保留；請匯出草稿備份後重試。`);
+    } finally {
+      v4StateRef.current.busy = false;
+      setV4Busy(false);
+    }
+  };
+  const saveV4Project = () => {
+    if (v4Busy || !v4Ready || v4Storage === 'unknown') return;
+    const stats = getProjectContentStats(buildings);
+    if (v4Storage === 'local') {
+      setConfirmModal({ isOpen: true, title: '確認保存到本機後台',
+        message: `將保存「${systemConfig.projectName}」整個專案；目前位置為「${currentBuilding?.name || ''} / ${currentFloor?.name || ''}」。內容含 ${stats.floorPlans} 張平面圖、${stats.markers} 個 AR 點位、${stats.waypoints} 個節點與 ${stats.edges} 條連線。保存後會更新 V4，尚未同步 GitHub；若後台版本變動將停止並保留草稿。`,
+        onConfirm: performV4Save });
+      return;
+    }
+    setConfirmModal({ isOpen: true, title: '確認發布到 GitHub',
+      message: `即將發布「${systemConfig.projectName}」的 ${stats.floorPlans} 張平面圖、${stats.markers} 個 AR 點位、${stats.waypoints} 個節點與 ${stats.edges} 條連線。既有現場照片亦包含於專案資料；若儲存庫公開，內容可被公開存取並保留於 Git 歷史。確認取得授權後才發布；版本衝突將停止且保留草稿。`,
+      onConfirm: performV4Save });
+  };
+
   const saveLocalDraft = async () => {
+    if (v4Integration) { saveV4Project(); return; }
     if (!activeProjectId || !activeProject) return;
     const updatedAt = new Date().toISOString();
     const localProject = {
@@ -2036,6 +2315,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   };
 
   const saveActiveProject = async () => {
+    if (v4Integration) { saveV4Project(); return; }
     if (!canSyncProjectToCloud(buildings)) {
       setAlertModal({
         isOpen: true,
@@ -2075,6 +2355,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   };
 
   const openCloudProjectList = async () => {
+    if (v4Integration) { requestV4Reload(); return; }
     setCloudProjectModal({ isOpen: true, isLoading: true, projects: [], error: '', revision: null });
     try {
       const loadJson = async (url) => {
@@ -2175,6 +2456,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       onSubmit: (name) => {
         if (!name) return;
         const project = createProject(name);
+        if (v4Integration) project._sync.baseSha = activeProject?._sync?.baseSha;
         setProjects(prev => [...prev, project]);
         setActiveProjectId(project.id);
         setActiveTab('map');
@@ -2297,7 +2579,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     resetFloorEditingState();
     setAlertModal({
       isOpen: true,
-      message: `「${currentBuilding?.name || '目前場域'} / ${currentFloor.name || '目前樓層'}」的繪製內容已從後台草稿清除；平面圖、比例尺與其他樓層資料均已保留。如需套用到民眾端，請再按「發布 GitHub」。`
+      message: `「${currentBuilding?.name || '目前場域'} / ${currentFloor.name || '目前樓層'}」的繪製內容已從後台草稿清除；平面圖、比例尺與其他樓層資料均已保留。${v4Integration ? `尚未更新後台；請核對後再按「${v4Storage === 'local' ? '保存到本機後台' : '發布 GitHub'}」。` : '如需套用到民眾端，請再按「發布 GitHub」。'}`
     });
   };
 
@@ -2325,8 +2607,10 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-');
     const fileName = `${exportName}_ar_config_v7_${timestamp}.json`;
     const payload = {
+      ...(v4Integration ? activeProject?._v4Published || {} : {}),
       version: '7.0',
       project: {
+        ...(v4Integration ? activeProject?._v4Published?.project || {} : {}),
         id: activeProjectId,
         name: systemConfig.projectName || activeProject?.name,
         description: activeProject?.description || '',
@@ -2398,6 +2682,12 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const activeProjectSync = normalizeProjectSync(activeProject || {});
   const activeRemoteProject = cloudSnapshot.projects.find(item => item?.project?.id === activeProjectId);
   const syncStatus = (() => {
+    if (v4Integration) {
+      if (v4Busy) return { tone: 'blue', label: '正在處理後台資料', detail: '請勿關閉頁面。' };
+      if (cloudWriteState === 'conflict') return { tone: 'red', label: '版本衝突・草稿保留', detail: v4Notice };
+      if (v4Storage === 'unknown') return { tone: 'amber', label: '尚未連接後台', detail: v4Notice };
+      return { tone: v4Dirty ? 'amber' : 'green', label: v4Dirty ? '路網有未保存變更' : `${v4Storage === 'local' ? '本機後台' : 'GitHub'}版本已載入`, detail: v4Notice };
+    }
     if (cloudWriteState === 'saving') {
       return { tone: 'blue', label: '正在發布 GitHub', detail: '正在驗證版本並提交，請勿關閉頁面。' };
     }
@@ -2796,6 +3086,65 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     </div>
   );
 
+  // Expanding a tool group is presentation only. Modes change only via an
+  // explicit action so opening floor/save tools never silently stops a task.
+  const setV4EditingMode = (mode) => {
+    setIsPathMode(mode === 'path');
+    setIsAddMode(mode === 'marker');
+    setIsToggleShaftMode(mode === 'shaft');
+    setIsMeasuring(mode === 'measure');
+    setIsNavTestMode(mode === 'test');
+    setPathStartNodeId(null);
+    setSelectedMarkerId(null);
+    setSelectedWaypointId(null);
+    setIsConfirmingDelete(false);
+    setDraggingId(null);
+    setIsPanning(false);
+    nodePointerStartRef.current = null;
+    setHoverPos(null);
+    setMeasurePoints([]);
+    setNavTestPoints([]);
+    setNavTestPath([]);
+    setV4ToolGroup(null);
+    const collapseForMap = mode && window.matchMedia('(max-width: 767px)').matches;
+    if (collapseForMap) {
+      setV4ToolsVisible(false);
+    }
+    requestAnimationFrame(() => {
+      if (collapseForMap) wrapperRef.current?.scrollIntoView({ block: 'start', behavior: 'auto' });
+      (mode ? v4EndModeRef : v4ToolsToggleRef).current?.focus({ preventScroll: true });
+    });
+  };
+  const v4Mode = isPathMode ? 'path' : isAddMode ? 'marker' : isToggleShaftMode ? 'shaft' : isMeasuring ? 'measure' : isNavTestMode ? 'test' : null;
+  const v4ModeName = ({ path: '路徑節點編輯', marker: 'AR 點位編輯', shaft: '跨樓層連通設定', measure: '尺規量測', test: '路網測試' })[v4Mode] || '瀏覽地圖';
+  const v4ModeHint = isPathMode
+    ? pathStartNodeId ? '已選連線起點；點下一個節點或空白處延伸。拖曳節點可移位。' : '點空白處新增節點；依序點兩個節點連線。拖曳節點可移位。'
+    : isAddMode ? '點空白處新增 AR 點位；點選既有點位編輯，拖曳可移位。'
+    : isToggleShaftMode ? '點既有節點，再於設定面板勾選可連通樓層。取消連通請關閉面板內的開關。'
+    : isMeasuring ? '在地圖點兩處，顯示實際距離。比例尺請先在「樓層與底圖」校正。'
+    : isNavTestMode ? navTestPoints.length === 0 ? '第 1 步：點地圖設定起點。' : navTestPoints.length === 1 ? `第 2 步：點地圖設定終點。起點在 ${navTestPoints[0].fName || '原樓層'}；可先切換樓層。` : navTestPath.length ? '已顯示藍色路徑；可切換樓層檢查跨層路線，或重新選點。' : '尚未找到可連通路徑；請檢查節點、連線與跨樓層設定。'
+    : '先展開功能分類選擇工具。拖曳空白處可移動地圖。';
+  const openV4Bounds = () => setBoundsModal({ isOpen: true, blX: currentBounds.blX, blY: currentBounds.blY, trX: currentBounds.trX, trY: currentBounds.trY, mapUpHeading: currentFloor?.mapUpHeading ?? null, mapUpHeadingAccuracy: currentFloor?.mapUpHeadingAccuracy ?? null, mapUpHeadingCapturedAt: currentFloor?.mapUpHeadingCapturedAt ?? null });
+  const selectV4ExistingNode = (id, kind) => {
+    if (!id) return;
+    setV4EditingMode(kind === 'marker' ? 'marker' : 'path');
+    if (kind === 'marker') setSelectedMarkerId(id);
+    else setSelectedWaypointId(id);
+    requestAnimationFrame(() => v4InspectorCloseRef.current?.focus({ preventScroll: true }));
+  };
+  const renderV4ToolGroup = (id, title, summary, Icon, children) => (
+    <section className={`v4-tool-group ${v4ToolGroup === id ? 'is-open' : ''}`} data-tool-group={id}>
+      <h3>
+        <button type="button" id={`v4-tool-${id}`} className="v4-tool-toggle" aria-expanded={v4ToolGroup === id} aria-controls={`v4-panel-${id}`} onClick={() => setV4ToolGroup(previous => previous === id ? null : id)}>
+          <Icon aria-hidden="true" />
+          <span><strong>{title}</strong><small>{summary}</small></span>
+          <ChevronDown aria-hidden="true" className="v4-tool-chevron" />
+        </button>
+      </h3>
+      <div id={`v4-panel-${id}`} className="v4-tool-panel" role="region" aria-labelledby={`v4-tool-${id}`} hidden={v4ToolGroup !== id}>{children}</div>
+    </section>
+  );
+
   if (publicOnly) {
     return (
       <div className="flex h-[100dvh] w-full bg-slate-950 text-slate-200 font-sans overflow-hidden selection:bg-cyan-500/30 relative">
@@ -2805,7 +3154,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   }
 
   return (
-    <div className={`${embedded ? 'flex min-h-[760px] w-full' : 'flex h-[100dvh] w-full'} bg-slate-950 text-slate-200 font-sans overflow-hidden selection:bg-cyan-500/30 relative`}>
+    <>
+    <div aria-busy={v4Integration && v4Busy} onPointerDownCapture={(event) => { if (v4Integration && v4Busy) { event.preventDefault(); event.stopPropagation(); } }} onKeyDownCapture={(event) => { if (v4Integration && v4Busy) { event.preventDefault(); event.stopPropagation(); } }} className={`${v4Integration ? 'v4-map-editor ' : ''}${embedded ? 'flex min-h-[760px] w-full' : 'flex h-[100dvh] w-full'} bg-slate-950 text-slate-200 font-sans overflow-hidden selection:bg-cyan-500/30 relative`}>
       {!embedded && isMobileMenuOpen && ( <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-40 md:hidden" onClick={() => setIsMobileMenuOpen(false)} /> )}
 
       {!embedded && <div className={`fixed inset-y-0 left-0 z-50 w-[82vw] max-w-xs md:w-64 bg-slate-900 border-r border-slate-800 flex flex-col justify-between shrink-0 transition-transform duration-300 shadow-2xl md:relative md:translate-x-0 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
@@ -2840,17 +3190,91 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       {activeTab === 'export' && renderExportView()}
 
       {activeTab === 'map' && (
-        <div className="flex-1 flex flex-col relative overflow-hidden bg-slate-950 w-full">
+        <div className={`${v4Integration ? 'v4-editor-workspace ' : ''}flex-1 flex flex-col relative overflow-hidden bg-slate-950 w-full`}>
 
-          <div className="absolute top-3 left-2 right-2 md:top-4 md:left-4 md:right-56 lg:right-72 z-40 flex flex-wrap items-center gap-2 bg-slate-900/90 backdrop-blur-md border border-slate-700 p-2 rounded-xl shadow-lg overflow-visible">
+          {v4Integration && <>
+            <header className="v4-editor-context" data-map-control="context" aria-label="目前路網編輯位置">
+              <div className="v4-editor-location">
+                <Layers aria-hidden="true" />
+                <div><small>{systemConfig.projectName || activeProject?.name || '尚未選擇專案'} · {currentBuilding?.name || '尚未選擇建物'}</small><strong>{currentFloor?.name || '尚未選擇樓層'}</strong></div>
+                <button type="button" className="v4-tool-button" onClick={() => { setV4ToolsVisible(true); setV4ToolGroup('floor'); }}><Layers aria-hidden="true" />切換樓層</button>
+              </div>
+              <div className="v4-editor-mode" role="status">
+                <button ref={v4ToolsToggleRef} type="button" className="v4-tool-button" aria-expanded={v4ToolsVisible} aria-controls="v4-editor-tools" onClick={() => setV4ToolsVisible(visible => !visible)}><Menu aria-hidden="true" />{v4ToolsVisible ? '收合工具' : '工具選單'}</button>
+                <span className={`v4-mode-badge ${v4Mode ? 'is-active' : ''}`}>{v4ModeName}</span>
+                <span className={`v4-save-state ${v4Dirty || v4LoadFailed ? 'is-dirty' : ''}`}>{v4Busy ? '後台處理中' : v4LoadFailed ? '讀取失敗：請至資料保存重試' : !v4Ready ? '正在連線' : v4Dirty ? '有未保存變更' : '無未保存變更'}</span>
+                {v4Mode && <button ref={v4EndModeRef} type="button" className="v4-tool-button v4-end-mode" onClick={() => setV4EditingMode(null)}><X aria-hidden="true" />結束操作</button>}
+              </div>
+              <p className="v4-mode-guidance">{v4ModeHint}</p>
+            </header>
+            <aside id="v4-editor-tools" className="v4-editor-tools" data-map-control="tools" aria-label="路網功能分類" hidden={!v4ToolsVisible}>
+              {renderV4ToolGroup('floor', '樓層與底圖', `${currentFloor?.name || '選樓層'} · 切換、上傳、比例尺`, Layers, <>
+                <label className="v4-tool-field">專案<select aria-label="編輯專案" disabled={v4ActiveDirty || v4Busy} value={activeProjectId} onChange={(e) => !projects.some(project => project.id === e.target.value) ? loadV4Backend({ projectId: e.target.value }) : setActiveProjectId(e.target.value)}>
+                  {[...v4ProjectOptions, ...projects.filter(project => !v4ProjectOptions.some(option => option.id === project.id))].map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
+                </select></label>
+                {v4ActiveDirty && <p>請先保存或匯出目前專案，再切換專案。樓層可以直接切換，草稿會保留。</p>}
+                <label className="v4-tool-field">建物<select aria-label="編輯建物" value={activeBuildingId} onChange={(e) => { setSelectedMarkerId(null); setSelectedWaypointId(null); setDraggingId(null); setPathStartNodeId(null); setHoverPos(null); setReferenceFloorId(''); setActiveBuildingId(e.target.value); }}>{buildings.map(building => <option key={building.id} value={building.id}>{building.name}</option>)}</select></label>
+                <label className="v4-tool-field">目前編輯樓層<select aria-label="切換目前編輯樓層" title="切換目前編輯樓層" value={activeFloorId} onChange={(e) => switchEditingFloor(e.target.value)}>{sortedCurrentFloors.map(floor => <option key={floor.id} value={floor.id}>{floor.name}</option>)}</select></label>
+                <div className="v4-tool-actions"><button type="button" className="v4-tool-button" aria-label="切換到上一層" disabled={!higherFloor} onClick={() => higherFloor && switchEditingFloor(higherFloor.id)}><ArrowUp />上一層</button><button type="button" className="v4-tool-button" aria-label="切換到下一層" disabled={!lowerFloor} onClick={() => lowerFloor && switchEditingFloor(lowerFloor.id)}><ArrowDown />下一層</button></div>
+                <div className="v4-tool-actions"><button type="button" className="v4-tool-button" onClick={addBuilding}><Plus />新增建物</button><button type="button" className="v4-tool-button" title="新增樓層" disabled={!currentBuilding} onClick={addFloor}><Plus />新增樓層</button></div>
+                <details className="v4-tool-secondary"><summary>新增專案</summary><button type="button" className="v4-tool-button" title="新增專案" onClick={addProject} disabled={v4Dirty || v4Busy || !v4Ready}><Plus />建立新專案</button></details>
+                {currentFloor && <>
+                  <div className="v4-tool-divider" />
+                  <span className="v4-tool-label">平面圖預覽</span>
+                  <div className="v4-tool-actions" role="group" aria-label="切換平面圖預覽"><button type="button" className="v4-tool-button" aria-pressed={floorImagePreviewMode === 'overview'} onClick={() => setFloorImagePreviewMode('overview')}>無字圖{!currentFloor.imageUrl && '（未上傳）'}</button><button type="button" className="v4-tool-button" aria-pressed={floorImagePreviewMode === 'navigation'} onClick={() => setFloorImagePreviewMode('navigation')}>有字圖{!currentFloor.navigationImageUrl && '（未上傳）'}</button></div>
+                  <input type="file" ref={fileInputRef} onChange={handleFloorPlanUpload} className="hidden" accept="image/*" />
+                  <input type="file" ref={navigationImageInputRef} onChange={handleNavigationFloorPlanUpload} className="hidden" accept="image/*" />
+                  <div className="v4-tool-actions"><button type="button" className="v4-tool-button" onClick={() => fileInputRef.current?.click()}><Upload />上傳無字圖</button><button type="button" className="v4-tool-button" onClick={() => navigationImageInputRef.current?.click()}><ImageIcon />上傳有字圖</button></div>
+                  <p>無字圖是路網編輯底圖；有字圖供導覽顯示。兩張圖需對齊，切換預覽不會更動節點。</p>
+                  <button type="button" className="v4-tool-button" title="座標、比例尺與方向基準設定" onClick={openV4Bounds}><Target />座標、比例尺與方向基準設定</button>
+                  <button type="button" className="v4-tool-button" title="尺規量測" disabled={!hasCurrentFloorPlan} aria-pressed={isMeasuring} onClick={() => setV4EditingMode(isMeasuring ? null : 'measure')}><Ruler />尺規量測</button>
+                  <label className="v4-tool-field">參考其他樓層<select aria-label="透視其他樓層" value={referenceFloorId} onChange={(e) => setReferenceFloorId(e.target.value)}><option value="">關閉透視</option>{buildings.flatMap(building => building.floors.filter(floor => floor.id !== activeFloorId).map(floor => <option key={floor.id} value={floor.id}>{building.name}－{floor.name}</option>))}</select></label>
+                  <details className="v4-tool-danger"><summary>樓層刪除（需確認）</summary><p>會刪除本層資料；每棟至少保留一層。</p><button type="button" className="v4-tool-button" title="刪除目前樓層" disabled={!currentFloor || currentBuilding.floors.length <= 1} onClick={requestDeleteCurrentFloor}><Trash2 />刪除目前樓層</button></details>
+                </>}
+              </>)}
+              {renderV4ToolGroup('path', '路徑節點', `${currentWaypoints.length} 個節點 · ${currentEdges.length} 條連線`, Route, <>
+                <p>開始後點空白處新增節點，依序點兩個節點建立連線；拖曳既有節點調整位置。點選節點或從下方清單開啟設定。</p>
+                <button type="button" className="v4-tool-button v4-tool-primary" title="路徑建置與節點編輯" disabled={!hasCurrentFloorPlan} aria-pressed={isPathMode} onClick={() => setV4EditingMode(isPathMode ? null : 'path')}><Route />路徑節點</button>
+                <label className="v4-tool-field">編輯既有路徑節點<select aria-label="選擇路徑節點編輯" value="" disabled={!currentWaypoints.length} onChange={(e) => selectV4ExistingNode(e.target.value, 'path')}><option value="">選擇節點，開啟設定…</option>{currentWaypoints.map((waypoint, index) => <option key={waypoint.id} value={waypoint.id}>{waypoint.guideTitle || `未命名節點 ${index + 1}`}</option>)}</select></label>
+                <button type="button" className="v4-tool-button" title="指定跨樓層轉折點 (點擊節點切換)" disabled={!hasCurrentFloorPlan} aria-pressed={isToggleShaftMode} onClick={() => setV4EditingMode(isToggleShaftMode ? null : 'shaft')}><ArrowUpDown />設定跨樓層連通點</button>
+                <p>樓梯／電梯先設為跨樓層點，再勾選連通樓層；各樓層都需接上路網。</p>
+                {isPathMode && pathStartNodeId && <button type="button" className="v4-tool-button" onClick={() => { setPathStartNodeId(null); setHoverPos(null); }}><X />取消目前連線起點</button>}
+                {!hasCurrentFloorPlan && <p className="v4-tool-warning">請先到「樓層與底圖」上傳無字圖。</p>}
+              </>)}
+              {renderV4ToolGroup('marker', 'AR 點位', `${currentMarkers.length} 個點位 · 目的地與提示`, MapPin, <>
+                <p>開始後點地圖空白處新增 AR 點位；點選既有點位編輯代號、標題和方向，拖曳可移位。</p>
+                <button type="button" className="v4-tool-button v4-tool-primary" title="AR 點位建置與編輯" disabled={!hasCurrentFloorPlan} aria-pressed={isAddMode} onClick={() => setV4EditingMode(isAddMode ? null : 'marker')}><MapPin />AR 點位</button>
+                <label className="v4-tool-field">編輯既有 AR 點位<select aria-label="選擇 AR 點位編輯" value="" disabled={!currentMarkers.length} onChange={(e) => selectV4ExistingNode(e.target.value, 'marker')}><option value="">選擇點位，開啟設定…</option>{currentMarkers.map(marker => <option key={marker.id} value={marker.id}>{marker.code || '未編號'} · {marker.title || '未命名點位'}</option>)}</select></label>
+                <p>「完成設定」只關閉編輯面板；請再到「資料保存」保存。照片辨識測試請回 V4「相機」頁籤。</p>
+                {!hasCurrentFloorPlan && <p className="v4-tool-warning">請先到「樓層與底圖」上傳無字圖。</p>}
+              </>)}
+              {renderV4ToolGroup('test', '路網測試', isNavTestMode ? `已選 ${navTestPoints.length}／2 個測試點` : '起點 → 終點 · 檢查連通', Activity, <>
+                <p>開始後先在地圖點起點，再點終點；系統會吸附至路網並顯示藍色路徑。跨樓層測試可選完起點後，從「切換樓層」選另一層再點終點。</p>
+                <button type="button" className="v4-tool-button v4-tool-primary" title="路網分析測試" disabled={!hasCurrentFloorPlan} aria-pressed={isNavTestMode} onClick={() => setV4EditingMode(isNavTestMode ? null : 'test')}><Activity />{isNavTestMode ? '退出路網測試' : '路網測試'}</button>
+                {isNavTestMode && <><p role="status">{v4ModeHint}</p><button type="button" className="v4-tool-button" onClick={() => { setNavTestPoints([]); setNavTestPath([]); }}><RefreshCw />重新選擇起終點</button></>}
+                <p>這是路線連通模擬，不會啟動相機，也不會代表現場定位已通過。</p>
+                {!hasCurrentFloorPlan && <p className="v4-tool-warning">請先到「樓層與底圖」上傳無字圖。</p>}
+              </>)}
+              {renderV4ToolGroup('save', '資料保存', v4Dirty ? '有未保存變更 · 請完成保存' : v4Storage === 'local' ? '本機後台 · 尚未同步 GitHub' : '後台讀取、保存與匯出', Save, <>
+                <div className="v4-editor-notice" role="status" data-testid="v4-editor-notice"><strong>{v4Storage === 'local' ? '本機後台' : v4Storage === 'github' ? 'GitHub 後台' : '環境確認中'}</strong><p>{v4Notice}</p></div>
+                <p>編輯會自動暫存於這個瀏覽器，但尚未更新後台。「完成設定」不是保存；版本衝突時會保留草稿。</p>
+                <button type="button" className="v4-tool-button v4-tool-primary" onClick={saveActiveProject} disabled={cloudWriteState === 'saving' || !v4Ready || v4Busy || v4Storage === 'unknown'}><Upload />{v4Storage === 'local' ? '保存到本機後台' : v4Storage === 'github' ? '發布 GitHub' : '保存（待連線）'}</button>
+                <button type="button" className="v4-tool-button" onClick={openCloudProjectList} disabled={v4Busy}><Download />{v4Storage === 'local' ? '讀取本機後台' : v4Storage === 'github' ? '讀取 GitHub 後台' : '重試讀取後台'}</button>
+                <button type="button" className="v4-tool-button" onClick={exportJSON}><Download />匯出草稿</button>
+                <details className="v4-tool-danger"><summary>清除圖面內容（需確認）</summary><p>會移除本層節點、AR 點位及連線，包含被刪節點的現場照片。平面圖保留，保存後才更新後台。</p><button type="button" className="v4-tool-button" title="清除目前樓層的 AR 點位、路網節點與連線，保留平面圖" disabled={!currentFloor || currentMarkers.length + currentWaypoints.length + currentEdges.length === 0} onClick={requestClearCurrentFloorDrawing}><Trash2 />清除本層</button>{deleteUndo?.projectId === activeProjectId && <button type="button" className="v4-tool-button" onClick={restoreLastDelete}><Undo2 />復原最近刪除</button>}</details>
+              </>)}
+            </aside>
+          </>}
+
+          {!v4Integration && <div className="absolute top-3 left-2 right-2 md:top-4 md:left-4 md:right-56 lg:right-72 z-40 flex flex-wrap items-center gap-2 bg-slate-900/90 backdrop-blur-md border border-slate-700 p-2 rounded-xl shadow-lg overflow-visible">
             {!embedded && <button className="md:hidden text-slate-400 hover:text-white mr-1" onClick={() => setIsMobileMenuOpen(true)}><Menu className="w-5 h-5" /></button>}
             <div className="flex items-center">
               <Target className="w-4 h-4 text-cyan-400 ml-1 mr-2"/>
-              <select className="bg-transparent text-cyan-300 text-sm font-bold focus:outline-none max-w-[120px] md:max-w-[150px] truncate" value={activeProjectId} onChange={(e) => setActiveProjectId(e.target.value)}>
-                {projects.map(project => <option key={project.id} value={project.id} className="bg-slate-900">{project.name}</option>)}
+              <select aria-label="編輯專案" disabled={v4Integration && (v4ActiveDirty || v4Busy)} className="bg-transparent text-cyan-300 text-sm font-bold focus:outline-none max-w-[120px] md:max-w-[150px] truncate" value={activeProjectId} onChange={(e) => v4Integration && !projects.some(project => project.id === e.target.value) ? loadV4Backend({ projectId: e.target.value }) : setActiveProjectId(e.target.value)}>
+                {(v4Integration ? [...v4ProjectOptions, ...projects.filter(project => !v4ProjectOptions.some(option => option.id === project.id))] : projects).map(project => <option key={project.id} value={project.id} className="bg-slate-900">{project.name}</option>)}
               </select>
-              <button onClick={addProject} className="ml-1 px-1 text-cyan-400 hover:text-cyan-300 transition-colors" title="新增專案"><Plus className="w-4 h-4"/></button>
-              <button onClick={saveLocalDraft} className="px-1 text-green-400 hover:text-green-300 transition-colors" title="儲存本機 IndexedDB 草稿"><HardDrive className="w-4 h-4"/></button>
+              <button onClick={addProject} disabled={v4Integration && (v4Dirty || v4Busy || !v4Ready)} className="ml-1 px-1 text-cyan-400 hover:text-cyan-300 transition-colors disabled:opacity-40" title="新增專案"><Plus className="w-4 h-4"/></button>
+              {!v4Integration && <button onClick={saveLocalDraft} className="px-1 text-green-400 hover:text-green-300 transition-colors" title="儲存本機 IndexedDB 草稿"><HardDrive className="w-4 h-4"/></button>}
             </div>
             <button
               type="button"
@@ -2865,7 +3289,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             <div className="w-px h-5 bg-slate-700 mx-1"></div>
             <div className="flex items-center">
               <Building className="w-4 h-4 text-slate-500 ml-1 mr-2"/>
-              <select className="bg-transparent text-slate-200 text-sm font-medium focus:outline-none max-w-[110px] md:max-w-[120px] truncate" value={activeBuildingId} onChange={(e) => setActiveBuildingId(e.target.value)}>
+              <select aria-label="編輯建物" className="bg-transparent text-slate-200 text-sm font-medium focus:outline-none max-w-[110px] md:max-w-[120px] truncate" value={activeBuildingId} onChange={(e) => setActiveBuildingId(e.target.value)}>
                 {buildings.map(b => <option key={b.id} value={b.id} className="bg-slate-900">{b.name}</option>)}
               </select>
               <button onClick={addBuilding} className="ml-1 px-1 text-cyan-400 hover:text-cyan-300 transition-colors"><Plus className="w-4 h-4"/></button>
@@ -2893,27 +3317,25 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 )))}
               </select>
             </div>
-          </div>
+          </div>}
 
-          <div className="absolute left-2 right-2 bottom-3 md:left-auto md:right-4 md:bottom-auto md:top-4 z-40 flex flex-row md:flex-col gap-2 overflow-x-auto md:overflow-visible bg-slate-950/60 md:bg-transparent backdrop-blur md:backdrop-blur-0 p-2 md:p-0 rounded-xl md:rounded-none border border-slate-800/70 md:border-0">
+          {!v4Integration && <div className="absolute left-2 right-2 bottom-3 md:left-auto md:right-4 md:bottom-auto md:top-4 z-40 flex flex-row md:flex-col gap-2 overflow-x-auto md:overflow-visible bg-slate-950/60 md:bg-transparent backdrop-blur md:backdrop-blur-0 p-2 md:p-0 rounded-xl md:rounded-none border border-slate-800/70 md:border-0">
             <button
               onClick={openCloudProjectList}
               className="flex shrink-0 items-center justify-center gap-2 h-10 px-3 rounded-xl transition-all shadow-lg font-bold text-xs bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30"
-              title="以 GitHub 最新資料更新本機 IndexedDB"
+              title={v4Integration ? '讀取後台最新路網；未保存的草稿會先要求確認' : '以 GitHub 最新資料更新本機 IndexedDB'}
             >
               <Download className="w-5 h-5" />
-              <span className="md:hidden">拉取</span>
-              <span className="hidden md:inline">GitHub 更新本機</span>
+              {v4Integration ? <span>{v4Storage === 'local' ? '讀取本機後台' : v4Storage === 'github' ? '讀取 GitHub 後台' : '重試讀取後台'}</span> : <><span className="md:hidden">拉取</span><span className="hidden md:inline">GitHub 更新本機</span></>}
             </button>
             <button
               onClick={saveActiveProject}
-              disabled={cloudWriteState === 'saving'}
+              disabled={cloudWriteState === 'saving' || (v4Integration && (!v4Ready || v4Busy || v4Storage === 'unknown'))}
               className="flex shrink-0 items-center justify-center gap-2 h-10 px-3 rounded-xl transition-all shadow-lg font-bold text-xs bg-green-500/10 hover:bg-green-500/20 text-green-300 border border-green-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
-              title="版本檢查通過後，將本機 IndexedDB 草稿發布到 GitHub"
+              title={v4Integration ? (v4Storage === 'local' ? '寫入本機後台，不會發布 GitHub' : '確認授權後發布 GitHub') : '版本檢查通過後，將本機 IndexedDB 草稿發布到 GitHub'}
             >
               <Upload className="w-5 h-5" />
-              <span className="md:hidden">發布</span>
-              <span className="hidden md:inline">發布 GitHub</span>
+              {v4Integration ? <span>{v4Storage === 'local' ? '保存到本機後台' : v4Storage === 'github' ? '發布 GitHub' : '保存（待連線）'}</span> : <><span className="md:hidden">發布</span><span className="hidden md:inline">發布 GitHub</span></>}
             </button>
             <button
               onClick={exportJSON}
@@ -2921,8 +3343,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               title="下載目前專案的 AR JSON 配置檔"
             >
               <Download className="w-5 h-5" />
-              <span className="md:hidden">JSON</span>
-              <span className="hidden md:inline">下載JSON</span>
+              {v4Integration ? <span>匯出草稿</span> : <><span className="md:hidden">JSON</span><span className="hidden md:inline">下載JSON</span></>}
             </button>
             <button
               onClick={requestClearCurrentFloorDrawing}
@@ -2951,12 +3372,14 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 </button>
                 <button onClick={() => { setIsPathMode(!isPathMode); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setDraggingId(null); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isPathMode ? 'bg-orange-500 text-white shadow-[0_0_15px_rgba(249,115,22,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-orange-400 hover:bg-slate-800'}`} title="路徑建置與節點編輯">
                   {isPathMode ? <X className="w-5 h-5" /> : <Route className="w-5 h-5" />}
+                  {v4Integration && <span>路徑節點</span>}
                 </button>
                 <button onClick={() => { setIsMeasuring(!isMeasuring); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsPathMode(false); setMeasurePoints([]); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isMeasuring ? 'bg-purple-500 text-white shadow-[0_0_15px_rgba(168,85,247,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-purple-400 hover:bg-slate-800'}`} title="尺規量測">
                   {isMeasuring ? <X className="w-5 h-5" /> : <Ruler className="w-5 h-5" />}
                 </button>
                 <button onClick={() => { setIsAddMode(!isAddMode); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsMeasuring(false); setIsPathMode(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setDraggingId(null); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isAddMode ? 'bg-cyan-500 text-slate-950 shadow-[0_0_15px_rgba(6,182,212,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-cyan-400 hover:bg-slate-800'}`} title="AR 點位建置與編輯">
                   {isAddMode ? <X className="w-5 h-5" /> : <MapPin className="w-5 h-5" />}
+                  {v4Integration && <span>AR 點位</span>}
                 </button>
                 <button onClick={() => setBoundsModal({ isOpen: true, blX: currentBounds.blX, blY: currentBounds.blY, trX: currentBounds.trX, trY: currentBounds.trY, mapUpHeading: currentFloor?.mapUpHeading ?? null, mapUpHeadingAccuracy: currentFloor?.mapUpHeadingAccuracy ?? null, mapUpHeadingCapturedAt: currentFloor?.mapUpHeadingCapturedAt ?? null })} className="flex shrink-0 items-center justify-center w-10 h-10 bg-slate-900/90 backdrop-blur border border-slate-700 text-blue-400 hover:bg-slate-800 rounded-xl transition-all shadow-lg" title="座標、比例尺與方向基準設定">
                   <Target className="w-5 h-5" />
@@ -2966,10 +3389,10 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 </button>
               </>
             )}
-          </div>
+          </div>}
 
-          <div ref={wrapperRef} className={`flex-1 relative overflow-hidden bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-900 to-slate-950 touch-none select-none ${isPathMode ? 'cursor-crosshair' : (isToggleShaftMode ? 'cursor-pointer' : (isAddMode ? 'cursor-crosshair' : (isMeasuring ? 'cursor-crosshair' : (isNavTestMode ? 'cursor-crosshair' : (isPanning ? 'cursor-grabbing' : 'cursor-grab')))))}`} onPointerDown={handleMapPointerDown} onPointerMove={handleMapPointerMove} onPointerUp={handleMapPointerUp} onPointerCancel={handleMapPointerUp}>
-            {currentFloor && (
+          <div ref={wrapperRef} data-testid="editor-map" aria-label="平面圖路網編輯區" className={`flex-1 relative overflow-hidden bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-900 to-slate-950 touch-none select-none ${isPathMode ? 'cursor-crosshair' : (isToggleShaftMode ? 'cursor-pointer' : (isAddMode ? 'cursor-crosshair' : (isMeasuring ? 'cursor-crosshair' : (isNavTestMode ? 'cursor-crosshair' : (isPanning ? 'cursor-grabbing' : 'cursor-grab')))))}`} onPointerDown={handleMapPointerDown} onPointerMove={handleMapPointerMove} onPointerUp={handleMapPointerUp} onPointerCancel={handleMapPointerUp}>
+            {!v4Integration && currentFloor && (
               <div className="absolute left-4 top-24 md:top-20 z-30 rounded-full border border-cyan-400/30 bg-slate-950/85 px-4 py-2 text-xs font-bold text-white shadow-xl backdrop-blur-md pointer-events-none">
                 {currentBuilding?.name || '目前場域'} / {currentFloor.name || '未命名樓層'}
               </div>
@@ -3069,7 +3492,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 else if (isSelected) { borderColor = 'border-cyan-400 border-2'; shadow = 'shadow-[0_0_10px_cyan]'; }
 
                 return (
-                  <div key={wp.id} className={`waypoint-pin group absolute -translate-x-1/2 -translate-y-1/2 z-30 ${isPathMode || isToggleShaftMode ? 'pointer-events-auto cursor-grab active:cursor-grabbing' : 'pointer-events-none'} ${isSelected ? 'z-40' : ''}`} style={{ left: `${wp.x*100}%`, top: `${wp.y*100}%` }}
+                  <div key={wp.id} data-node-id={wp.id} aria-label={`路徑節點 ${wp.guideTitle || wp.id}`} className={`waypoint-pin group absolute -translate-x-1/2 -translate-y-1/2 z-30 ${isPathMode || isToggleShaftMode ? 'pointer-events-auto cursor-grab active:cursor-grabbing' : 'pointer-events-none'} ${isSelected ? 'z-40' : ''}`} style={{ left: `${wp.x*100}%`, top: `${wp.y*100}%` }}
                        onPointerDown={(e) => {
                          e.stopPropagation();
                          if (e.button !== 0) return;
@@ -3087,9 +3510,15 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                        onPointerCancel={(e) => finishNodePointerInteraction(e)}
                        onContextMenu={(e) => {
                          e.preventDefault();
+                         if (v4Integration) {
+                           setSelectedMarkerId(null); setSelectedWaypointId(wp.id);
+                           setIsConfirmingDelete(false);
+                           return;
+                         }
                          if (isPathMode) { deleteNode(wp.id); }
                          else if (isToggleShaftMode) { if(wp.isVerticalShaft) handleToggleVerticalShaft(wp, false, false); }
                        }}>
+                    {v4Integration && <span aria-hidden="true" className="v4-node-hit-area" style={{ width: `${44 / mapTransform.scale}px`, height: `${44 / mapTransform.scale}px` }} />}
                     <div className={`rounded-full transition-all flex items-center justify-center ${bgColor} ${borderColor} ${shadow}`} style={{ width: `${(isPathStart ? 14 : 10) / Math.max(0.5, mapTransform.scale)}px`, height: `${(isPathStart ? 14 : 10) / Math.max(0.5, mapTransform.scale)}px`, borderWidth: isSelected ? '2px' : '1px' }}>
                         {wp.isVerticalShaft && <ArrowUpDown className={isPathStart ? "text-slate-800" : "text-white"} style={{ width: `${6 / Math.max(0.5, mapTransform.scale)}px`, height: `${6 / Math.max(0.5, mapTransform.scale)}px` }} />}
                     </div>
@@ -3129,7 +3558,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 const linkedFloorNames = marker.isVerticalShaft ? currentBuilding?.floors.filter(f => marker.linkedFloorIds?.includes(f.id)).sort((a,b) => getFloorLevel(b.name) - getFloorLevel(a.name)).map(f => f.name).join(', ') : '';
 
                 return (
-                <div key={marker.id} className={`marker-pin absolute -translate-x-1/2 -translate-y-1/2 group z-50 ${isAddMode ? 'pointer-events-auto cursor-grab active:cursor-grabbing' : (isPathMode || isToggleShaftMode ? 'pointer-events-auto cursor-pointer' : 'pointer-events-none')} ${selectedMarkerId === marker.id ? 'z-[60]' : ''} ${pathStartNodeId === marker.id ? 'scale-125' : ''}`} style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%` }}
+                <div key={marker.id} data-node-id={marker.id} aria-label={`AR 點位 ${marker.code || marker.title || marker.id}`} className={`marker-pin absolute -translate-x-1/2 -translate-y-1/2 group z-50 ${isAddMode ? 'pointer-events-auto cursor-grab active:cursor-grabbing' : (isPathMode || isToggleShaftMode ? 'pointer-events-auto cursor-pointer' : 'pointer-events-none')} ${selectedMarkerId === marker.id ? 'z-[60]' : ''} ${pathStartNodeId === marker.id ? 'scale-125' : ''}`} style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%` }}
                      onPointerDown={(e) => {
                        e.stopPropagation();
                        if (e.button !== 0) return;
@@ -3151,10 +3580,16 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                      onPointerCancel={(e) => finishNodePointerInteraction(e)}
                      onContextMenu={(e) => {
                        e.preventDefault();
+                       if (v4Integration) {
+                         setSelectedWaypointId(null); setSelectedMarkerId(marker.id);
+                         setIsConfirmingDelete(false);
+                         return;
+                       }
                        if (isPathMode) { deleteNode(marker.id); }
                        else if (isToggleShaftMode) { if(marker.isVerticalShaft) handleToggleVerticalShaft(marker, false, true); }
                        else if (isAddMode) { setSelectedWaypointId(null); setSelectedMarkerId(marker.id); }
                      }}>
+                  {v4Integration && <span aria-hidden="true" className="v4-node-hit-area" style={{ width: `${44 / mapTransform.scale}px`, height: `${44 / mapTransform.scale}px` }} />}
                   <div className="relative pointer-events-none">
                     <div className={`w-7 h-7 md:w-8 md:h-8 rounded-full flex items-center justify-center border-2 transition-all shadow-lg ${selectedMarkerId === marker.id ? 'bg-cyan-500 border-white text-slate-950 scale-110 shadow-[0_0_15px_rgba(6,182,212,0.8)]' : marker.enabled ? (marker.isVerticalShaft ? 'bg-purple-600 border-purple-400 text-white' : 'bg-slate-800 border-cyan-500/50 text-slate-300 group-hover:border-cyan-400 group-hover:text-cyan-400') : 'bg-slate-900 border-slate-700 text-slate-600 opacity-70'} ${pathStartNodeId === marker.id ? 'border-orange-500 shadow-[0_0_15px_orange]' : ''}`}>
                       {marker.isVerticalShaft ? <ArrowUpDown className="w-3.5 h-3.5" style={{ transform: `scale(${1 / Math.max(0.5, mapTransform.scale)})` }}/> : <span className="text-[10px] md:text-xs font-bold" style={{ transform: `scale(${1 / Math.max(0.5, mapTransform.scale)})` }}>{marker.code}</span>}
@@ -3168,8 +3603,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               )})}
             </div>
 
-            {isToggleShaftMode && (
-              <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-green-500/95 text-white px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(34,197,94,0.5)] flex items-center pointer-events-auto z-50">
+            {!v4Integration && isToggleShaftMode && (
+              <div data-map-control="mode-hint" className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-green-500/95 text-white px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(34,197,94,0.5)] flex items-center pointer-events-auto z-50">
                 <ArrowUpDown className="w-5 h-5 mr-3 shrink-0" />
                 <div className="flex flex-col">
                   <span>點擊既有節點指定為「跨樓層轉折點」，右鍵取消。</span>
@@ -3178,8 +3613,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               </div>
             )}
 
-            {isPathMode && (
-              <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-orange-500/95 text-white px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(249,115,22,0.5)] flex items-center pointer-events-auto z-50">
+            {!v4Integration && isPathMode && (
+              <div data-map-control="mode-hint" className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-orange-500/95 text-white px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(249,115,22,0.5)] flex items-center pointer-events-auto z-50">
                 <MousePointer2 className="w-5 h-5 mr-3 shrink-0" />
                 <div className="flex flex-col">
                   <span>路徑建置模式：點擊空處建立節點，拖曳既有節點可調整位置。</span>
@@ -3188,8 +3623,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               </div>
             )}
 
-            {isAddMode && (
-              <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-cyan-500/95 text-slate-950 px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(6,182,212,0.45)] flex items-center pointer-events-auto z-50">
+            {!v4Integration && isAddMode && (
+              <div data-map-control="mode-hint" className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-cyan-500/95 text-slate-950 px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(6,182,212,0.45)] flex items-center pointer-events-auto z-50">
                 <MapPin className="w-5 h-5 mr-3 shrink-0" />
                 <div className="flex flex-col">
                   <span>AR 點位編輯模式：點擊空處新增點位。</span>
@@ -3198,8 +3633,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               </div>
             )}
 
-            {isNavTestMode && (
-              <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-blue-500/95 text-white px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(59,130,246,0.5)] flex items-center pointer-events-auto z-50">
+            {!v4Integration && isNavTestMode && (
+              <div data-map-control="mode-hint" className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-blue-500/95 text-white px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(59,130,246,0.5)] flex items-center pointer-events-auto z-50">
                 <Activity className="w-5 h-5 mr-3 shrink-0 animate-pulse" />
                 <div className="flex flex-col">
                   <span>路網分析測試模式：已啟用自動吸附演算</span>
@@ -3212,12 +3647,12 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center text-slate-500 pointer-events-none px-4 pb-28 md:pb-16">
                 <Map className="w-12 h-12 mx-auto mb-3 opacity-50 text-cyan-500/30" />
                 <p className="text-base md:text-lg mb-1">尚未上傳{floorImagePreviewMode === 'navigation' ? '有文字導覽圖' : '無文字平面圖'}</p>
-                <p className="text-xs">請使用左下角的「上傳{floorImagePreviewMode === 'navigation' ? '有字圖' : '無字圖'}」按鈕</p>
+                <p className="text-xs">{v4Integration ? '請展開「樓層與底圖」，上傳對應平面圖。' : `請使用左下角的「上傳${floorImagePreviewMode === 'navigation' ? '有字圖' : '無字圖'}」按鈕`}</p>
               </div>
             )}
 
-            {currentFloor && (
-              <div className="absolute bottom-20 left-3 z-50 flex max-w-[calc(100%-5.25rem)] flex-wrap items-center gap-2 rounded-xl border border-slate-700 bg-slate-950/90 p-2 shadow-xl backdrop-blur-md md:bottom-4 md:left-4 md:max-w-[calc(100%-12rem)]" aria-label="平面圖顯示與上傳">
+            {!v4Integration && currentFloor && (
+              <div data-map-control="floor-plan" className="absolute bottom-20 left-3 z-50 flex max-w-[calc(100%-5.25rem)] flex-wrap items-center gap-2 rounded-xl border border-slate-700 bg-slate-950/90 p-2 shadow-xl backdrop-blur-md md:bottom-4 md:left-4 md:max-w-[calc(100%-12rem)]" aria-label="平面圖顯示與上傳">
                 <div className="flex h-10 shrink-0 items-center rounded-lg border border-slate-700 bg-slate-900 p-1" role="group" aria-label="切換平面圖預覽">
                   <button
                     type="button"
@@ -3252,14 +3687,14 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             )}
 
             {currentFloorImageUrl && scaleBarWidthPx > 0 && (
-              <div onClick={() => setBoundsModal({ isOpen: true, blX: currentBounds.blX, blY: currentBounds.blY, trX: currentBounds.trX, trY: currentBounds.trY })} className="absolute top-20 right-3 md:top-4 md:right-20 z-40 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2.5 rounded-lg shadow-lg cursor-pointer hover:bg-slate-800 transition-colors" title="點擊校正全域座標">
+              <div data-map-control="scale" onClick={() => { if (!v4Integration) openV4Bounds(); }} className={`absolute ${v4Integration ? 'bottom-4 left-3 v4-map-scale' : 'top-20 right-3 md:top-4 md:right-20 cursor-pointer hover:bg-slate-800'} z-40 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2.5 rounded-lg shadow-lg transition-colors`} title={v4Integration ? '比例尺；如需校正，請到樓層與底圖' : '點擊校正全域座標'}>
                 <span className="text-[10px] text-cyan-400 font-bold mb-1.5 flex items-center"><Target className="w-3 h-3 mr-1"/> 比例尺: {scaleBarMeters} m</span>
                 <div className="h-1.5 bg-cyan-500/50 border-x-2 border-cyan-400" style={{ width: `${scaleBarWidthPx}px` }}></div>
               </div>
             )}
 
             {currentFloorImageUrl && (
-              <div className="absolute bottom-20 right-3 z-50 flex flex-col space-y-2 md:bottom-4 md:right-32">
+              <div data-map-control="zoom" className={`${v4Integration ? 'v4-map-zoom ' : ''}absolute bottom-20 right-3 z-50 flex flex-col space-y-2 md:bottom-4 md:right-32`}>
                 <button type="button" onClick={() => setMapTransform(prev => ({...prev, scale: Math.min(10, prev.scale * 1.2)}))} className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-slate-900/95 text-slate-100 shadow-lg backdrop-blur transition-colors hover:bg-slate-800" title="放大平面圖" aria-label="放大平面圖"><ZoomIn className="h-5 w-5"/></button>
                 <button type="button" onClick={() => setMapTransform(prev => ({...prev, scale: Math.max(0.1, prev.scale / 1.2)}))} className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-slate-900/95 text-slate-100 shadow-lg backdrop-blur transition-colors hover:bg-slate-800" title="縮小平面圖" aria-label="縮小平面圖"><ZoomOut className="h-5 w-5"/></button>
                 <button type="button" onClick={resetMapView} className="mt-1 flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-slate-900/95 text-slate-100 shadow-lg backdrop-blur transition-colors hover:bg-slate-800" title="顯示完整平面圖" aria-label="顯示完整平面圖"><Maximize className="h-5 w-5"/></button>
@@ -3270,7 +3705,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       )}
 
       {deleteUndo?.projectId === activeProjectId && (
-        <div className="fixed left-1/2 bottom-20 md:bottom-5 z-[90] -translate-x-1/2 w-[calc(100%-2rem)] max-w-md rounded-xl border border-emerald-500/40 bg-slate-900/95 px-4 py-3 shadow-2xl backdrop-blur-md flex items-center gap-3">
+        <div data-map-control="undo" className="fixed left-1/2 bottom-20 md:bottom-5 z-[90] -translate-x-1/2 w-[calc(100%-2rem)] max-w-md rounded-xl border border-emerald-500/40 bg-slate-900/95 px-4 py-3 shadow-2xl backdrop-blur-md flex items-center gap-3">
           <Undo2 className="w-5 h-5 text-emerald-400 shrink-0" />
           <div className="min-w-0 flex-1">
             <div className="text-sm font-bold text-slate-100 truncate">{deleteUndo.label}已刪除</div>
@@ -3282,7 +3717,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       )}
 
       {boundsModal.isOpen && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+        <div data-map-control="bounds" className={`${v4Integration ? 'v4-editor-modal ' : ''}fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4`}>
           <div className="bg-slate-900 border border-blue-900/50 rounded-xl w-full max-w-md p-6">
             <h3 className="text-lg font-bold text-blue-400 mb-4 flex items-center"><Target className="w-5 h-5 mr-2" /> 樓層實體座標與比例尺設定</h3>
             <p className="text-slate-400 text-xs mb-4 leading-relaxed">設定此樓層對應的真實物理座標 (公尺)。<br/>修改差值即等同設定這張圖片在真實空間的總寬度與總長度。</p>
@@ -3442,12 +3877,12 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         </div>
       )}
 
-      <div className={`fixed inset-x-0 bottom-0 z-50 max-h-[86dvh] rounded-t-2xl border-t border-slate-800 bg-slate-900 shadow-2xl md:inset-x-auto md:inset-y-0 md:right-0 md:max-h-none md:w-80 md:rounded-none md:border-t-0 md:border-l lg:w-96 flex flex-col shrink-0 transition-transform duration-300 ${activeTab === 'map' && (selectedMarkerId || selectedWaypointId) ? 'translate-y-0 md:translate-x-0' : 'translate-y-full md:translate-y-0 md:translate-x-full absolute invisible'}`}>
-        <div className="h-16 flex items-center justify-between px-4 border-b border-slate-800 bg-slate-950/80 backdrop-blur shrink-0">
+      <div data-map-control="node-inspector" data-testid={v4Integration ? 'v4-node-inspector' : undefined} role={v4Integration ? 'dialog' : undefined} aria-label={v4Integration ? selectedMarkerId ? 'AR 點位設定' : '路徑節點設定' : undefined} className={`${v4Integration ? 'v4-node-inspector ' : ''}fixed inset-x-0 bottom-0 z-50 max-h-[86dvh] rounded-t-2xl border-t border-slate-800 bg-slate-900 shadow-2xl md:inset-x-auto md:inset-y-0 md:right-0 md:max-h-none md:w-80 md:rounded-none md:border-t-0 md:border-l lg:w-96 flex flex-col shrink-0 transition-transform duration-300 ${activeTab === 'map' && (selectedMarkerId || selectedWaypointId) ? 'translate-y-0 md:translate-x-0' : 'translate-y-full md:translate-y-0 md:translate-x-full absolute invisible'}`}>
+        <div className={`${v4Integration ? 'v4-inspector-header ' : ''}h-16 flex items-center justify-between px-4 border-b border-slate-800 bg-slate-950/80 backdrop-blur shrink-0`}>
           <h2 className="font-bold text-slate-200">
             {selectedMarkerId ? 'AR 點位設定' : '轉折點 (Waypoint) 設定'}
           </h2>
-          <button onClick={() => { setSelectedMarkerId(null); setSelectedWaypointId(null); }} className="text-slate-400 hover:text-white p-2"><X/></button>
+          <button ref={v4InspectorCloseRef} aria-label="關閉點位設定" onClick={() => { setSelectedMarkerId(null); setSelectedWaypointId(null); if (v4Integration) requestAnimationFrame(() => v4ToolsToggleRef.current?.focus({ preventScroll: true })); }} className="text-slate-400 hover:text-white p-2"><X/>{v4Integration && <span>關閉</span>}</button>
         </div>
 
         {selectedMarker && (
@@ -3455,8 +3890,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             <div className="flex-1 overflow-y-auto p-4 space-y-5 pb-8">
               <div className="space-y-3">
                 <div className="flex space-x-3">
-                  <div className="flex-1"><label className="block text-[11px] text-slate-400 mb-1">代號</label><input type="text" value={selectedMarker.code} onChange={(e) => handleMarkerUpdate(selectedMarker.id, 'code', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200" /></div>
-                  <div className="flex-[2]"><label className="block text-[11px] text-slate-400 mb-1">標題</label><input type="text" value={selectedMarker.title} onChange={(e) => handleMarkerUpdate(selectedMarker.id, 'title', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200" /></div>
+                  <div className="flex-1"><label htmlFor="editor-marker-code" className="block text-[11px] text-slate-400 mb-1">代號</label><input id="editor-marker-code" type="text" value={selectedMarker.code} onChange={(e) => handleMarkerUpdate(selectedMarker.id, 'code', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200" /></div>
+                  <div className="flex-[2]"><label htmlFor="editor-marker-title" className="block text-[11px] text-slate-400 mb-1">標題</label><input id="editor-marker-title" type="text" value={selectedMarker.title} onChange={(e) => handleMarkerUpdate(selectedMarker.id, 'title', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200" /></div>
                 </div>
                 <div><label className="block text-[11px] text-slate-400 mb-1">描述說明</label><textarea value={selectedMarker.description || ''} onChange={(e) => handleMarkerUpdate(selectedMarker.id, 'description', e.target.value)} rows={2} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 resize-none" /></div>
                 <div className="flex space-x-3">
@@ -3534,7 +3969,9 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                   showAlert={(message) => setAlertModal({ isOpen: true, message })}
                 />
               </div>
-              <ARTestIntegration marker={selectedMarker} onUpdateStatus={(status) => handleMarkerUpdate(selectedMarker.id, 'recognitionStatus', status)} showAlert={(msg) => setAlertModal({ isOpen: true, message: msg })} />
+              {v4Integration
+                ? <p className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 p-3 text-xs leading-relaxed text-cyan-200">照片辨識請回 V4「相機」頁籤測試；此路網編輯器不會啟動相機或載入舊版辨識器。</p>
+                : <ARTestIntegration marker={selectedMarker} onUpdateStatus={(status) => handleMarkerUpdate(selectedMarker.id, 'recognitionStatus', status)} showAlert={(msg) => setAlertModal({ isOpen: true, message: msg })} />}
             </div>
 
             <div className="p-4 border-t border-slate-800 bg-slate-900 shrink-0 pb-safe">
@@ -3542,6 +3979,11 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 <div className="flex space-x-2 animate-in fade-in slide-in-from-bottom-2">
                   <button onClick={() => setIsConfirmingDelete(false)} className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2.5 rounded-xl border border-slate-700 text-sm">取消</button>
                   <button onClick={() => deleteNode(selectedMarker.id)} className="flex-1 bg-red-500 hover:bg-red-400 text-white font-bold py-2.5 rounded-xl shadow-[0_0_10px_rgba(239,68,68,0.4)] text-sm">確定刪除</button>
+                </div>
+              ) : v4Integration ? (
+                <div className="v4-inspector-actions">
+                  <button onClick={() => setSelectedMarkerId(null)} className="v4-tool-button v4-tool-primary">完成設定</button>
+                  <details className="v4-tool-danger"><summary>刪除此 AR 點位（需確認）</summary><p>包含此點位的連線與現場照片；保存後才會更新後台。</p><button type="button" className="v4-tool-button" onClick={() => setIsConfirmingDelete(true)}><Trash2 />刪除 AR 點位</button></details>
                 </div>
               ) : (
                 <div className="flex space-x-3">
@@ -3619,7 +4061,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                     </div>
                     <p className="mt-2 text-[10px] leading-relaxed text-cyan-200/70">請從民眾預計停駐的位置拍攝清楚、有固定紋理且少反光的場景。自動模式請朝下一路段拍攝；若現場無法照此方向拍攝，請切換手動模式輸入照片方位。</p>
                   </div>
-                  {selectedWaypoint.guideImageUrl && (
+                  {v4Integration && <p className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 p-3 text-xs leading-relaxed text-cyan-200">照片辨識請回 V4「相機」頁籤測試；此處只編輯節點、連線與參考資料。</p>}
+                  {!v4Integration && selectedWaypoint.guideImageUrl && (
                     <WaypointRecognitionTester
                       key={selectedWaypoint.id}
                       waypoint={selectedWaypoint}
@@ -3665,6 +4108,11 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                   <button onClick={() => setIsConfirmingDelete(false)} className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2.5 rounded-xl border border-slate-700 text-sm">取消</button>
                   <button onClick={() => deleteNode(selectedWaypoint.id)} className="flex-1 bg-red-500 hover:bg-red-400 text-white font-bold py-2.5 rounded-xl shadow-[0_0_10px_rgba(239,68,68,0.4)] text-sm">確定刪除</button>
                 </div>
+              ) : v4Integration ? (
+                <div className="v4-inspector-actions">
+                  <button onClick={() => setSelectedWaypointId(null)} className="v4-tool-button v4-tool-primary">完成設定</button>
+                  <details className="v4-tool-danger"><summary>刪除此路徑節點（需確認）</summary><p>包含此節點的連線與現場照片；保存後才會更新後台。</p><button type="button" className="v4-tool-button" onClick={() => setIsConfirmingDelete(true)}><Trash2 />刪除路徑節點</button></details>
+                </div>
               ) : (
                 <div className="flex space-x-3">
                   <button onClick={() => setIsConfirmingDelete(true)} className="flex items-center justify-center p-3 text-red-400 bg-red-400/10 hover:bg-red-400/20 rounded-xl border border-red-500/20"><Trash2 className="w-5 h-5" /></button>
@@ -3677,6 +4125,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       </div>
 
     </div>
+    </>
   );
 }
 

@@ -1,5 +1,9 @@
 {
   "routes": [
+    { "route": "/ar-v4-demo.html", "headers": { "Cache-Control": "no-store" } },
+    { "route": "/assets/ar-v4-demo/*", "headers": { "Cache-Control": "no-store" } },
+    { "route": "/ar-v4-navigation.html", "headers": { "Cache-Control": "no-store" } },
+    { "route": "/assets/ar-v4-navigation/*", "headers": { "Cache-Control": "no-store" } },
     {
       "route": "/ar-v4-field.html",
       "allowedRoles": ["ar_admin"],

@@ -2,6 +2,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import ARManagerApp from "../ar";
 import "./ar.css";
+import "./ar-v4-editor-theme.css";
 
 const rootElement = document.getElementById("ar-root");
 
@@ -18,6 +19,7 @@ createRoot(rootElement).render(
   <React.StrictMode>
     <ARManagerApp
       embedded={isEmbeddedAdmin}
+      v4Integration={isAdminArPage && searchParams.get("v4") === "1"}
       initialTab={isAdminMode ? rootElement.dataset.initialTab || searchParams.get("tab") || "map" : "frontend"}
       publicOnly={!isAdminMode}
     />

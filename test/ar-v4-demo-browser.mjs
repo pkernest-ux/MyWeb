@@ -1,0 +1,46 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { startLocalServer } from '../scripts/ar-v4-local-server.mjs';
+import { chromium } from '/Users/ernestmac/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright/index.mjs';
+const rootDir = path.resolve(import.meta.dirname, '..');
+const dataDir = await mkdtemp(path.join(os.tmpdir(), 'ar-demo-test-'));
+const local = await startLocalServer({ port: 0, rootDir, dataDir });
+const browser = await chromium.launch({ executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true });
+const errors = [], writes = [];
+try {
+  const context = await browser.newContext();
+  await context.route('**/*', route => {
+    const request = route.request();
+    if (request.method() !== 'GET') writes.push(request.url());
+    return request.url().startsWith(local.origin) ? route.continue() : route.abort();
+  });
+  const page = await context.newPage();
+  page.on('pageerror', error => errors.push(error.message));
+  const response = await fetch(local.origin + '/api/ar-demo-library');
+  assert.equal((await response.json()).simulation, true);
+  assert.equal((await fetch(local.origin + '/api/ar-demo-library', { method: 'POST' })).status, 405);
+  await page.goto(local.origin + '/ar-v4-demo.html');
+  await page.getByRole('status').filter({ hasText: '已載入' }).waitFor();
+  await page.waitForFunction(() => document.querySelector('canvas')?.width > 300);
+  await mkdir(path.join(rootDir, 'test-output'), { recursive: true });
+  await page.screenshot({ path: path.join(rootDir, 'test-output/demo-display.png'), fullPage: true });
+  const image = await page.locator('canvas').evaluate(canvas => canvas.toDataURL('image/png').split(',')[1]);
+  await page.getByRole('button', { name: '② 手機辨識' }).click();
+  await page.locator('input[type=file]').setInputFiles({ name: 'synthetic-positive.png', mimeType: 'image/png', buffer: Buffer.from(image, 'base64') });
+  await page.getByRole('heading', { name: '候選位置：接待區（模擬位置）' }).waitFor({ timeout: 60000 });
+  await page.getByRole('button', { name: '我確認這是模擬接待區，顯示示意路線' }).click();
+  await page.getByRole('button', { name: '模擬已抵達轉角' }).click();
+  await page.getByRole('button', { name: '模擬已抵達目的地' }).click();
+  await page.getByRole('heading', { name: '示意流程完成' }).waitFor();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: path.join(rootDir, 'test-output/demo-mobile.png'), fullPage: true });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  const blank = await page.evaluate(() => { const c = document.createElement('canvas'); c.width=768; c.height=576; c.getContext('2d').fillRect(0,0,768,576); return c.toDataURL().split(',')[1]; });
+  await page.locator('input[type=file]').setInputFiles({ name: 'negative.png', mimeType: 'image/png', buffer: Buffer.from(blank, 'base64') });
+  await page.getByRole('status').filter({ hasText: '本次未辨識成功' }).waitFor({ timeout: 60000 });
+  assert.equal(await page.locator('.demo-candidate').count(), 0);
+  assert.deepEqual(errors, []); assert.deepEqual(writes, []);
+  console.log('PASS demo backend GET/POST, synthetic positive, blank negative, manual route, mobile width, no page errors or uploads. Not real phone validation.');
+} finally { await browser.close(); await local.close(); }

@@ -1,0 +1,4 @@
+.v4-route-focus .v2-map-world { transition: transform 280ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .v4-route-focus .v2-map-world { transition: none; }
+}
