@@ -1,6 +1,7 @@
 import React,{useEffect,useMemo,useRef,useState} from 'react';
 import {ArrowLeft,ArrowUp,Camera,Compass,Map as MapIcon,RefreshCw} from 'lucide-react';
-import {OrbImageTracker} from './ar-v3-image-recognition';
+import {OrbImageTracker,recognitionFrameSize} from './ar-v4-image-recognition';
+import {RECOGNITION_REASONS} from './ar-v4-recognition-types';
 import {EMPTY_SENSOR,sensorFromEvent,type FieldSensor,nodeLabel} from './ar-v4-field-core';
 import {angle,delta,wrap,publicReferences,confirmProgress,type PublicReference} from './ar-v4-public-core';
 import './ar-v4-public-guide.css';
@@ -45,7 +46,7 @@ export default function PublicGuide({graph,segments,points,destinationId,origin,
   if(!refs.length){setMessage('這段尚未建置參考照片；可依小地圖行走，再人工確認抵達。');return;}
   const loop=async()=>{
    if(cancelled||document.hidden)return;
-   try{const v=video.current;if(v&&v.readyState>=2&&v.videoWidth){canvas.width=420;canvas.height=Math.round(420*v.videoHeight/v.videoWidth);canvas.getContext('2d')?.drawImage(v,0,0,canvas.width,canvas.height);const result=await tracker.detect(canvas);if(cancelled)return;const match=refs.find(r=>r.id===result?.targetId);if(match){hits=pending===match.id?hits+1:1;pending=match.id;if(hits>=3){setCandidate(match);setLastSeen(Date.now());if(match.nodeId===current?.id){setReference(match);setMessage('已找到目前節點的參考方向；請朝皮卡指示行走。');}else setMessage('已看見下一地標；走到後再按「我已到達」，尚未更新位置。');}}else{hits=0;pending='';}}
+   try{const v=video.current;if(v&&v.readyState>=2&&v.videoWidth){const size=recognitionFrameSize(v.videoWidth,v.videoHeight);canvas.width=size.width;canvas.height=size.height;canvas.getContext('2d')?.drawImage(v,0,0,canvas.width,canvas.height);const result=await tracker.detect(canvas);if(cancelled)return;const match=refs.find(r=>r.id===result?.targetId);if(match){hits=pending===match.id?hits+1:1;pending=match.id;if(hits>=3){setCandidate(match);setLastSeen(Date.now());if(match.nodeId===current?.id){setMessage('已找到目前節點的局部特徵；方向未校正時，請展開協助確認面向。');}else setMessage('已看見下一地標；走到後再按「我已到達」，尚未更新位置。');}}else{hits=0;pending='';if(tracker.diagnostics){setMessage(RECOGNITION_REASONS[tracker.diagnostics.reason]);if(tracker.diagnostics.reason==='ambiguous'){setCandidate(null);setLastSeen(0);setBaseline(null);}}}}
    }catch{if(!cancelled)setMessage('照片辨識暫時失敗，請調整取景；也可使用人工抵達確認。');}
    if(!cancelled)timer=setTimeout(loop,350);
   };

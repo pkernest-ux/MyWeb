@@ -17,7 +17,7 @@ const localApiProxy = {
 export default defineConfig({
   plugins: [react()],
   server: { strictPort: true, proxy: { '/api': localApiProxy, '/.auth': localApiProxy } },
-  worker: { format: 'iife', rollupOptions: { output: { entryFileNames: 'assets/ar-v4/recognition-worker.js' } } },
+  worker: { format: 'iife', rollupOptions: { output: { entryFileNames: chunk => `assets/ar-v4/${chunk.name.includes('v4') ? 'partial-recognition-worker' : 'recognition-worker'}.js` } } },
   build: {
     outDir: '.', emptyOutDir: false, cssCodeSplit: false,
     rollupOptions: {

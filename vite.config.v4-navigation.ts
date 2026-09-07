@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  worker: { format: 'iife', rollupOptions: { output: { entryFileNames: 'assets/ar-v4-navigation/recognition-worker.js' } } },
+  worker: { format: 'iife', rollupOptions: { output: { entryFileNames: chunk => `assets/ar-v4-navigation/${chunk.name.includes('v4') ? 'partial-recognition-worker' : 'recognition-worker'}.js` } } },
   build: {
     outDir: '.', emptyOutDir: false, cssCodeSplit: false,
     rollupOptions: {

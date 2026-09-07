@@ -283,10 +283,21 @@ try {
   assert.ok(report.workers.length > 0, 'ORB must run in an actual browser worker.');
   assert.equal(await page.locator('.candidate img').getAttribute('src'), savedObservation.imageUrl);
   passed('real ORB browser worker matches the saved reference image against itself', { scope: 'integration self-match only; not field localization validation', result: recognitionText });
+  await page.locator('.v4-recognition-inspector > summary').click();
+  assert.match(await page.locator('.v4-recognition-inspector').innerText(), /局部特徵已匹配/);
+  assert.equal(await page.locator('.v4-feature-pair img').count(), 2);
+  assert.ok(await page.locator('.v4-feature-image.accepted circle').count() >= 24);
+  await page.setViewportSize({width:390,height:844});
+  await assertNoOverflow(page,'expanded V4 feature diagnostics on mobile');
+  await page.locator('.v4-recognition-inspector').screenshot({path:path.join(outputDir,'v4-partial-diagnostics.png')});
+  await page.setViewportSize({width:1440,height:1100});
+  passed('V4 diagnostic panel shows matched frame/reference features and remains responsive');
 
   const negativeResult = await recognizeFile(page, 'unrelated-blank-negative.jpg', images.blank);
   assert.match(negativeResult, /尚未匹配/);
   assert.equal(await page.locator('.candidate').count(), 0);
+  await page.locator('.v4-recognition-inspector > summary').click();
+  assert.match(await page.locator('.v4-recognition-inspector').innerText(), /畫面特徵不足/);
   passed('real ORB rejects an unrelated featureless blank image');
 
   await switchTab(page, '照片採集');

@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUp, Camera, Check, ChevronRight, CloudUpload, Compass, Download, Expand, ImagePlus, Info, Layers, MapPin, Navigation, RefreshCw, Route, ScanLine, SlidersHorizontal, VideoOff, WifiOff } from 'lucide-react';
-import { OrbImageTracker } from './ar-v3-image-recognition';
+import { OrbImageTracker, recognitionFrameSize } from './ar-v4-image-recognition';
+import { RECOGNITION_REASONS, type Diagnostic, type Preparation } from './ar-v4-recognition-types';
+import { RecognitionInspector } from './ar-v4-recognition-inspector';
 import {
   EMPTY_SENSOR, bearingBetween, encodeObservationImage, extractPanoramaView, flattenProject,
   loadPanorama, mapBearingFromSensor, nodeLabel, normalizeBearing, prepareImage, sensorFromEvent, signedAngle,
@@ -28,6 +30,9 @@ const sourceText = { camera: '現場拍攝', upload: '照片匯入', 'panorama-f
 const getProjects = (raw: any) => Array.isArray(raw?.projects) ? raw.projects : raw?.project ? [raw] : [];
 
 export default function FieldApp() {
+  const [recognitionDiagnostic,setRecognitionDiagnostic]=useState<Diagnostic|null>(null);
+  const [recognitionPreparation,setRecognitionPreparation]=useState<Preparation|null>(null);
+  const [recognitionFrame,setRecognitionFrame]=useState('');
   const [projects, setProjects] = useState<any[]>([]);
   const [projectId, setProjectId] = useState('');
   const [project, setProject] = useState<any>(null);
@@ -133,6 +138,7 @@ export default function FieldApp() {
     return observations;
   }), [floor]);
   const testRefs = useMemo(() => [...refs.filter((r) => r.nodeId === nodeId), ...refs.filter((r) => r.nodeId !== nodeId)].slice(0, 24), [refs, nodeId]);
+  useEffect(()=>{setRecognitionDiagnostic(null);setRecognitionPreparation(null);setRecognitionFrame('');},[scope]);
   const records: Array<{ observation: FieldObservation; label: string; nodeId: string }> = (floor?.nodes || []).flatMap((n) => (n.fieldObservations || []).map((observation: FieldObservation) => ({ observation, label: nodeLabel(n), nodeId: n.id })));
   const coveredNodes = new Set(refs.map((r) => r.nodeId)).size;
   const staleSensor = !sensor.capturedAt || ticks - Date.parse(sensor.capturedAt) > 10000;
@@ -608,14 +614,16 @@ export default function FieldApp() {
     stopDetection();
     setCandidate(null);
     setLock(null);
+    setRecognitionDiagnostic(null);setRecognitionPreparation(null);setRecognitionFrame('');
     const generation = detectGeneration.current;
     const instance = new OrbImageTracker({ fullScene: true });
     tracker.current = instance;
     setDetecting(true);
     setRecognitionMessage(`正在準備 ${testRefs.length} 張本樓層參考照片…`);
     try {
-      await instance.prepareMany(testRefs.map((r) => ({ id: r.id, imageUrl: r.imageUrl })));
+      await instance.prepareMany(testRefs.map((r) => ({ id: r.id, nodeId:r.nodeId, imageUrl: r.imageUrl })));
       if (generation !== detectGeneration.current) return;
+      setRecognitionPreparation(instance.preparation);
       const frame = document.createElement('canvas');
       let previous = '';
       let confirmations = 0;
@@ -626,11 +634,13 @@ export default function FieldApp() {
         const width = still?.width || video.current?.videoWidth || 0;
         const height = still?.height || video.current?.videoHeight || 0;
         if (!image || !width || !height) throw new Error('相機畫面尚未就緒，請重試。');
-        frame.width = Math.min(420, width);
-        frame.height = Math.round(height * frame.width / width);
+        const size=recognitionFrameSize(width,height);
+        frame.width = size.width; frame.height = size.height;
         frame.getContext('2d')!.drawImage(image, 0, 0, frame.width, frame.height);
         const detection = await instance.detect(frame);
         if (generation !== detectGeneration.current) return;
+        setRecognitionDiagnostic(instance.diagnostics);
+        setRecognitionFrame(frame.toDataURL('image/jpeg',.65));
         const ref = detection?.targetId ? testRefs.find((r) => r.id === detection.targetId) : null;
         if (ref && detection && detection.inliers >= 12) {
           confirmations = previous === ref.id ? confirmations + 1 : 1;
@@ -643,12 +653,12 @@ export default function FieldApp() {
           setRecognitionMessage(`正在確認 ${ref.label}（${confirmations}/3）…`);
         } else {
           previous = ''; confirmations = 0;
-          setRecognitionMessage('尚未匹配：請面向固定地標、靠近原拍攝位置，避免只拍地板。');
+          setRecognitionMessage(`尚未匹配：${instance.diagnostics?RECOGNITION_REASONS[instance.diagnostics.reason]:'請調整取景'}。`);
         }
         if (still) break;
         await new Promise((resolve) => window.setTimeout(resolve, 220));
       } while (Date.now() - started < 20000);
-    } catch (error) { if (generation === detectGeneration.current) setRecognitionMessage((error as Error).message); }
+    } catch (error) { if (generation === detectGeneration.current) { setRecognitionPreparation(instance.preparation);setRecognitionMessage((error as Error).message); } }
     finally {
       instance.dispose();
       if (tracker.current === instance) tracker.current = null;
@@ -741,7 +751,7 @@ export default function FieldApp() {
           <section className="recognition-panel panel">
             <div className="section-heading"><div><h2><ScanLine size={18} />照片辨識測試</h2><p>比對本樓層已保存照片，先找出候選節點</p></div><span className="subtle-tag">{testRefs.length} 張參考照</span></div>
             <div className="button-row"><button className="primary-button" disabled={disabled || !testRefs.length || cameraState !== 'ready'} onClick={() => detecting ? stopDetection() : runRecognition()}><ScanLine size={16} />{detecting ? '停止辨識' : '開始相機辨識'}</button><button className="soft-button" disabled={disabled || detecting || !testRefs.length} onClick={() => testInput.current?.click()}><ImagePlus size={16} />匯入測試照</button></div>
-            <p className="recognition-status" role="status">{recognitionMessage}</p>
+            <p className="recognition-status" role="status">{recognitionMessage}</p><RecognitionInspector diagnostic={recognitionDiagnostic} preparation={recognitionPreparation} frame={recognitionFrame} references={testRefs}/>
             {refs.length > 24 && <p className="helper">為控制記憶體，本輪僅測試 24 張，優先目前節點。請切換節點測試其餘照片。</p>}
             {candidate && <div className="candidate"><img src={candidate.reference.imageUrl} alt="匹配的參考照片" /><div><b>{candidate.reference.label}</b><small>{candidate.reference.source} · 參考朝向 {angleText(candidate.reference.bearing)}</small><small>幾何內點 {candidate.inliers}／匹配 {candidate.matches}，不是定位正確率</small><button disabled={disabled} onClick={confirmCandidate}>我確認在此節點，且面向照片同方向 <Check size={15} /></button></div></div>}
           </section>
@@ -849,7 +859,7 @@ export default function FieldApp() {
         <Step visible={step===0}><div className="flow-choices"><button onClick={()=>beginCamera('recognition')}><ScanLine/>照片定位測試</button><button onClick={()=>beginCamera('direction')}><Compass/>方向提示測試</button><button disabled={editorLocked} onClick={()=>beginCamera('navigation')}><Navigation/>導航流程</button><button onClick={()=>beginCamera('photo')}><Camera/>拍攝參考照片</button></div><a className="flow-demo" href="./ar-v4-demo.html?mode=scan" target="_blank" rel="noreferrer">示範素材 · 螢幕辨識 Demo</a></Step>
         <div hidden={step===0||cameraTask==='navigation'}><div className="flow-camera"><video ref={video} autoPlay playsInline muted/><span>{cameraState==='ready'?'相機已啟用':'相機未啟用'}</span></div><div className="flow-inline"><button disabled={disabled||cameraState==='requesting'} onClick={startCamera}>{cameraState==='ready'?'重新啟用相機':'開啟相機'}</button><button disabled={cameraState!=='ready'} onClick={stopCamera}>關閉相機</button></div>
           {cameraTask==='photo'&&<button className="primary-button" disabled={!ready||cameraState!=='ready'||!node} onClick={capture}>拍攝此畫面</button>}
-          {(cameraTask==='recognition'||cameraTask==='direction')&&<><div className="flow-inline"><button className="primary-button" disabled={disabled||!testRefs.length||cameraState!=='ready'} onClick={()=>detecting?stopDetection():runRecognition()}>{detecting?'停止辨識':'開始相機辨識'}</button><button disabled={disabled||detecting||!testRefs.length} onClick={()=>testInput.current?.click()}>匯入測試照</button></div><p className="recognition-status" role="status">{recognitionMessage}</p>{!testRefs.length&&<button onClick={()=>selectTab('capture')}>先建立參考照片</button>}{candidate&&<div className="flow-result"><img src={candidate.reference.imageUrl} alt="匹配的參考照片"/><h2>候選：{candidate.reference.label}</h2><p>方向 {angleText(candidate.reference.bearing)} · 仍需人工確認</p><button disabled={disabled} onClick={()=>{confirmCandidate();goStep(2,'camera');}}>我確認在此節點，且面向照片同方向</button><Help title="辨識結果"><p>幾何內點 {candidate.inliers}／匹配 {candidate.matches}，不是定位正確率。本輪使用 {testRefs.length} 張參考照，優先目前節點。</p></Help></div>}</>}
+          {(cameraTask==='recognition'||cameraTask==='direction')&&<><div className="flow-inline"><button className="primary-button" disabled={disabled||!testRefs.length||cameraState!=='ready'} onClick={()=>detecting?stopDetection():runRecognition()}>{detecting?'停止辨識':'開始相機辨識'}</button><button disabled={disabled||detecting||!testRefs.length} onClick={()=>testInput.current?.click()}>匯入測試照</button></div><p className="recognition-status" role="status">{recognitionMessage}</p><RecognitionInspector diagnostic={recognitionDiagnostic} preparation={recognitionPreparation} frame={recognitionFrame} references={testRefs}/>{!testRefs.length&&<button onClick={()=>selectTab('capture')}>先建立參考照片</button>}{candidate&&<div className="flow-result"><img src={candidate.reference.imageUrl} alt="匹配的參考照片"/><h2>候選：{candidate.reference.label}</h2><p>方向 {angleText(candidate.reference.bearing)} · 仍需人工確認</p><button disabled={disabled} onClick={()=>{confirmCandidate();goStep(2,'camera');}}>我確認在此節點，且面向照片同方向</button><Help title="辨識結果"><p>幾何內點 {candidate.inliers}／匹配 {candidate.matches}，不是定位正確率。本輪使用 {testRefs.length} 張參考照，優先目前節點。</p></Help></div>}</>}
           {cameraTask==='direction'&&<div className="flow-summary"><ArrowUp size={34} style={{transform:`rotate(${turnAngle??0}deg)`}}/><b>{turnAngle===null?'先確認目前面向':Math.abs(turnAngle)<18?'面向正確':`向${turnAngle>0?'右':'左'}轉 ${Math.round(Math.abs(turnAngle))}°`}</b><p>{lockFresh?'校正有效 · 20 秒':'校正已過期／未確認'} · {staleSensor?'感測待啟用':angleText(sensor.heading)}</p><button onClick={requestSensors}>啟用方位感測</button><button onClick={()=>selectTab('calibrate')}>選地標並校正</button></div>}
           <Help title="相機與感測"><p>{cameraMessage}。{sensorMessage}。只辨識候選節點，不追蹤步行距離；切換頁籤會暫停鏡頭。感測來源：{sensor.kind}；精度欄位 {sensor.accuracy??'未知'}。</p><button onClick={requestSensors}>重新啟用方位感測</button></Help>
         </div>
