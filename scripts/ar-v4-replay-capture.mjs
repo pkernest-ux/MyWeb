@@ -1,18 +1,17 @@
 import {readFile,realpath} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {createRequire} from 'node:module';
 import {createHash} from 'node:crypto';
-import vm from 'node:vm';
-import ts from 'typescript';
 import sharp from 'sharp';
+import {loadV4Source} from './ar-v4-worker-runtime.mjs';
 
 const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const require=createRequire(import.meta.url);
 
 // Local replay only. Never fetch URLs embedded in an imported diagnostic file.
 export async function replayCapture(capture,{rootDir=repo}={}){
- if(capture?.schema!=='v4-recognition-capture-1'||capture.matcher!=='v4-multiscale-20260907')throw Error('不相容的診斷版本');
+ if(capture?.schema!=='v4-recognition-capture-1'||!['v4-multiscale-20260907','v4-fishnet-20260907'].includes(capture.matcher))throw Error('不相容的診斷版本');
+ const profile=capture.matcher==='v4-multiscale-20260907'?'legacy':capture.context?.profile;
+ if(!['legacy','fishnet'].includes(profile)||(capture.matcher==='v4-multiscale-20260907'&&capture.context?.profile&&capture.context.profile!=='legacy'))throw Error('不相容的辨識模式');
  const f=capture.frame,urls=capture.context?.packUrls,ids=capture.context?.referenceIds;
  if(!f||!Number.isInteger(f.width)||!Number.isInteger(f.height)||f.width<1||f.height<1||f.width>640||f.height>640)throw Error('影格尺寸不合法');
  if(typeof f.imageUrl!=='string'||f.imageUrl.length>4*1024*1024||!/^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(f.imageUrl))throw Error('需要 PNG 辨識影格');
@@ -32,13 +31,12 @@ export async function replayCapture(capture,{rootDir=repo}={}){
  if(meta.format!=='png'||meta.width!==f.width||meta.height!==f.height)throw Error('影格內容與尺寸不一致');
  const pixels=await image.ensureAlpha().raw().toBuffer();
  let receive,response;
- const source=await readFile(path.join(repo,'src/ar-v4-image-recognition.worker.ts'),'utf8');
- vm.runInNewContext(ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText,{require,exports:{},TextEncoder,TextDecoder,self:{addEventListener(_,fn){receive=fn;},postMessage(r){response=r;}}});
+ loadV4Source('ar-v4-image-recognition.worker.ts',{self:{addEventListener(_,fn){receive=fn;},postMessage(r){response=r;}}});
  const send=data=>{receive({data:{requestId:1,...data}});if(!response.ok)throw Error(response.error);return response.result;};
- const prepared=send({type:'preparePacked',targets});if(prepared.targetCount!==targets.length)throw Error('部分特徵包無法重播');
+ const prepared=send({type:'preparePacked',targets,profile});if(prepared.targetCount!==targets.length)throw Error('部分特徵包無法重播');
  const start=performance.now();
- const result=send({type:'detect',width:f.width,height:f.height,pixels:pixels.buffer.slice(pixels.byteOffset,pixels.byteOffset+pixels.byteLength),fullScene:true});
- return {matcher:capture.matcher,targetCount:prepared.targetCount,elapsedMs:Math.round(performance.now()-start),...structuredClone(result)};
+ const result=send({type:'detect',width:f.width,height:f.height,pixels:pixels.buffer.slice(pixels.byteOffset,pixels.byteOffset+pixels.byteLength),fullScene:true,profile});
+ return {matcher:capture.matcher,profile,targetCount:prepared.targetCount,elapsedMs:Math.round(performance.now()-start),...structuredClone(result)};
 }
 
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){

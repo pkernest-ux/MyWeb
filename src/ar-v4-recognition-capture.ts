@@ -1,7 +1,7 @@
-import type {Diagnostic} from './ar-v4-recognition-types';
+import type {Diagnostic,RecognitionProfile} from './ar-v4-recognition-types';
 
-export const MATCHER_REVISION='v4-multiscale-20260907';
-type Context={mode:'public'|'field';revision?:string;nodeId?:string;targetNodeId?:string;referenceIds:string[];packUrls?:string[];sourceWidth:number;sourceHeight:number};
+export const MATCHER_REVISION='v4-fishnet-20260907';
+type Context={mode:'public'|'field';profile?:RecognitionProfile;revision?:string;nodeId?:string;targetNodeId?:string;referenceIds:string[];packUrls?:string[];sourceWidth:number;sourceHeight:number};
 // One uncompressed analysis frame in memory, not a recording. No storage,
 // network, original reference photos, device IDs, tokens or page query strings.
 export class RecognitionCapture {

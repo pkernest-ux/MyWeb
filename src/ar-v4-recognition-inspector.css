@@ -1,1 +1,38 @@
-.v4-recognition-inspector{margin:12px 0;padding:12px;border:1px solid #b8cfbf;border-radius:16px;background:#f5f9f2;color:#214e43;overflow-wrap:anywhere}.v4-recognition-inspector summary{cursor:pointer;font-weight:700;min-height:32px;line-height:1.7}.v4-recognition-inspector p{font-size:13px;line-height:1.7}.v4-recognition-inspector dl{display:flex;gap:16px;flex-wrap:wrap;margin:12px 0}.v4-recognition-inspector dt{font-size:12px}.v4-recognition-inspector dd{margin:0;font-size:22px;font-weight:700}.v4-feature-pair{display:grid;grid-template-columns:1fr 1fr;gap:10px}.v4-feature-pair figure{margin:0;min-width:0}.v4-feature-image{position:relative;line-height:0;color:#ffbb43}.v4-feature-image.accepted{color:#16ebaa}.v4-feature-image img{display:block;width:100%;height:auto;border-radius:8px}.v4-feature-image svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}.v4-feature-image circle{fill:currentColor;stroke:#163d32;stroke-width:.8}.v4-feature-image polygon{fill:currentColor;fill-opacity:.13;stroke:currentColor;stroke-width:2}.v4-feature-pair figcaption{font-size:12px;line-height:1.5;margin-top:4px}.v4-recognition-inspector ul{padding-left:20px;font-size:13px}@media(max-width:420px){.v4-feature-pair{grid-template-columns:1fr}}
+.v4-recognition-inspector{margin:12px 0;padding:12px;border:1px solid #b8cfbf;border-radius:16px;background:#f5f9f2;color:#214e43;overflow-wrap:anywhere;min-width:0}
+.v4-recognition-inspector summary{cursor:pointer;font-weight:700;min-height:36px;line-height:1.7}
+.v4-recognition-inspector p{font-size:13px;line-height:1.7}
+.v4-recognition-inspector dl{display:flex;gap:16px;flex-wrap:wrap;margin:12px 0}
+.v4-recognition-inspector dt{font-size:12px}.v4-recognition-inspector dd{margin:0;font-size:22px;font-weight:700}
+.v4-feature-pair{display:grid;grid-template-columns:1fr 1fr;gap:10px;align-items:start}
+.v4-feature-pair figure{margin:0;min-width:0}.v4-feature-image{position:relative;line-height:0;color:#ffbb43;background:#233e34;border-radius:8px;overflow:hidden;isolation:isolate}
+.v4-feature-image.accepted{color:#16ebaa}.v4-feature-image img{display:block;width:100%;height:100%;object-fit:contain}
+.v4-feature-image svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+.v4-feature-image circle{fill:currentColor;stroke:#163d32;stroke-width:.8}.v4-feature-image polygon{fill:currentColor;fill-opacity:.13;stroke:currentColor;stroke-width:2}
+.v4-feature-pair figcaption{font-size:12px;line-height:1.5;margin-top:5px}.v4-recognition-inspector ul{padding-left:20px;font-size:13px}
+.v4-fishnet-panel{margin:12px 0;padding:12px;border:1px solid #b6cdbd;border-radius:12px;background:#edf4e9;min-width:0}
+.v4-fishnet-heading{display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap;font-size:14px}
+.v4-fishnet-tag{border-radius:20px;padding:3px 8px;background:#e1eade;color:#365b43;font-size:11px;line-height:1.5}
+.v4-fishnet-tag.is-verified{color:#14523b;background:#ceeedd}
+.v4-fishnet-toolbar{display:flex;flex-wrap:wrap;gap:8px 16px;margin:8px 0}
+.v4-fishnet-toolbar label{display:inline-flex!important;flex-direction:row!important;align-items:center;gap:7px;min-height:44px;margin:0;font-size:13px;cursor:pointer}
+.v4-fishnet-toolbar input[type=checkbox]{width:18px!important;height:18px!important;margin:0;accent-color:#286a50;flex:none}
+.v4-fishnet-picker{display:grid!important;grid-template-columns:1fr;gap:5px;font-size:12px;margin:10px 0;min-width:0}
+.v4-fishnet-picker select{width:100%;min-width:0;max-width:100%;min-height:44px;border:1px solid #9fbea8;border-radius:9px;background:#fbfdf9;color:#214e43;font-size:14px;padding:7px 9px}
+.v4-feature-image.sparse{background:#f9fcf6;color:#bc6515;outline:1px solid #cadbcb;outline-offset:-1px}
+.v4-feature-image.sparse.accepted{color:#12664b}
+.v4-fishnet-sparse-points circle{fill:#66877a;stroke:none;opacity:.48}
+.v4-fishnet-grid rect{pointer-events:auto;cursor:pointer;fill:transparent;stroke:#d7eddf;stroke-width:.7;vector-effect:non-scaling-stroke}
+.sparse .v4-fishnet-grid rect{stroke:#86a998}.v4-fishnet-grid rect.paired{fill:#d99139;fill-opacity:.12}
+.v4-fishnet-grid rect.verified{fill:#4ea884;fill-opacity:.16}.v4-fishnet-grid rect.selected{fill:#f7d762;fill-opacity:.27;stroke:#dfae24;stroke-width:2.4}
+.v4-fishnet-grid rect:focus-visible{outline:none;stroke:#173f91;stroke-width:3;fill:#88b7ee;fill-opacity:.25}
+.v4-fishnet-cell-info{padding:10px;border:1px solid #b7cbb8;border-radius:10px;background:#fcfdf9;font-size:12px;margin-top:10px}
+.v4-fishnet-cell-info code{font-size:11px;display:block;overflow-wrap:anywhere;word-break:break-word;background:#eaf1e8;padding:6px;border-radius:6px;line-height:1.5;white-space:normal}
+.v4-fishnet-cell-info li{margin:7px 0}.v4-fishnet-cell-info li span{display:block;margin-top:3px}.v4-fishnet-cell-info p{margin:6px 0}
+.v4-fishnet-help{margin-top:9px}.v4-fishnet-help p{margin:6px 0}.v4-fishnet-panel details>summary{font-size:12px}
+.v4-fishnet-profile{display:flex;gap:6px;flex-wrap:wrap;padding:4px;border:1px solid #b8cfbf;border-radius:13px;background:#eaf1e6;min-width:0}
+.v4-fishnet-profile button{flex:1;min-height:44px;border:1px solid transparent!important;border-radius:9px!important;background:transparent!important;color:#315d47!important;font-size:13px!important;font-weight:600;padding:8px 12px!important;white-space:normal;cursor:pointer}
+.v4-fishnet-profile button[aria-pressed=true]{background:#28664d!important;color:#fff!important;box-shadow:0 1px 4px #163b2926}
+.v4-fishnet-profile button:disabled{opacity:.5;cursor:not-allowed}.v4-fishnet-profile button:focus-visible,.v4-fishnet-picker select:focus-visible,.v4-fishnet-toolbar input:focus-visible{outline:3px solid #d8a52f;outline-offset:2px}
+.v4-fishnet-trial-tools{display:grid;gap:8px;min-width:0;margin:10px 0}.v4-fishnet-trial-tools>button{justify-self:start}.v4-fishnet-trial-tools p{overflow-wrap:anywhere}
+@media(max-width:520px){.v4-feature-pair{grid-template-columns:1fr}.v4-fishnet-panel{padding:9px}.v4-recognition-inspector dl{gap:12px}.v4-fishnet-cell-info dd{font-size:20px}}
+@media(prefers-reduced-motion:reduce){.v4-fishnet-profile button{transition:none}}

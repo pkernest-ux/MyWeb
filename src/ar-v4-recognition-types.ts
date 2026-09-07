@@ -1,11 +1,43 @@
 export type Point = { x: number; y: number };
+export type RecognitionProfile = 'legacy' | 'fishnet';
+/** mapBearing is the map direction of this reference view's centre, not the phone. */
+export type FishnetProjection = { panoramaId: string; yaw: number; pitch: number; fov: number; mapBearing: number | null };
+export type FishnetCellAddress = { id: string; row: number; col: number };
+export type FishnetCell = FishnetCellAddress & { count: number };
+export type FishnetFeaturePoint = Point & {
+  viewCell: FishnetCellAddress; referenceCell: FishnetCellAddress;
+  u: number | null; v: number | null; yaw: number | null; pitch: number | null; mapYaw: number | null;
+  level: number; index: number;
+};
+export type FishnetSummary = {
+  version: 'v4-fishnet-grid-1'; mode: 'panorama' | 'image-only';
+  grid: { columns: number; rows: number }; referenceGrid: { columns: number; rows: number };
+  projection: FishnetProjection | null;
+  /** Counts refer to occupied cells; feature counts include pyramid observations. */
+  occupiedCells: number; referenceOccupiedCells: number;
+  /** features is a bounded display sample; these counts always describe the full index. */
+  featureTotal: number; featureSampled: boolean;
+  cells: FishnetCell[]; referenceCells: FishnetCell[]; features: FishnetFeaturePoint[];
+};
+export type FishnetMatch = {
+  frame: Point; reference: FishnetFeaturePoint; frameCell: FishnetCellAddress;
+  distance: number; verified: boolean;
+};
+export type FishnetDiagnostic = FishnetSummary & {
+  frameGrid: { columns: number; rows: number }; frameCells: FishnetCell[];
+  matches: FishnetMatch[];
+  /** Candidate and verified counts use referenceCell, not the phone's screen grid. */
+  matchCells: FishnetCell[]; verifiedCells: FishnetCell[]; geometryAccepted: boolean;
+};
 export type Reason = 'matched' | 'few_features' | 'few_matches' | 'geometry' | 'clustered' | 'ambiguous' | 'no_targets';
 export type Preparation = {
+  profile?: RecognitionProfile;
   prepared: true; targetCount: number; skippedTargetCount: number;
-  targets: { id: string; featureCount: number; width: number; height: number }[];
+  targets: { id: string; featureCount: number; width: number; height: number; fishnet?: FishnetSummary }[];
   failures: { id: string; reason: string }[];
 };
 export type Diagnostic = {
+  profile?: RecognitionProfile; fishnet?: FishnetDiagnostic;
   reason: Reason; targetId?: string; frameFeatures: number; matchCount: number; inliers: number;
   frameWidth: number; frameHeight: number; targetWidth?: number; targetHeight?: number;
   framePoints: Point[]; referencePoints: Point[]; region: Point[];

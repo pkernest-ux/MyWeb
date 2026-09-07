@@ -1,5 +1,8 @@
 import jsfeatModule from "jsfeat";
-import type { Diagnostic, DetectionReport, Preparation, Reason } from './ar-v4-recognition-types';
+import type { Diagnostic, DetectionReport, Preparation, Reason, RecognitionProfile, FishnetProjection, FishnetSummary, FishnetDiagnostic, FishnetCell } from './ar-v4-recognition-types';
+import { FISHNET_GRID_VERSION, VIEW_GRID, PANORAMA_GRID, normalizeProjection, selectBalancedIndices,
+  summarizeFishnet, fishnetPoint, countCells, imageCell, wrapDegrees } from './ar-v4-fishnet';
+export type { RecognitionProfile, FishnetProjection } from './ar-v4-recognition-types';
 
 type RecognitionPoint = {
   x: number;
@@ -14,20 +17,22 @@ type RecognitionDetection = {
   confidence: number;
 };
 
-type ImagePayload = {
+export type ImagePayload = {
   id: string;
   nodeId?: string;
   width: number;
   height: number;
   pixels: ArrayBuffer;
+  projection?: FishnetProjection | null;
 };
 
 type WorkerRequest =
-  | { type: 'preparePacked'; requestId:number; targets:{id:string;nodeId:string;bytes:ArrayBuffer}[] }
+  | { type: 'preparePacked'; requestId:number; profile?: RecognitionProfile; targets:{id:string;nodeId:string;bytes:ArrayBuffer}[] }
   | {
       type: "prepareMany";
       requestId: number;
       targets: ImagePayload[];
+      profile?: RecognitionProfile;
     }
   | {
       type: "detect";
@@ -36,6 +41,7 @@ type WorkerRequest =
       height: number;
       pixels: ArrayBuffer;
       fullScene?: boolean;
+      profile?: RecognitionProfile;
     };
 
 type TargetPattern = {
@@ -44,6 +50,7 @@ type TargetPattern = {
   width: number;
   height: number;
   levels: FeatureLevel[];
+  fishnet?: FishnetSummary;
 };
 
 type FeatureLevel = {
@@ -79,6 +86,12 @@ const ORIENTATION_RADIUS = 15;
 const ORIENTATION_WIDTHS = new Int32Array([15, 15, 15, 15, 14, 14, 14, 13, 13, 12, 11, 10, 9, 8, 6, 3, 0]);
 
 let targetPatterns: TargetPattern[] = [];
+let preparedProfile: RecognitionProfile = 'legacy';
+const recognitionProfile = (value: unknown): RecognitionProfile => {
+  if (value === undefined || value === 'legacy') return 'legacy';
+  if (value === 'fishnet') return 'fishnet';
+  throw new Error('辨識模式不支援');
+};
 let frameGray: any = null;
 let frameSmooth: any = null;
 let frameDescriptors: any = null;
@@ -122,11 +135,19 @@ const keypointOrientation = (image: any, px: number, py: number) => {
   return Math.atan2(momentY, momentX);
 };
 
-const detectKeypoints = (image: any, corners: any[], limit: number) => {
+const detectKeypoints = (image: any, corners: any[], limit: number, profile: RecognitionProfile = 'legacy') => {
   jsfeat.yape06.laplacian_threshold = 30;
   jsfeat.yape06.min_eigen_value_threshold = 25;
   let count = jsfeat.yape06.detect(image, corners, 17);
-  if (count > limit) {
+  if (profile === 'fishnet') {
+    const detected = corners.slice(0, count);
+    const selected = selectBalancedIndices(detected, image.cols, image.rows, limit);
+    const used = new Set(selected);
+    // Preserve a permutation of unique keypoint objects for the next detector call.
+    const ordered = [...selected, ...detected.map((_: any, i: number) => i).filter((i: number) => !used.has(i))];
+    ordered.forEach((oldIndex, i) => { corners[i] = detected[oldIndex]; });
+    count = selected.length;
+  } else if (count > limit) {
     jsfeat.math.qsort(corners, 0, count - 1, (left: any, right: any) => right.score < left.score);
     count = limit;
   }
@@ -142,7 +163,7 @@ const rgbaToGray = (payload: ImagePayload) => {
   return gray;
 };
 
-const prepareTargetPattern = (target: ImagePayload): TargetPattern => {
+const prepareTargetPattern = (target: ImagePayload, profile: RecognitionProfile = 'legacy'): TargetPattern => {
   const source = rgbaToGray(target);
   const targetLevels: FeatureLevel[] = [];
 
@@ -159,12 +180,18 @@ const prepareTargetPattern = (target: ImagePayload): TargetPattern => {
     }
     jsfeat.imgproc.gaussian_blur(levelImage, smoothImage, 5, 0);
     const corners = createCorners();
-    const count = detectKeypoints(smoothImage, corners, TARGET_FEATURE_LIMIT);
+    const count = detectKeypoints(smoothImage, corners, TARGET_FEATURE_LIMIT, profile);
     const descriptors = new jsfeat.matrix_t(32, TARGET_FEATURE_LIMIT, jsfeat.U8_t | jsfeat.C1_t);
     jsfeat.orb.describe(smoothImage, corners, count, descriptors);
     for (let index = 0; index < count; index += 1) {
-      corners[index].x /= scale;
-      corners[index].y /= scale;
+      if (profile === 'fishnet') {
+        // Map pixel centres using the actual rounded pyramid dimensions.
+        corners[index].x = (corners[index].x + .5) * target.width / width - .5;
+        corners[index].y = (corners[index].y + .5) * target.height / height - .5;
+      } else {
+        corners[index].x /= scale;
+        corners[index].y /= scale;
+      }
     }
     targetLevels.push({ scale, corners: corners.slice(0, count), descriptors, count });
   }
@@ -173,62 +200,122 @@ const prepareTargetPattern = (target: ImagePayload): TargetPattern => {
   if (totalFeatures < MIN_MATCHES) {
     throw new Error("辨識照片的特徵不足，請改用紋理清楚、避免反光的現場照片");
   }
-  return {
+  const pattern: TargetPattern = {
     id: target.id,
     nodeId: target.nodeId || target.id,
     width: target.width,
     height: target.height,
     levels: targetLevels,
   };
+  if (profile === 'fishnet') pattern.fishnet = summarizePattern(pattern, target.projection);
+  return pattern;
 };
 
+const summarizePattern = (pattern: TargetPattern, projection?: FishnetProjection | null) => summarizeFishnet(
+  pattern.id, pattern.width, pattern.height,
+  pattern.levels.flatMap((l, level) => l.corners.map((p, index) => ({ x: p.x, y: p.y, level, index }))), projection);
+
 export const PACK_ALGORITHM='v4-jsfeat-orb-1';
+export const FISHNET_PACK_ALGORITHM='v4-jsfeat-orb-fishnet-1';
 // Published packs contain coordinates + binary descriptors only, never pixels.
-export function compileFeatureTarget(target:ImagePayload):ArrayBuffer{
- const p=prepareTargetPattern(target);
+export function compileFeatureTarget(target:ImagePayload,options?:{profile?:RecognitionProfile}):ArrayBuffer{
+ const profile=recognitionProfile(options?.profile),p=prepareTargetPattern(target,profile);
+ if(profile==='fishnet')return encodeFishnetTarget(p);
  const header=new TextEncoder().encode(JSON.stringify({algorithm:PACK_ALGORITHM,id:p.id,nodeId:p.nodeId,width:p.width,height:p.height,levels:p.levels.map(l=>({scale:l.scale,count:l.count}))}));
  const buffer=new ArrayBuffer(4+header.length+p.levels.reduce((n,l)=>n+l.count*40,0));const view=new DataView(buffer);const bytes=new Uint8Array(buffer);
  view.setUint32(0,header.length,true);bytes.set(header,4);let offset=4+header.length;
  for(const l of p.levels){for(const point of l.corners){view.setFloat32(offset,point.x,true);view.setFloat32(offset+4,point.y,true);offset+=8;}bytes.set(l.descriptors.data.subarray(0,l.count*32),offset);offset+=l.count*32;}
  return buffer;
 }
-export function decodeFeatureTarget(buffer:ArrayBuffer,expected:{id:string;nodeId:string}):TargetPattern{
+function encodeFishnetTarget(p:TargetPattern):ArrayBuffer{
+ const header=new TextEncoder().encode(JSON.stringify({algorithm:FISHNET_PACK_ALGORITHM,profile:'fishnet',id:p.id,nodeId:p.nodeId,
+  width:p.width,height:p.height,levels:p.levels.map(l=>({scale:l.scale,count:l.count})),
+  fishnet:{version:FISHNET_GRID_VERSION,grid:VIEW_GRID,referenceGrid:p.fishnet!.referenceGrid,projection:p.fishnet!.projection},
+  coordinates:'float64-xy'}));
+ // Float64 XY plus the exact projection recreate UV/yaw/pitch/mapYaw losslessly,
+ // avoiding redundant spherical values that could contradict the pack header.
+ const size=4+header.length+p.levels.reduce((n,l)=>n+l.count*48,0);
+ if(header.length>4096||size>65536)throw new Error('特徵包大小不正確');
+ const buffer=new ArrayBuffer(size),view=new DataView(buffer),bytes=new Uint8Array(buffer);
+ view.setUint32(0,header.length,true);bytes.set(header,4);let offset=4+header.length;
+ for(const l of p.levels){for(const point of l.corners){view.setFloat64(offset,point.x,true);view.setFloat64(offset+8,point.y,true);offset+=16;}
+  bytes.set(l.descriptors.data.subarray(0,l.count*32),offset);offset+=l.count*32;}
+ return buffer;
+}
+export function decodeFeatureTarget(buffer:ArrayBuffer,expected:{id:string;nodeId:string},options?:{profile?:RecognitionProfile}):TargetPattern{
+ const profile=recognitionProfile(options?.profile);
  if(!buffer||buffer.byteLength<8||buffer.byteLength>65536)throw new Error('特徵包大小不正確');
  const view=new DataView(buffer),length=view.getUint32(0,true);
  if(length<2||length>4096||length+4>buffer.byteLength)throw new Error('特徵包標頭不正確');
  const h=JSON.parse(new TextDecoder().decode(new Uint8Array(buffer,4,length)));
- if(h.algorithm!==PACK_ALGORITHM||h.id!==expected.id||h.nodeId!==expected.nodeId||!Number.isInteger(h.width)||!Number.isInteger(h.height)||h.width<1||h.height<1||h.width>420||h.height>420||h.levels?.length!==3)throw new Error('特徵包版本或節點不一致');
+ if(!h||h.algorithm!==(profile==='fishnet'?FISHNET_PACK_ALGORITHM:PACK_ALGORITHM)||h.id!==expected.id||h.nodeId!==expected.nodeId||!Number.isInteger(h.width)||!Number.isInteger(h.height)||h.width<1||h.height<1||h.width>420||h.height>420||!Array.isArray(h.levels)||h.levels.length!==3)throw new Error('特徵包版本或節點不一致');
+ let projection:FishnetProjection|null=null;
+ if(profile==='fishnet'){
+  const f=h.fishnet;
+  if(h.profile!=='fishnet'||h.coordinates!=='float64-xy'||!f||f.version!==FISHNET_GRID_VERSION
+   ||f.grid?.columns!==VIEW_GRID.columns||f.grid?.rows!==VIEW_GRID.rows)throw new Error('格網特徵包版本不一致');
+  projection=normalizeProjection(f.projection);
+  if(f.projection!==null&&!projection)throw new Error('格網投影資料不正確');
+  const grid=projection?PANORAMA_GRID:VIEW_GRID;
+  if(f.referenceGrid?.columns!==grid.columns||f.referenceGrid?.rows!==grid.rows)throw new Error('球面格網版本不一致');
+ }
  let offset=4+length;const levels:FeatureLevel[]=[];
  for(let i=0;i<h.levels.length;i++){
-  const l=h.levels[i];if(!Number.isInteger(l.count)||l.count<0||l.count>TARGET_FEATURE_LIMIT||l.scale!==TARGET_SCALE_STEP**i||offset+l.count*40>buffer.byteLength)throw new Error('特徵包層級不正確');
-  const corners=[];for(let j=0;j<l.count;j++){const x=view.getFloat32(offset,true),y=view.getFloat32(offset+4,true);offset+=8;if(!Number.isFinite(x)||!Number.isFinite(y)||x<0||y<0||x>h.width+2||y>h.height+2)throw new Error('特徵座標不正確');corners.push({x,y});}
+  const l=h.levels[i];if(!l||!Number.isInteger(l.count)||l.count<0||l.count>TARGET_FEATURE_LIMIT||l.scale!==TARGET_SCALE_STEP**i||offset+l.count*(profile==='fishnet'?48:40)>buffer.byteLength)throw new Error('特徵包層級不正確');
+  const corners=[];for(let j=0;j<l.count;j++){
+   const x=profile==='fishnet'?view.getFloat64(offset,true):view.getFloat32(offset,true);
+   const y=profile==='fishnet'?view.getFloat64(offset+8,true):view.getFloat32(offset+4,true);offset+=profile==='fishnet'?16:8;
+   if(!Number.isFinite(x)||!Number.isFinite(y)||x<0||y<0||x>h.width+2||y>h.height+2)throw new Error('特徵座標不正確');corners.push({x,y});}
   const descriptors=new jsfeat.matrix_t(32,TARGET_FEATURE_LIMIT,jsfeat.U8_t|jsfeat.C1_t);descriptors.data.set(new Uint8Array(buffer,offset,l.count*32));offset+=l.count*32;levels.push({...l,corners,descriptors});
  }
  if(offset!==buffer.byteLength||levels.reduce((n,l)=>n+l.count,0)<MIN_MATCHES)throw new Error('特徵包未完整或特徵不足');
- return {id:h.id,nodeId:h.nodeId,width:h.width,height:h.height,levels};
+ const pattern:TargetPattern={id:h.id,nodeId:h.nodeId,width:h.width,height:h.height,levels};
+ if(profile==='fishnet')pattern.fishnet=summarizePattern(pattern,projection);
+ return pattern;
 }
+
+// A panorama batch must not assign contradictory map axes or cross node IDs.
+// No directions are filled in from siblings: an unknown map bearing stays unknown.
+const validateBatchProjections=()=>{
+ const groups=new Map<string,TargetPattern[]>();
+ for(const t of targetPatterns)if(t.fishnet?.projection){const id=t.fishnet.projection.panoramaId;const g=groups.get(id)||[];g.push(t);groups.set(id,g);}
+ for(const group of groups.values()){
+  const nodes=new Set(group.map(t=>t.nodeId));
+  const offsets=group.flatMap(t=>{const p=t.fishnet!.projection!;return p.mapBearing===null?[]:[wrapDegrees(p.mapBearing-p.yaw)];});
+  const inconsistent=nodes.size!==1||offsets.some(n=>Math.abs(((n-offsets[0]+540)%360)-180)>.01);
+  if(inconsistent)for(const t of group)t.fishnet=summarizePattern(t,null);
+ }
+};
+const preparedTargets=():Preparation['targets']=>targetPatterns.map(t=>({id:t.id,width:t.width,height:t.height,
+ featureCount:t.levels.reduce((n,l)=>n+l.count,0),...(t.fishnet?{fishnet:t.fishnet}:{})}));
 const preparePacked=(request:Extract<WorkerRequest,{type:'preparePacked'}>):Preparation=>{
  if(request.targets.length>64)throw new Error('本輪特徵包超過上限');
+ preparedProfile=recognitionProfile(request.profile);
  const failures:Preparation['failures']=[];
- targetPatterns=request.targets.flatMap(t=>{try{return [decodeFeatureTarget(t.bytes,t)];}catch(e:any){failures.push({id:t.id,reason:e.message});return [];}});
- return {prepared:true,targetCount:targetPatterns.length,skippedTargetCount:failures.length,failures,targets:targetPatterns.map(t=>({id:t.id,width:t.width,height:t.height,featureCount:t.levels.reduce((n,l)=>n+l.count,0)}))};
+ targetPatterns=request.targets.flatMap(t=>{try{return [decodeFeatureTarget(t.bytes,t,{profile:preparedProfile})];}catch(e:any){failures.push({id:t.id,reason:e.message});return [];}});
+ if(preparedProfile==='fishnet')validateBatchProjections();
+ return {profile:preparedProfile,prepared:true,targetCount:targetPatterns.length,skippedTargetCount:failures.length,failures,targets:preparedTargets()};
 };
 
 const prepareTargets = (request: Extract<WorkerRequest, { type: "prepareMany" }>) => {
+  if(request.targets.length>64)throw new Error('本輪參考照片超過上限');
+  preparedProfile=recognitionProfile(request.profile);
   const failures: Preparation['failures'] = [];
   targetPatterns = request.targets.flatMap((target) => {
     try {
-      return [prepareTargetPattern(target)];
+      return [prepareTargetPattern(target,preparedProfile)];
     } catch (error: any) {
       failures.push({ id: target.id, reason: error?.message || "節點照片無法建立辨識特徵" });
       return [];
     }
   });
+  if(preparedProfile==='fishnet')validateBatchProjections();
   return {
+    profile:preparedProfile,
     prepared: true,
     targetCount: targetPatterns.length,
     skippedTargetCount: failures.length,
-    targets: targetPatterns.map(t => ({ id: t.id, featureCount: t.levels.reduce((sum, l) => sum + l.count, 0), width: t.width, height: t.height })),
+    targets: preparedTargets(),
     failures,
   } satisfies Preparation;
 };
@@ -244,7 +331,7 @@ const ensureFrameBuffers = (width: number, height: number) => {
   if (!levelCorners.length) levelCorners = createCorners();
 };
 
-const describeFrame = () => {
+const describeFrame = (profile: RecognitionProfile = 'legacy') => {
   let total = 0;
   for (let level = 0; level < FRAME_LEVEL_LIMITS.length; level++) {
     const scale = TARGET_SCALE_STEP ** level;
@@ -254,13 +341,18 @@ const describeFrame = () => {
     const smooth = level === 0 ? frameSmooth : new jsfeat.matrix_t(width, height, jsfeat.U8_t | jsfeat.C1_t);
     if (level) jsfeat.imgproc.resample(frameGray, gray, width, height);
     jsfeat.imgproc.gaussian_blur(gray, smooth, 5, 0);
-    const count = detectKeypoints(smooth, levelCorners, FRAME_LEVEL_LIMITS[level]);
+    const count = detectKeypoints(smooth, levelCorners, FRAME_LEVEL_LIMITS[level], profile);
     const descriptors = new jsfeat.matrix_t(32, FRAME_LEVEL_LIMITS[level], jsfeat.U8_t | jsfeat.C1_t);
     jsfeat.orb.describe(smooth, levelCorners, count, descriptors);
     frameDescriptors.data.set(descriptors.data.subarray(0, count * 32), total * 32);
     for (let i = 0; i < count; i++) {
-      frameCorners[total + i].x = levelCorners[i].x * frameWidth / width;
-      frameCorners[total + i].y = levelCorners[i].y * frameHeight / height;
+      if(profile==='fishnet'){
+        frameCorners[total+i].x=(levelCorners[i].x+.5)*frameWidth/width-.5;
+        frameCorners[total+i].y=(levelCorners[i].y+.5)*frameHeight/height-.5;
+      }else{
+        frameCorners[total + i].x = levelCorners[i].x * frameWidth / width;
+        frameCorners[total + i].y = levelCorners[i].y * frameHeight / height;
+      }
     }
     total += count;
   }
@@ -430,6 +522,23 @@ const blankDiagnostic = (width:number,height:number,frameFeatures:number,reason:
   framePoints:[],referencePoints:[],region:[],
 });
 
+const fishnetDiagnostic = (target:TargetPattern,width:number,height:number,matches:FeatureMatch[],frameCells:FishnetCell[]):FishnetDiagnostic => {
+  const summary=target.fishnet||summarizePattern(target);
+  const indexed=matches.map(m=>{
+    const point=target.levels[m.patternLevel].corners[m.patternIndex],frame=frameCorners[m.screenIndex];
+    return {frame:{x:frame.x,y:frame.y},reference:{...fishnetPoint(point.x,point.y,target.width,target.height,target.id,summary.projection),
+      level:m.patternLevel,index:m.patternIndex},frameCell:imageCell(frame.x,frame.y,width,height,'frame'),distance:m.distance,verified:false};
+  });
+  return {...summary,frameGrid:{...VIEW_GRID},frameCells,matches:indexed,
+    matchCells:countCells(indexed.map(m=>m.reference.referenceCell)),verifiedCells:[],geometryAccepted:false};
+};
+const markFishnetVerified=(diagnostic:Diagnostic,indices:number[])=>{
+  if(!diagnostic.fishnet)return;
+  const verified=new Set(indices),f=diagnostic.fishnet;
+  f.matches.forEach((m,i)=>{m.verified=verified.has(i);});
+  f.verifiedCells=countCells(f.matches.filter(m=>m.verified).map(m=>m.reference.referenceCell));
+};
+
 // Bounded, repeatable robust fitting. Reject degenerate minimal samples, then
 // locally refit their consensus before scoring. The final acceptance gates below
 // remain unchanged; replaying an exported frame must not depend on Math.random().
@@ -468,9 +577,11 @@ export const fitLocalHomography = (source:RecognitionPoint[],destination:Recogni
 };
 const estimateLocalDetection = (
   matches:FeatureMatch[],width:number,height:number,target:TargetPattern,frameFeatures:number,
+  profile:RecognitionProfile='legacy',frameCells:FishnetCell[]=[],
 ):DetectionReport => {
   const diagnostics:Diagnostic={...blankDiagnostic(width,height,frameFeatures,'few_matches'),
-    targetId:target.id,targetWidth:target.width,targetHeight:target.height,matchCount:matches.length};
+    profile,targetId:target.id,targetWidth:target.width,targetHeight:target.height,matchCount:matches.length,
+    ...(profile==='fishnet'?{fishnet:fishnetDiagnostic(target,width,height,matches,frameCells)}:{})};
   const reject=(reason:Reason):DetectionReport=>({detection:null,diagnostics:{...diagnostics,reason}});
   if(matches.length<MIN_MATCHES)return reject('few_matches');
   const sourcePoints=matches.map(m=>target.levels[m.patternLevel].corners[m.patternIndex]);
@@ -478,28 +589,30 @@ const estimateLocalDetection = (
   const kernel=new jsfeat.motion_model.homography2d();
   const found=fitLocalHomography(sourcePoints,destinationPoints);
   if(!found)return reject('geometry');
-  const source:RecognitionPoint[]=[],destination:RecognitionPoint[]=[];
+  const source:RecognitionPoint[]=[],destination:RecognitionPoint[]=[],sourceIndices:number[]=[];
   for(let i=0;i<matches.length;i++)if(matchMask.data[i]){
     source.push({x:sourcePoints[i].x,y:sourcePoints[i].y});
     destination.push({x:destinationPoints[i].x,y:destinationPoints[i].y});
+    sourceIndices.push(i);
   }
   diagnostics.inliers=source.length;
   if(source.length<MIN_INLIERS||source.length/matches.length<MIN_INLIER_RATIO)return reject('geometry');
   if(!kernel.run(source,destination,homography,source.length))return reject('geometry');
   const h=homography.data;let sum=0;
   // Re-check residuals after refitting; RANSAC's pre-refit mask alone is insufficient.
-  const verifiedSource:RecognitionPoint[]=[],verifiedDestination:RecognitionPoint[]=[];
+  const verifiedSource:RecognitionPoint[]=[],verifiedDestination:RecognitionPoint[]=[],verifiedIndices:number[]=[];
   source.forEach((p,i)=>{
     const d=h[6]*p.x+h[7]*p.y+h[8];
     const x=(h[0]*p.x+h[1]*p.y+h[2])/d,y=(h[3]*p.x+h[4]*p.y+h[5])/d;
     const error=Math.hypot(x-destination[i].x,y-destination[i].y);
-    if(Number.isFinite(error)&&Math.abs(d)>1e-8&&error<=4){verifiedSource.push(p);verifiedDestination.push(destination[i]);sum+=error;}
+    if(Number.isFinite(error)&&Math.abs(d)>1e-8&&error<=4){verifiedSource.push(p);verifiedDestination.push(destination[i]);verifiedIndices.push(sourceIndices[i]);sum+=error;}
   });
   diagnostics.inliers=verifiedSource.length;
   diagnostics.errorPixels=verifiedSource.length?sum/verifiedSource.length:Infinity;
   diagnostics.framePoints=verifiedDestination;diagnostics.referencePoints=verifiedSource;
   diagnostics.region=supportHull(verifiedDestination);
   diagnostics.coverage=polygonArea(diagnostics.region)/(width*height);
+  markFishnetVerified(diagnostics,verifiedIndices);
   if(verifiedSource.length<MIN_INLIERS||verifiedSource.length/matches.length<MIN_INLIER_RATIO||diagnostics.errorPixels>2.5)return reject('geometry');
   if(!hasSpread(verifiedSource,target.width,target.height,.015)||!hasSpread(verifiedDestination,width,height,.035))return reject('clustered');
   const xs=verifiedDestination.map(p=>p.x),ys=verifiedDestination.map(p=>p.y);
@@ -507,6 +620,7 @@ const estimateLocalDetection = (
     {x:Math.min(...xs),y:Math.min(...ys)},{x:Math.max(...xs),y:Math.min(...ys)},
     {x:Math.max(...xs),y:Math.max(...ys)},{x:Math.min(...xs),y:Math.max(...ys)},
   ];
+  if(diagnostics.fishnet)diagnostics.fishnet.geometryAccepted=true;
   return {detection:{targetId:target.id,corners,inliers:verifiedSource.length,matchCount:matches.length,
     confidence:Math.min(1,verifiedSource.length/30)},diagnostics:{...diagnostics,reason:'matched'}};
 };
@@ -514,13 +628,20 @@ export const ambiguousNodes = (first:{nodeId:string;inliers:number},second?:{nod
   Boolean(second&&first.nodeId!==second.nodeId&&(first.inliers<second.inliers*1.25||first.inliers-second.inliers<4));
 
 const detect = (request:Extract<WorkerRequest,{type:'detect'}>):DetectionReport => {
-  const empty=(reason:Reason,count=0):DetectionReport=>({detection:null,diagnostics:blankDiagnostic(request.width,request.height,count,reason)});
+  const profile=recognitionProfile(request.profile);
+  if(profile!==preparedProfile)throw new Error('辨識模式與已載入特徵不一致');
+  let frameCells:FishnetCell[]=[];
+  const empty=(reason:Reason,count=0):DetectionReport=>({detection:null,diagnostics:{...blankDiagnostic(request.width,request.height,count,reason),profile,
+    ...(profile==='fishnet'?{fishnet:{...summarizeFishnet('',request.width,request.height,[]),frameGrid:{...VIEW_GRID},frameCells,
+      matches:[],matchCells:[],verifiedCells:[],geometryAccepted:false}}:{})}});
   if(!targetPatterns.length)return empty('no_targets');
   ensureFrameBuffers(request.width,request.height);
   jsfeat.imgproc.grayscale(new Uint8Array(request.pixels),request.width,request.height,frameGray);
-  const frameCount=describeFrame();
+  const frameCount=describeFrame(profile);
+  if(profile==='fishnet')frameCells=countCells(frameCorners.slice(0,frameCount).map(p=>imageCell(p.x,p.y,request.width,request.height,'frame')));
   if(frameCount<MIN_MATCHES)return empty('few_features',frameCount);
-  const attempts=targetPatterns.map(t=>({...estimateLocalDetection(matchFeatures(frameCount,t.levels),request.width,request.height,t,frameCount),nodeId:t.nodeId}));
+  const attempts=targetPatterns.map(t=>({...estimateLocalDetection(matchFeatures(frameCount,t.levels),request.width,request.height,t,frameCount,profile,frameCells),nodeId:t.nodeId}));
+  // Pick the strongest view; never sum votes from overlapping views of one node.
   const accepted=attempts.filter(a=>a.detection).sort((a,b)=>b.detection!.inliers-a.detection!.inliers);
   if(!accepted.length)return attempts.sort((a,b)=>b.diagnostics.inliers-a.diagnostics.inliers||b.diagnostics.matchCount-a.diagnostics.matchCount)[0];
   const best=accepted[0],other=accepted.find(a=>a.nodeId!==best.nodeId);

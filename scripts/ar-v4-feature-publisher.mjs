@@ -2,19 +2,14 @@ import {readFile,writeFile,mkdir,realpath} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createHash} from 'node:crypto';
-import {createRequire} from 'node:module';
-import vm from 'node:vm';
-import ts from 'typescript';
 import sharp from 'sharp';
+import {loadV4Source} from './ar-v4-worker-runtime.mjs';
 
 const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
-const require=createRequire(import.meta.url);
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 let compiler;
 async function getCompiler(){
- if(!compiler){const source=await readFile(path.join(repo,'src/ar-v4-image-recognition.worker.ts'),'utf8');const exports={};
-  vm.runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2020,esModuleInterop:true}}).outputText,{exports,require,TextEncoder,TextDecoder,self:{addEventListener(){},postMessage(){}}});compiler=exports;
- }return compiler;
+ return compiler??=loadV4Source();
 }
 const pick=(o,keys)=>Object.fromEntries(keys.filter(k=>o[k]!==undefined).map(k=>[k,o[k]]));
 const nodeKeys='id x y title code description enabled navigable canStop publicSelectable isVerticalShaft shaftId guideTitle guideInstruction guideExternalUrl guideDirectionMode guideReferenceBearing guideDeviceHeading guideHeadingAccuracy guideHeadingCapturedAt'.split(' ');
@@ -30,7 +25,7 @@ async function imageBytes(url,rootDir){
 // Called by CI after an admin save, or by the local backend. Serial extraction
 // bounds decoded-image memory; no reference pixels enter the public catalog.
 export async function compilePublicCatalog(data,{rootDir=repo}={}){
- const engine=await getCompiler(),assets=new Map(),failures=[];let targetCount=0,featureBytes=0;
+ const engine=await getCompiler(),assets=new Map(),failures=[];let targetCount=0,featureBytes=0,fishnetTargetCount=0,fishnetFeatureBytes=0;
  const revision=hash(JSON.stringify(data));const projects=Array.isArray(data.projects)?data.projects:[data];
  const publish=(folder,bytes,ext)=>{const url=`assets/ar-v4-public/${folder}/${hash(bytes)}.${ext}`;assets.set(url,bytes);return './'+url;};
  async function mapImage(url){
@@ -38,18 +33,27 @@ export async function compilePublicCatalog(data,{rootDir=repo}={}){
   if(!url.startsWith('data:')&&!url.startsWith('assets/')&&!url.startsWith('./assets/'))return /^https:\/\//.test(url)?url:'';
   const bytes=await imageBytes(url,rootDir);return publish('maps',await sharp(bytes,{limitInputPixels:64000000}).rotate().resize(2048,2048,{fit:'inside',withoutEnlargement:true}).jpeg({quality:85}).toBuffer(),'jpg');
  }
- async function compileNode(raw){
+ async function compileNode(raw,locationIds){
   const node={...pick(raw,nodeKeys),recognitionRefs:[]};const refs=[];
-  for(const o of raw.fieldObservations||[])if(o.imageUrl)refs.push({id:JSON.stringify([raw.id,o.id]),imageUrl:o.imageUrl,bearing:o.mapBearing??null});
+  for(const o of raw.fieldObservations||[])if(o.imageUrl)refs.push({id:JSON.stringify([raw.id,o.id]),imageUrl:o.imageUrl,bearing:o.mapBearing??null,
+   projection:o.source==='panorama-frame'&&typeof o.panorama?.batchId==='string'&&o.panorama.batchId?{panoramaId:JSON.stringify([...locationIds,raw.id,o.panorama.batchId]),yaw:o.panorama.yaw,pitch:o.panorama.pitch,fov:o.panorama.fov,mapBearing:o.mapBearing??null}:undefined});
   for(const [key,url]of [['main',raw.imageUrl],['guide',raw.guideImageUrl]])if(url&&!refs.some(r=>r.imageUrl===url))refs.push({id:JSON.stringify([raw.id,key]),imageUrl:url,bearing:raw.guideReferenceBearing??null});
   for(const r of refs){
    const ref={id:r.id,nodeId:raw.id,bearing:r.bearing};
    try{
     const bytes=await imageBytes(r.imageUrl,rootDir);
     const {data:pixels,info}=await sharp(bytes,{limitInputPixels:64000000}).rotate().resize(420,420,{fit:'inside',withoutEnlargement:true}).ensureAlpha().raw().toBuffer({resolveWithObject:true});
-    const payload={id:r.id,nodeId:raw.id,width:info.width,height:info.height,pixels:pixels.buffer.slice(pixels.byteOffset,pixels.byteOffset+pixels.byteLength)};
+    const payload={id:r.id,nodeId:raw.id,width:info.width,height:info.height,pixels:pixels.buffer.slice(pixels.byteOffset,pixels.byteOffset+pixels.byteLength),projection:r.projection};
     const pack=engine.compileFeatureTarget(payload);engine.decodeFeatureTarget(pack,payload);
     const packed=Buffer.from(pack);ref.packUrl=publish('packs',packed,'bin');ref.bytes=packed.length;featureBytes+=packed.length;targetCount++;
+    // Side-by-side immutable packs preserve the original mode and old clients.
+    // A failed experimental index must never remove the legacy reference.
+    try{
+     const fishnet=engine.compileFeatureTarget(payload,{profile:'fishnet'});
+     engine.decodeFeatureTarget(fishnet,payload,{profile:'fishnet'});
+     const bytes=Buffer.from(fishnet);ref.fishnetPackUrl=publish('packs',bytes,'bin');ref.fishnetBytes=bytes.length;
+     fishnetFeatureBytes+=bytes.length;fishnetTargetCount++;
+    }catch(e){ref.fishnetError=String(e.message).slice(0,180);}
    }catch(e){ref.error=String(e.message).slice(0,180);failures.push({nodeId:raw.id,id:r.id,error:ref.error});}
    node.recognitionRefs.push(ref);
   }
@@ -62,13 +66,14 @@ export async function compilePublicCatalog(data,{rootDir=repo}={}){
   const project={project:pick(p.project||{},['id','name','updatedAt']),systemConfig:{},buildings:[]};
   for(const b of p.buildings||[]){const building={id:b.id,name:b.name,floors:[]};
    for(const f of b.floors||[]){const floor={...pick(f,['id','name','bounds','mapUpHeading']),imageUrl:await mapImage(f.imageUrl),navigationImageUrl:await mapImage(f.navigationImageUrl),markers:[],waypoints:[],edges:(f.edges||[]).map(e=>pick(e,['id','start','end']))};
-    for(const n of f.markers||[])floor.markers.push(await compileNode(n));
-    for(const n of f.waypoints||[])floor.waypoints.push(await compileNode(n));
+    const locationIds=[p.project?.id||'',b.id||'',f.id||''];
+    for(const n of f.markers||[])floor.markers.push(await compileNode(n,locationIds));
+    for(const n of f.waypoints||[])floor.waypoints.push(await compileNode(n,locationIds));
     building.floors.push(floor);
    }project.buildings.push(building);
   }result.push(project);
  }
- const catalog={schema:'v4-public-1',algorithm:engine.PACK_ALGORITHM,revision,projects:result,stats:{targetCount,featureBytes,failedCount:failures.length}};
+ const catalog={schema:'v4-public-1',algorithm:engine.PACK_ALGORITHM,fishnetAlgorithm:engine.FISHNET_PACK_ALGORITHM,revision,projects:result,stats:{targetCount,featureBytes,failedCount:failures.length,fishnetTargetCount,fishnetFeatureBytes}};
  assets.set('assets/ar-v4-public/catalog.json',Buffer.from(JSON.stringify(catalog)));
  return {catalog,assets,failures};
 }

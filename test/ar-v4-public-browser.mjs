@@ -39,7 +39,7 @@ try{
  page.once('dialog',d=>d.accept());const exported=page.waitForEvent('download');await captureButton.click();
  const download=await exported;await download.saveAs(out+'/recognition-capture.json');
  const capture=JSON.parse(await readFile(out+'/recognition-capture.json','utf8'));
- assert.equal(capture.schema,'v4-recognition-capture-1');assert.equal(capture.matcher,'v4-multiscale-20260907');
+ assert.equal(capture.schema,'v4-recognition-capture-1');assert.equal(capture.matcher,'v4-fishnet-20260907');assert.equal(capture.context.profile,'fishnet');
  assert.equal(capture.frame.width,640);assert.equal(capture.frame.height,480);assert.match(capture.frame.imageUrl,/^data:image\/png;base64,/);
  assert.equal(capture.diagnostic.frameWidth,capture.frame.width);assert.equal(capture.context.mode,'public');assert.equal(capture.context.packUrls.length,5);
  assert.ok(!JSON.stringify(capture.context).includes('data:image'),'export must not contain reference photo payloads');
@@ -49,10 +49,10 @@ try{
   const send=data=>new Promise((resolve,reject)=>{const requestId=++seq,timer=setTimeout(()=>reject(Error('capture replay timeout')),15000);const receive=e=>{if(e.data.requestId!==requestId)return;clearTimeout(timer);worker.removeEventListener('message',receive);e.data.ok?resolve(e.data.result):reject(Error(e.data.error));};worker.addEventListener('message',receive);worker.postMessage({requestId,...data});});
   try{
    const targets=await Promise.all(capture.context.packUrls.map(async url=>{const bytes=await(await fetch(url)).arrayBuffer(),len=new DataView(bytes).getUint32(0,true),h=JSON.parse(new TextDecoder().decode(new Uint8Array(bytes,4,len)));return{id:h.id,nodeId:h.nodeId,bytes};}));
-   await send({type:'preparePacked',targets});
+   await send({type:'preparePacked',targets,profile:capture.context.profile});
    const img=await new Promise(resolve=>{const i=new Image();i.onload=()=>resolve(i);i.src=capture.frame.imageUrl;});
    const c=document.createElement('canvas');c.width=capture.frame.width;c.height=capture.frame.height;c.getContext('2d').drawImage(img,0,0);
-   return await send({type:'detect',width:c.width,height:c.height,pixels:c.getContext('2d').getImageData(0,0,c.width,c.height).data.buffer,fullScene:true});
+   return await send({type:'detect',width:c.width,height:c.height,pixels:c.getContext('2d').getImageData(0,0,c.width,c.height).data.buffer,fullScene:true,profile:capture.context.profile});
   }finally{worker.terminate();}
  },capture);
  assert.deepEqual(replay.diagnostics,capture.diagnostic,'lossless exported analysis frame reproduces its exact diagnostics with the same packs');

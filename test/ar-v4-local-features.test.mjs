@@ -1,13 +1,9 @@
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {createRequire} from 'node:module';
-import vm from 'node:vm';
 import test from 'node:test';
 import ts from 'typescript';
-const require=createRequire(import.meta.url);
-const source=await readFile(new URL('../src/ar-v4-image-recognition.worker.ts',import.meta.url),'utf8');
-const output=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.CommonJS,esModuleInterop:true}}).outputText;
-const exports={};vm.runInNewContext(output,{exports,require,self:{addEventListener(){},postMessage(){}}});
+import {loadV4Source} from '../scripts/ar-v4-worker-runtime.mjs';
+const exports=loadV4Source();
 const grid=(x,y,w,h)=>Array.from({length:16},(_,i)=>({x:x+i%4*w/3,y:y+Math.floor(i/4)*h/3}));
 test('local support accepts distributed partial features without requiring full reference borders',()=>{
  assert.equal(exports.hasSpread(grid(100,70,140,110),420,315,.015),true);

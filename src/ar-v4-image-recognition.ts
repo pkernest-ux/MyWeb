@@ -1,4 +1,4 @@
-import type { Diagnostic, Preparation, DetectionReport } from './ar-v4-recognition-types';
+import type { Diagnostic, Preparation, DetectionReport, RecognitionProfile, FishnetProjection } from './ar-v4-recognition-types';
 import {fetchFeaturePack} from './ar-v4-feature-cache';
 export type RecognitionPoint = {
   x: number;
@@ -17,11 +17,13 @@ export type RecognitionTarget = {
   id: string;
   nodeId?: string;
   imageUrl: string;
+  projection?: FishnetProjection;
 };
 
 export type OrbImageTrackerOptions = {
   /** Allow a field photograph to fill the frame; legacy marker tracking remains the default. */
   fullScene?: boolean;
+  profile?: RecognitionProfile;
 };
 
 type WorkerResult = DetectionReport | Preparation;
@@ -79,16 +81,18 @@ export class OrbImageTracker {
   private requestId = 0;
   private pending = new Map<number, PendingRequest>();
   private readonly fullScene: boolean;
+  public readonly profile: RecognitionProfile;
 
   constructor(options: OrbImageTrackerOptions = {}) {
     this.fullScene = options.fullScene === true;
+    this.profile = options.profile === 'fishnet' ? 'fishnet' : 'legacy';
   }
 
   async prepare(imageUrl: string) {
     await this.prepareMany([{ id: "target", imageUrl }]);
   }
 
-  async preparePacked(targets:{id:string;nodeId:string;packUrl?:string;packError?:string}[]){
+  async preparePacked(targets:{id:string;nodeId:string;packUrl?:string;packError?:string;fishnetPackUrl?:string;fishnetError?:string}[]){
     this.dispose();const generation=this.generation;
     this.preparation=null;this.diagnostics=null;
     const controller=new AbortController();this.loadController=controller;
@@ -96,8 +100,9 @@ export class OrbImageTracker {
     const ready:{id:string;nodeId:string;bytes:ArrayBuffer}[]=[],failures:Preparation['failures']=[];
     const unique=targets.filter((t,i,a)=>a.findIndex(x=>x.id===t.id)===i).slice(0,64);let next=0;
     const load=async()=>{while(next<unique.length&&!controller.signal.aborted){const t=unique[next++];try{
-      if(!t.packUrl)throw new Error(t.packError||'此照片尚未發布特徵包');
-      ready.push({id:t.id,nodeId:t.nodeId,bytes:await fetchFeaturePack(t.packUrl,controller.signal)});
+      const url=this.profile==='fishnet'?t.fishnetPackUrl:t.packUrl;
+      if(!url)throw new Error((this.profile==='fishnet'?t.fishnetError:t.packError)||(this.profile==='fishnet'?'此照片尚未發布 Fishnet 索引；可切原版對照':'此照片尚未發布特徵包'));
+      ready.push({id:t.id,nodeId:t.nodeId,bytes:await fetchFeaturePack(url,controller.signal)});
     }catch(e:any){failures.push({id:t.id,reason:e.message||'特徵包載入失敗'});}}};
     try{await Promise.all([load(),load()]);}finally{clearTimeout(timer);}
     if(generation!==this.generation)throw new Error('圖像辨識已停止');
@@ -105,7 +110,7 @@ export class OrbImageTracker {
     if(!ready.length){this.preparation={prepared:true,targetCount:0,skippedTargetCount:failures.length,targets:[],failures};throw new Error('沒有可用的特徵包，請稍後重試或使用地圖');}
     const worker=new Worker(new URL('./ar-v4-image-recognition.worker.ts',import.meta.url),{name:'v4-local-features',type:'module'});
     this.worker=worker;worker.addEventListener('message',this.handleMessage);worker.addEventListener('error',this.handleWorkerError);
-    const result=await this.request({type:'preparePacked',targets:ready},ready.map(t=>t.bytes),10000);
+    const result=await this.request({type:'preparePacked',targets:ready,profile:this.profile},ready.map(t=>t.bytes),10000);
     if(!('prepared' in result))throw new Error('特徵包回應格式錯誤');
     this.preparation={...result,failures:[...failures,...result.failures],skippedTargetCount:result.skippedTargetCount+failures.length};
     this.prepared=result.targetCount>0;if(!this.prepared)throw new Error('特徵包不相容或損壞，請重新發布');return this.preparation;
@@ -125,13 +130,13 @@ export class OrbImageTracker {
     const targetResults = await Promise.allSettled(
       uniqueTargets.map(async (target) => {
         const image = await loadImage(target.imageUrl);
-        return { id: target.id, nodeId: target.nodeId, ...imageToPixels(image) };
+        return { id: target.id, nodeId: target.nodeId, projection:target.projection, ...imageToPixels(image) };
       }),
     );
     // Leaving the camera while images load must not create a late orphan worker.
     if (generation !== this.generation) throw new Error('圖像辨識已停止');
     const preparedTargets = targetResults
-      .filter((result): result is PromiseFulfilledResult<{ id: string; nodeId: string | undefined; width: number; height: number; pixels: ArrayBuffer }> =>
+      .filter((result): result is PromiseFulfilledResult<{ id: string; nodeId: string | undefined; projection: FishnetProjection | undefined; width: number; height: number; pixels: ArrayBuffer }> =>
         result.status === "fulfilled",
       )
       .map((result) => result.value);
@@ -152,6 +157,7 @@ export class OrbImageTracker {
       {
         type: "prepareMany",
         targets: preparedTargets,
+        profile: this.profile,
       },
       preparedTargets.map((target) => target.pixels),
       60_000,
@@ -175,6 +181,7 @@ export class OrbImageTracker {
         height: frameCanvas.height,
         pixels: imageData.data.buffer,
         fullScene: this.fullScene,
+        profile: this.profile,
       },
       [imageData.data.buffer],
       10_000,

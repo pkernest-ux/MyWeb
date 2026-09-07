@@ -16,6 +16,12 @@ test('local lossless capture replays against immutable packs without external ac
  const capture={schema:'v4-recognition-capture-1',matcher:'v4-multiscale-20260907',context:{packUrls:[ref.packUrl],referenceIds:[ref.id]},frame:{width:w,height:h,imageUrl}};
  const result=await replayCapture(capture,{rootDir});assert.equal(result.detection.targetId,ref.id);
  const repeated=await replayCapture(capture,{rootDir});assert.deepEqual(result.diagnostics,repeated.diagnostics);
+ const fishnetCapture={...capture,matcher:'v4-fishnet-20260907',context:{...capture.context,profile:'fishnet',packUrls:[ref.fishnetPackUrl]}};
+ const fishnet=await replayCapture(fishnetCapture,{rootDir});assert.equal(fishnet.profile,'fishnet');assert.equal(fishnet.detection.targetId,ref.id);assert.ok(fishnet.diagnostics.fishnet);
+ assert.deepEqual(fishnet.diagnostics,(await replayCapture(fishnetCapture,{rootDir})).diagnostics);
+ await assert.rejects(replayCapture({...fishnetCapture,context:{...fishnetCapture.context,profile:'unknown'}},{rootDir}),/辨識模式/);
+ await assert.rejects(replayCapture({...fishnetCapture,context:{...fishnetCapture.context,profile:'legacy'}},{rootDir}),/無法重播/);
+ await assert.rejects(replayCapture({...capture,context:{...capture.context,profile:'fishnet'}},{rootDir}),/辨識模式/);
  await assert.rejects(replayCapture({...capture,context:{...capture.context,packUrls:['https://example.com/private.bin']}},{rootDir}),/外部網址/);
  await assert.rejects(replayCapture({...capture,frame:{...capture.frame,width:640}},{rootDir}),/尺寸不一致/);
  await assert.rejects(replayCapture({...capture,matcher:'old'},{rootDir}),/版本/);
