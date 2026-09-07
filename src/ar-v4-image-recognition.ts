@@ -50,14 +50,15 @@ const loadImage = (url: string) =>
     image.src = url;
   });
 
-export const recognitionFrameSize = (width:number,height:number) => {
-  const scale=Math.min(1,420/Math.max(1,width,height));
+export const recognitionFrameSize = (width:number,height:number,maxSide=640) => {
+  const scale=Math.min(1,maxSide/Math.max(1,width,height));
   return {width:Math.max(1,Math.round(width*scale)),height:Math.max(1,Math.round(height*scale))};
 };
 const imageToPixels = (image: HTMLImageElement) => {
   const sourceWidth = image.naturalWidth || image.width;
   const sourceHeight = image.naturalHeight || image.height;
-  const {width,height} = recognitionFrameSize(sourceWidth,sourceHeight);
+  // Reference extraction must stay identical to the published 420px packs.
+  const {width,height} = recognitionFrameSize(sourceWidth,sourceHeight,420);
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;

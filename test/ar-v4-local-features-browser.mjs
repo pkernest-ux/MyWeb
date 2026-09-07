@@ -23,13 +23,18 @@ try{
   const crop=canvas(236,315);crop.getContext('2d').drawImage(image,-92,0);out.portraitCrop=await detect(crop);
   const shifted=canvas(300,240);const sx=shifted.getContext('2d');sx.fillStyle='#ddd';sx.fillRect(0,0,300,240);sx.translate(150,120);sx.rotate(.08);sx.drawImage(image,-210,-158);out.rotatedCrop=await detect(shifted);
   const occluded=canvas(420,315),oc=occluded.getContext('2d');oc.drawImage(image,0,0);oc.fillStyle='#fff';oc.fillRect(0,0,170,315);out.occluded=await detect(occluded);
+  const close=canvas(420,315);close.getContext('2d').drawImage(image,-147,-110,714,535.5);out.closeView=await detect(close);
+  const phone=canvas(360,640);phone.getContext('2d').drawImage(image,-240,5,840,630);out.closePortrait=await detect(phone);
+  out.repeated=await detect(phone);
+  if(JSON.stringify(out.closePortrait)!==JSON.stringify(out.repeated))throw Error('same pixels must produce repeatable diagnostics');
   out.unrelated=await detect(picture(479));out.blank=await detect(canvas(420,315));
+  for(let i=0;i<20;i++){const negative=await detect(picture(1001+i*59));if(negative.detection)throw Error('unrelated negative accepted: '+i);}
   await prepare([target('a','A'),target('duplicate','B')]);out.ambiguous=await detect(crop);
   await prepare([target('a','A'),target('a-45','A')]);out.sameNode=await detect(crop);
   out.skipped=await prepare([target('a','A'),target('blank','B',canvas(420,315))]);worker.terminate();
   return Object.fromEntries(Object.entries(out).map(([k,r])=>[k,r.diagnostics?{targetId:r.detection?.targetId||null,reason:r.diagnostics.reason,inliers:r.diagnostics.inliers,matches:r.diagnostics.matchCount,coverage:r.diagnostics.coverage}:r]));
  });console.log(JSON.stringify(results,null,2));
- for(const key of ['self','portraitCrop','rotatedCrop','occluded','sameNode'])assert.equal(results[key].targetId,'a',key);
+ for(const key of ['self','portraitCrop','rotatedCrop','occluded','sameNode','closeView','closePortrait'])assert.equal(results[key].targetId,'a',key);
  for(const key of ['unrelated','blank','ambiguous'])assert.equal(results[key].targetId,null,key);
  assert.equal(results.ambiguous.reason,'ambiguous');assert.equal(results.blank.reason,'few_features');assert.equal(results.skipped.targetCount,1);assert.equal(results.skipped.skippedTargetCount,1);
  console.log('PASS V4 real worker: portrait/rotated partial views and occlusion accepted; negatives/ambiguity rejected; weak reference reported. Synthetic images only, not field accuracy.');

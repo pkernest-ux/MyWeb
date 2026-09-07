@@ -3,6 +3,7 @@ import {ArrowLeft,ArrowUp,Camera,Compass,Map as MapIcon,RefreshCw} from 'lucide-
 import {OrbImageTracker,recognitionFrameSize} from './ar-v4-image-recognition';
 import {RECOGNITION_REASONS,type Diagnostic,type Preparation} from './ar-v4-recognition-types';
 import {RecognitionInspector} from './ar-v4-recognition-inspector';
+import {RecognitionCapture} from './ar-v4-recognition-capture';
 import {advanceNodeConfirmation,type NodeConfirmation} from './ar-v4-recognition-stability';
 import {EMPTY_SENSOR,sensorFromEvent,type FieldSensor,nodeLabel} from './ar-v4-field-core';
 import {angle,delta,wrap,publicRecognitionScope,confirmProgress,type PublicReference} from './ar-v4-public-core';
@@ -15,6 +16,7 @@ export default function PublicGuide({graph,segments,points,destinationId,origin,
  const [lastSeen,setLastSeen]=useState(0),[mapOpen,setMapOpen]=useState(false);
  const [diagnostic,setDiagnostic]=useState<Diagnostic|null>(null),[preparation,setPreparation]=useState<Preparation|null>(null),[sample,setSample]=useState('');
  const diagnosticOpen=useRef(false);
+ const capture=useMemo(()=>new RecognitionCapture(),[]);
  const video=useRef<HTMLVideoElement>(null),stream=useRef<MediaStream|null>(null),generation=useRef(0),sensorRef=useRef(sensor);
  sensorRef.current=sensor;
  const arrived=index>=segments.length;
@@ -53,6 +55,7 @@ export default function PublicGuide({graph,segments,points,destinationId,origin,
   let cancelled=false,timer:ReturnType<typeof setTimeout>|undefined,confirmation:NodeConfirmation|null=null;const tracker=new OrbImageTracker({fullScene:true});const canvas=document.createElement('canvas');
   setCandidate(null);setLastSeen(0);
   setDiagnostic(null);setPreparation(null);setSample('');
+  capture.clear();
   if(!refs.length){setMessage('這段尚未建置參考照片；可依小地圖行走，再人工確認抵達。');return;}
   const loop=async()=>{
    if(cancelled||document.hidden)return;
@@ -60,9 +63,12 @@ export default function PublicGuide({graph,segments,points,destinationId,origin,
     const size=recognitionFrameSize(v.videoWidth,v.videoHeight);canvas.width=size.width;canvas.height=size.height;
     canvas.getContext('2d')?.drawImage(v,0,0,canvas.width,canvas.height);
     const result=await tracker.detect(canvas);if(cancelled)return;
-    setDiagnostic(tracker.diagnostics);if(diagnosticOpen.current)setSample(canvas.toDataURL('image/jpeg',.65));
+    setDiagnostic(tracker.diagnostics);if(diagnosticOpen.current){
+     setSample(canvas.toDataURL('image/jpeg',.65));
+     if(tracker.diagnostics)capture.record(canvas,tracker.diagnostics,{mode:'public',nodeId:current?.id,targetNodeId:target?.id,referenceIds:refs.map(r=>r.id),packUrls:refs.flatMap(r=>r.packUrl?[r.packUrl]:[]),sourceWidth:v.videoWidth,sourceHeight:v.videoHeight});
+    }
     const match=refs.find(r=>r.id===result?.targetId);
-    confirmation=advanceNodeConfirmation(confirmation,match?.nodeId||null,Date.now());
+    confirmation=advanceNodeConfirmation(confirmation,match?.nodeId||null,Date.now(),tracker.diagnostics?.reason==='ambiguous');
     if(match&&confirmation){
      // Seeing an interior/nearby node must never unlock arrival at the endpoint.
      setCandidate(old=>old?.nodeId===match.nodeId?old:null);
@@ -71,9 +77,9 @@ export default function PublicGuide({graph,segments,points,destinationId,origin,
       if(match.nodeId===current?.id)setMessage('已找到目前節點的局部特徵；方向未校正時，請展開協助確認面向。');
       else if(match.nodeId===target?.id)setMessage('已看見下一地標；走到後再按「我已到達」，尚未更新位置。');
       else setMessage(`已辨識附近地標：${nodeLabel(graph.nodes[match.nodeId])}；請繼續前往 ${nodeLabel(target)}，位置尚未更新。`);
-     }else setMessage(`正在確認 ${nodeLabel(graph.nodes[match.nodeId])}（${confirmation.hits}/3，同節點不同方向可接續）…`);
+     }else setMessage(`正在確認 ${nodeLabel(graph.nodes[match.nodeId])}（${confirmation.hits}/3，短暫漏判可接續）…`);
     }else if(tracker.diagnostics){
-     setMessage(RECOGNITION_REASONS[tracker.diagnostics.reason]);
+     setMessage(confirmation?`暫時未匹配，保留 ${nodeLabel(graph.nodes[confirmation.nodeId])} 的近期證據（${confirmation.hits}/3）；請停留片刻。`:RECOGNITION_REASONS[tracker.diagnostics.reason]);
      if(tracker.diagnostics.reason==='ambiguous'){setCandidate(null);setLastSeen(0);setBaseline(null);}
     }
    }}catch{confirmation=null;if(!cancelled){setCandidate(null);setLastSeen(0);setMessage('照片辨識暫時失敗，請調整取景；也可使用人工抵達確認。');}}
@@ -81,7 +87,7 @@ export default function PublicGuide({graph,segments,points,destinationId,origin,
   };
   setMessage(`正在載入 ${refs.length} 組沿途特徵資料（不下載參考照片）…`);
   tracker.preparePacked(refs).then(()=>{if(!cancelled){setPreparation(tracker.preparation);setMessage('持續辨識中，請對準固定地標。');void loop();}}).catch(()=>{if(!cancelled){setPreparation(tracker.preparation);setMessage('特徵包無法載入或尚未發布，請展開辨識診斷；也可使用地圖。');}});
-  return()=>{cancelled=true;clearTimeout(timer);tracker.dispose();};
+  return()=>{cancelled=true;clearTimeout(timer);tracker.dispose();capture.clear();};
  },[enabled,index,refs]);
  function arrive(manual=false){
   if(!target||(!nearCandidate&&!manual))return;
@@ -97,13 +103,15 @@ export default function PublicGuide({graph,segments,points,destinationId,origin,
   {enabled&&!arrived&&<><div className="v4-public-status" role="status">{message}</div><div className="v4-pika" style={{left:direction===null?'50%':`${50+Math.max(-1,Math.min(1,direction/65))*27}%`}}><span>{sameFloor?'我在下一個地標等你':'請依地圖前往 '+target?.fName}</span><div className="v4-pika-wave"><img src="./assets/ar/mascot-walking-small.png" alt="皮卡揮手引導"/><b aria-hidden="true">👋</b></div><small>方向示意 · 非現場 3D 定位</small></div></>}
   <section className={`v4-public-minimap ${mapOpen?'expanded':''}`} aria-label="最後確認位置與路徑"><div>最後確認位置 · {current?.fName}</div><MapView floor={floor} graph={graph} mode="route" origin={current?{floorId:current.fId,x:current.x,y:current.y,physX:current.physX,physY:current.physY,snapId:current.id}:origin} destinationId={destinationId} routePoints={points} routeSegments={segments} activeRouteIndex={Math.min(index,segments.length-1)} completedRouteIndex={index} compact imageMode="navigation" focusActiveSegment/></section>
   {arrived?<section className="v4-public-arrived"><img src="./assets/ar/mascot-walking-small.png" alt="皮卡"/><h1>已由您確認抵達</h1><p>{nodeLabel(current)}</p><button onClick={()=>onExit(current?.id)}>返回路線預覽</button></section>:enabled&&<footer><div className="v4-public-compass" aria-label="指向皮卡的方向箭頭"><ArrowUp size={44} style={{transform:`rotate(${direction??0}deg)`,opacity:direction===null?.3:1}}/><strong>{direction===null?'方向待校正':Math.abs(direction)<18?'往皮卡方向前進':Math.abs(direction)>150?'請轉身尋找皮卡':`向${direction>0?'右':'左'}轉`}</strong><small>{index+1}/{segments.length} · 本段約 {Number(leg.distance||0).toFixed(1)} 公尺（地圖距離）</small></div><button className="v4-arrival" disabled={!nearCandidate} onClick={()=>arrive()}>我已到達{nearCandidate?' · 接續導引':''}</button><details><summary>辨識／方向需要協助</summary><p>{!targetHasPhoto?'下一節點尚無照片。':'若辨識未成功，可核對地圖後人工確認。'}相機比對是候選位置，不是精確測距。</p><button onClick={()=>arrive(true)}>人工確認已到此地標</button><button disabled={!liveSensor||!sameFloor} onClick={()=>setReference({id:'manual',nodeId:current.id,imageUrl:'',bearing:angle(current,target)})}><Compass/>我已面向下一地標，校正方向</button><button onClick={()=>{stop();setMessage('請重新啟用相機與方向感測。');}}><RefreshCw/>重新啟用感測</button></details>
-   <details className="v4-public-diagnostics" onToggle={e=>{diagnosticOpen.current=e.currentTarget.open;if(!e.currentTarget.open)setSample('');}}><summary>辨識診斷與搜尋範圍</summary>
+   <details className="v4-public-diagnostics" onToggle={e=>{diagnosticOpen.current=e.currentTarget.open;if(!e.currentTarget.open){setSample('');capture.clear();}}}><summary>辨識診斷與搜尋範圍</summary>
+    <button disabled={!sample||!capture.ready} onClick={()=>capture.download()}>匯出這次辨識畫面</button>
+    <p>僅在展開時保留一張辨識影格；匯出包含相機畫面與診斷，不會自動上傳。</p>
     <p>本輪搜尋 {new Set(refs.map(r=>r.nodeId)).size} 個節點 · {refs.length} 組照片特徵。僅下載特徵包，不下載參考照片。優先路段起終點，再搜尋沿途及同樓層直接相鄰節點。</p>
     {scope.omitted>0&&<p role="status">手機效能上限 64 張；本輪另有 {scope.omitted} 張未載入。切換路段會重新選取，不代表所有照片已搜尋。</p>}
     <ul>{scope.nodes.filter(n=>refs.some(r=>r.nodeId===n.id)).map(n=><li key={n.id}>{nodeLabel(n)}：{refs.filter(r=>r.nodeId===n.id).length} 張</li>)}</ul>
     {!preparation&&<p>{refs.length?'正在建立特徵索引…':'本輪沒有可用的參考照片。'}</p>}
     <RecognitionInspector diagnostic={diagnostic} preparation={preparation} frame={sample} references={diagnosticRefs} precompiled/>
-    <p>同節點不同方向可累積 3 次確認。辨識附近地標不會自動改變位置，也不會解鎖其他節點的抵達按鈕。</p>
+    <p>最近 4 秒內的 5 次取樣，須有 3 次通過同節點檢查；短暫漏判可接續，出現不同節點或位置混淆就重新確認。辨識附近地標不會自動改變位置，也不會解鎖其他節點的抵達按鈕。</p>
    </details>
   </footer>}
  </main>;

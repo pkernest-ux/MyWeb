@@ -7,12 +7,13 @@ function FeatureImage({src,width,height,points,region,label,accepted}:{src:strin
     {region&&region.length>2&&<polygon points={region.map(p=>`${p.x},${p.y}`).join(' ')}/>}
     {points.map((p,i)=><circle key={i} cx={p.x} cy={p.y} r={3}/>)}</svg></div><figcaption>{label}</figcaption></figure>;
 }
-export function RecognitionInspector({diagnostic:d,preparation:p,frame,references,precompiled=false}:{diagnostic:Diagnostic|null;preparation:Preparation|null;frame:string;references:{id:string;imageUrl:string;label:string;bearing:number|null}[];precompiled?:boolean}){
+export function RecognitionInspector({diagnostic:d,preparation:p,frame,references,precompiled=false,onExport}:{diagnostic:Diagnostic|null;preparation:Preparation|null;frame:string;references:{id:string;imageUrl:string;label:string;bearing:number|null}[];precompiled?:boolean;onExport?:()=>void}){
   if(!p&&!d)return null;
   const ref=references.find(r=>r.id===d?.targetId),other=references.find(r=>r.id===d?.alternateTargetId);
   const label=(id:string)=>{const r=references.find(r=>r.id===id);return r?`${r.label} · ${r.bearing===null?'未知方向':`${r.bearing}°`}`:'參考照片';};
   return <details className="v4-recognition-inspector"><summary>辨識診斷 · {p?`${p.targetCount}/${p.targetCount+p.skippedTargetCount} ${precompiled?'組特徵可用':'張可用'}`:'準備中'}{d?` · 有效特徵 ${d.inliers}`:''}</summary>
     <p role="status">{d?RECOGNITION_REASONS[d.reason]:'已建立本輪特徵索引，等待比對。'}</p>
+    {onExport&&frame&&<><button type="button" onClick={onExport}>匯出這次辨識畫面</button><p>檔案包含相機取樣畫面與診斷，只儲存到本機，不會自動上傳。</p></>}
     {d&&<><dl><div><dt>畫面特徵</dt><dd>{d.frameFeatures}</dd></div><div><dt>初步配對</dt><dd>{d.matchCount}</dd></div><div><dt>幾何有效</dt><dd>{d.inliers}</dd></div></dl>
       {ref&&<p>{d.reason==='matched'?'候選節點':'最接近的參考（尚未通過）'}：{label(ref.id)}{other?`；另一候選：${label(other.id)}`:''}</p>}
       {frame&&<div className="v4-feature-pair"><FeatureImage src={frame} width={d.frameWidth} height={d.frameHeight} points={d.framePoints} region={d.region} label="這次取樣畫面（非即時串流）" accepted={d.reason==='matched'}/>

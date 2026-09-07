@@ -35,6 +35,27 @@ try{
  await page.locator('.v4-recognition-inspector>summary').click();
  assert.match(await page.locator('.v4-public-diagnostics').innerText(),/5 個節點 · 5 組照片特徵/);
  await page.waitForFunction(()=>document.querySelectorAll('.v4-feature-image circle').length>=12);
+ const captureButton=page.getByRole('button',{name:'匯出這次辨識畫面'});await captureButton.waitFor();
+ page.once('dialog',d=>d.accept());const exported=page.waitForEvent('download');await captureButton.click();
+ const download=await exported;await download.saveAs(out+'/recognition-capture.json');
+ const capture=JSON.parse(await readFile(out+'/recognition-capture.json','utf8'));
+ assert.equal(capture.schema,'v4-recognition-capture-1');assert.equal(capture.matcher,'v4-multiscale-20260907');
+ assert.equal(capture.frame.width,640);assert.equal(capture.frame.height,480);assert.match(capture.frame.imageUrl,/^data:image\/png;base64,/);
+ assert.equal(capture.diagnostic.frameWidth,capture.frame.width);assert.equal(capture.context.mode,'public');assert.equal(capture.context.packUrls.length,5);
+ assert.ok(!JSON.stringify(capture.context).includes('data:image'),'export must not contain reference photo payloads');
+ assert.ok(!JSON.stringify(capture).includes('deviceId'));
+ const replay=await page.evaluate(async capture=>{
+  const worker=new Worker('/assets/ar-v4-navigation/partial-recognition-worker.js');let seq=0;
+  const send=data=>new Promise((resolve,reject)=>{const requestId=++seq,timer=setTimeout(()=>reject(Error('capture replay timeout')),15000);const receive=e=>{if(e.data.requestId!==requestId)return;clearTimeout(timer);worker.removeEventListener('message',receive);e.data.ok?resolve(e.data.result):reject(Error(e.data.error));};worker.addEventListener('message',receive);worker.postMessage({requestId,...data});});
+  try{
+   const targets=await Promise.all(capture.context.packUrls.map(async url=>{const bytes=await(await fetch(url)).arrayBuffer(),len=new DataView(bytes).getUint32(0,true),h=JSON.parse(new TextDecoder().decode(new Uint8Array(bytes,4,len)));return{id:h.id,nodeId:h.nodeId,bytes};}));
+   await send({type:'preparePacked',targets});
+   const img=await new Promise(resolve=>{const i=new Image();i.onload=()=>resolve(i);i.src=capture.frame.imageUrl;});
+   const c=document.createElement('canvas');c.width=capture.frame.width;c.height=capture.frame.height;c.getContext('2d').drawImage(img,0,0);
+   return await send({type:'detect',width:c.width,height:c.height,pixels:c.getContext('2d').getImageData(0,0,c.width,c.height).data.buffer,fullScene:true});
+  }finally{worker.terminate();}
+ },capture);
+ assert.deepEqual(replay.diagnostics,capture.diagnostic,'lossless exported analysis frame reproduces its exact diagnostics with the same packs');
  for(const width of [360,390,768,1280]){
   await page.setViewportSize({width,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'diagnostics no horizontal overflow');
  }

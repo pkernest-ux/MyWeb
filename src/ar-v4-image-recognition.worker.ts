@@ -64,7 +64,9 @@ const jsfeat: any = jsfeatModule;
 const scope: any = self as any;
 const TARGET_LEVELS = 3;
 const TARGET_FEATURE_LIMIT = 280;
-const FRAME_FEATURE_LIMIT = 420;
+// A bounded query pyramid covers a closer phone view without enlarging packs.
+const FRAME_LEVEL_LIMITS = [280, 200, 120];
+const FRAME_FEATURE_LIMIT = 600;
 const CORNER_CAPACITY = 12_000;
 const MATCH_DISTANCE_LIMIT = 64;
 const MATCH_RATIO_LIMIT = 0.82;
@@ -81,6 +83,7 @@ let frameGray: any = null;
 let frameSmooth: any = null;
 let frameDescriptors: any = null;
 let frameCorners: any[] = [];
+let levelCorners: any[] = [];
 let frameWidth = 0;
 let frameHeight = 0;
 const homography = new jsfeat.matrix_t(3, 3, jsfeat.F32C1_t);
@@ -238,6 +241,30 @@ const ensureFrameBuffers = (width: number, height: number) => {
   frameSmooth = new jsfeat.matrix_t(width, height, jsfeat.U8_t | jsfeat.C1_t);
   frameDescriptors = new jsfeat.matrix_t(32, FRAME_FEATURE_LIMIT, jsfeat.U8_t | jsfeat.C1_t);
   frameCorners = createCorners();
+  if (!levelCorners.length) levelCorners = createCorners();
+};
+
+const describeFrame = () => {
+  let total = 0;
+  for (let level = 0; level < FRAME_LEVEL_LIMITS.length; level++) {
+    const scale = TARGET_SCALE_STEP ** level;
+    const width = Math.round(frameWidth * scale), height = Math.round(frameHeight * scale);
+    if (Math.min(width, height) < 64) continue;
+    const gray = level === 0 ? frameGray : new jsfeat.matrix_t(width, height, jsfeat.U8_t | jsfeat.C1_t);
+    const smooth = level === 0 ? frameSmooth : new jsfeat.matrix_t(width, height, jsfeat.U8_t | jsfeat.C1_t);
+    if (level) jsfeat.imgproc.resample(frameGray, gray, width, height);
+    jsfeat.imgproc.gaussian_blur(gray, smooth, 5, 0);
+    const count = detectKeypoints(smooth, levelCorners, FRAME_LEVEL_LIMITS[level]);
+    const descriptors = new jsfeat.matrix_t(32, FRAME_LEVEL_LIMITS[level], jsfeat.U8_t | jsfeat.C1_t);
+    jsfeat.orb.describe(smooth, levelCorners, count, descriptors);
+    frameDescriptors.data.set(descriptors.data.subarray(0, count * 32), total * 32);
+    for (let i = 0; i < count; i++) {
+      frameCorners[total + i].x = levelCorners[i].x * frameWidth / width;
+      frameCorners[total + i].y = levelCorners[i].y * frameHeight / height;
+    }
+    total += count;
+  }
+  return total;
 };
 
 const popCount32 = (value: number) => {
@@ -249,12 +276,14 @@ const popCount32 = (value: number) => {
 const matchFeatures = (frameCount: number, targetLevels: FeatureLevel[]) => {
   const matches: FeatureMatch[] = [];
   const frameDescriptors32 = frameDescriptors.buffer.i32;
+  const candidates = targetLevels.flatMap((level, levelIndex) => level.corners.map((point, index) => ({point, levelIndex, index})));
+  const distances = new Uint16Array(candidates.length);
   for (let screenIndex = 0; screenIndex < frameCount; screenIndex += 1) {
     const screenOffset = screenIndex * 8;
     let bestDistance = 257;
-    let secondDistance = 257;
     let bestLevel = -1;
     let bestPatternIndex = -1;
+    let candidateIndex = 0;
 
     targetLevels.forEach((level, levelIndex) => {
       const targetDescriptors32 = level.descriptors.buffer.i32;
@@ -264,16 +293,25 @@ const matchFeatures = (frameCount: number, targetLevels: FeatureLevel[]) => {
         for (let word = 0; word < 8; word += 1) {
           distance += popCount32(frameDescriptors32[screenOffset + word] ^ targetDescriptors32[patternOffset + word]);
         }
+        distances[candidateIndex++] = distance;
         if (distance < bestDistance) {
-          secondDistance = bestDistance;
           bestDistance = distance;
           bestLevel = levelIndex;
           bestPatternIndex = patternIndex;
-        } else if (distance < secondDistance) {
-          secondDistance = distance;
         }
       }
     });
+
+    // Compare against a DIFFERENT physical corner. The same corner appears in
+    // multiple reference scales and must not compete against itself in the ratio test.
+    const bestPoint = targetLevels[bestLevel]?.corners[bestPatternIndex];
+    let secondDistance = 257;
+    if (bestPoint) for (let i = 0; i < candidates.length; i++) {
+      if (distances[i] >= secondDistance) continue;
+      const p = candidates[i].point;
+      const dx=p.x-bestPoint.x,dy=p.y-bestPoint.y;
+      if (dx*dx+dy*dy > 16) secondDistance = distances[i];
+    }
 
     if (
       bestPatternIndex >= 0 &&
@@ -289,15 +327,27 @@ const matchFeatures = (frameCount: number, targetLevels: FeatureLevel[]) => {
     }
   }
 
-  const uniqueTargets = new Set<string>();
+  const usedTargets: RecognitionPoint[] = [], usedFrames: RecognitionPoint[] = [];
   return matches
     .sort((left, right) => left.distance - right.distance)
     .filter((match) => {
+      // Symmetric nearest-neighbour check removes one-way lookalikes before
+      // geometry. Query pyramid copies at the same physical pixel count as one.
+      const descriptor = targetLevels[match.patternLevel].descriptors.buffer.i32;
+      const offset = match.patternIndex * 8;
+      let reverseBest = 257, reverseIndex = -1;
+      for (let i = 0; i < frameCount; i++) {
+        let distance = 0;
+        for (let word = 0; word < 8; word++) distance += popCount32(descriptor[offset + word] ^ frameDescriptors32[i * 8 + word]);
+        if (distance < reverseBest) { reverseBest = distance; reverseIndex = i; }
+      }
+      const original = frameCorners[match.screenIndex], reverse = frameCorners[reverseIndex];
+      if (!reverse || (original.x-reverse.x)**2+(original.y-reverse.y)**2 > 16) return false;
       // The same physical corner seen at multiple scales is only one piece of evidence.
       const p = targetLevels[match.patternLevel].corners[match.patternIndex];
-      const key = `${Math.round(p.x / 4)}:${Math.round(p.y / 4)}`;
-      if (uniqueTargets.has(key)) return false;
-      uniqueTargets.add(key);
+      const q = frameCorners[match.screenIndex];
+      if (usedTargets.some(t=>(t.x-p.x)**2+(t.y-p.y)**2<=16) || usedFrames.some(t=>(t.x-q.x)**2+(t.y-q.y)**2<=16)) return false;
+      usedTargets.push(p); usedFrames.push(q);
       return true;
     })
     .slice(0, MAX_MATCHES);
@@ -379,6 +429,43 @@ const blankDiagnostic = (width:number,height:number,frameFeatures:number,reason:
   reason,frameFeatures,frameWidth:width,frameHeight:height,matchCount:0,inliers:0,
   framePoints:[],referencePoints:[],region:[],
 });
+
+// Bounded, repeatable robust fitting. Reject degenerate minimal samples, then
+// locally refit their consensus before scoring. The final acceptance gates below
+// remain unchanged; replaying an exported frame must not depend on Math.random().
+export const fitLocalHomography = (source:RecognitionPoint[],destination:RecognitionPoint[]) => {
+  const count=source.length;if(count<4||count>MAX_MATCHES)return false;
+  const kernel=new jsfeat.motion_model.homography2d();
+  const model=new jsfeat.matrix_t(3,3,jsfeat.F32C1_t),errors=new Float32Array(count);
+  let seed=2166136261;
+  for(let i=0;i<count;i++)for(const v of [source[i].x,source[i].y,destination[i].x,destination[i].y])seed=Math.imul(seed^Math.round(v*8),16777619)>>>0;
+  const random=()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296;};
+  const nondegenerate=(p:RecognitionPoint[])=>{
+    for(let a=0;a<2;a++)for(let b=a+1;b<3;b++)for(let c=b+1;c<4;c++)
+      if(Math.abs((p[b].x-p[a].x)*(p[c].y-p[a].y)-(p[b].y-p[a].y)*(p[c].x-p[a].x))<4)return false;
+    return true;
+  };
+  let best=0,bestError=Infinity;
+  for(let trial=0;trial<384;trial++){
+    // Matches are ordered by descriptor distance. Include high-quality subsets
+    // early, but sample the whole set as well so a wrong prefix cannot dominate.
+    const pool=trial<64?Math.min(count,Math.max(8,8+Math.floor(trial/8)*4)):count;
+    const indices:number[]=[];while(indices.length<4){const i=Math.floor(random()*pool);if(!indices.includes(i))indices.push(i);}
+    const from=indices.map(i=>source[i]),to=indices.map(i=>destination[i]);
+    if(!nondegenerate(from)||!nondegenerate(to)||!kernel.check_subset(from,to,4)||!kernel.run(from,to,model,4))continue;
+    for(let refinement=0;refinement<2;refinement++){
+      kernel.error(source,destination,model,errors,count);
+      const inliers:number[]=[];let error=0;
+      for(let i=0;i<count;i++)if(Number.isFinite(errors[i])&&errors[i]<=9){inliers.push(i);error+=errors[i];}
+      if(inliers.length>best||(inliers.length===best&&error<bestError)){
+        best=inliers.length;bestError=error;model.copy_to(homography);matchMask.data.fill(0);for(const i of inliers)matchMask.data[i]=1;
+      }
+      if(refinement||inliers.length<6||!kernel.run(inliers.map(i=>source[i]),inliers.map(i=>destination[i]),model,inliers.length))break;
+    }
+    if(best===count&&trial>=24)break;
+  }
+  return best>=4;
+};
 const estimateLocalDetection = (
   matches:FeatureMatch[],width:number,height:number,target:TargetPattern,frameFeatures:number,
 ):DetectionReport => {
@@ -389,8 +476,7 @@ const estimateLocalDetection = (
   const sourcePoints=matches.map(m=>target.levels[m.patternLevel].corners[m.patternIndex]);
   const destinationPoints=matches.map(m=>frameCorners[m.screenIndex]);
   const kernel=new jsfeat.motion_model.homography2d();
-  const parameters=new jsfeat.ransac_params_t(4,3,0.5,0.99);
-  const found=jsfeat.motion_estimator.ransac(parameters,kernel,sourcePoints,destinationPoints,matches.length,homography,matchMask,1000);
+  const found=fitLocalHomography(sourcePoints,destinationPoints);
   if(!found)return reject('geometry');
   const source:RecognitionPoint[]=[],destination:RecognitionPoint[]=[];
   for(let i=0;i<matches.length;i++)if(matchMask.data[i]){
@@ -432,10 +518,8 @@ const detect = (request:Extract<WorkerRequest,{type:'detect'}>):DetectionReport 
   if(!targetPatterns.length)return empty('no_targets');
   ensureFrameBuffers(request.width,request.height);
   jsfeat.imgproc.grayscale(new Uint8Array(request.pixels),request.width,request.height,frameGray);
-  jsfeat.imgproc.gaussian_blur(frameGray,frameSmooth,5,0);
-  const frameCount=detectKeypoints(frameSmooth,frameCorners,FRAME_FEATURE_LIMIT);
+  const frameCount=describeFrame();
   if(frameCount<MIN_MATCHES)return empty('few_features',frameCount);
-  jsfeat.orb.describe(frameSmooth,frameCorners,frameCount,frameDescriptors);
   const attempts=targetPatterns.map(t=>({...estimateLocalDetection(matchFeatures(frameCount,t.levels),request.width,request.height,t,frameCount),nodeId:t.nodeId}));
   const accepted=attempts.filter(a=>a.detection).sort((a,b)=>b.detection!.inliers-a.detection!.inliers);
   if(!accepted.length)return attempts.sort((a,b)=>b.diagnostics.inliers-a.diagnostics.inliers||b.diagnostics.matchCount-a.diagnostics.matchCount)[0];

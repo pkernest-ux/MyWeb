@@ -31,12 +31,25 @@ test('synthetic preview origin does not duplicate the real start photos as anoth
  assert.equal(scope.references.length,16);assert.deepEqual(scope.nodes.map(n=>n.id),['a','b']);
  assert.equal(scope.references.some(r=>r.nodeId==='manual-origin'),false);
 });
-test('different photo directions of the same node accumulate; other node/miss/stale reset',()=>{
+test('different directions accumulate; one miss retains evidence but other node/ambiguity/stale reset',()=>{
  let state=null;
  for(const [i,photo] of ['0','45','90'].entries()){state=advanceNodeConfirmation(state,'node-a',1000+i*400);assert.equal(state.hits,i+1,photo);}
  assert.equal(advanceNodeConfirmation(state,'node-b',2300).hits,1);
- assert.equal(advanceNodeConfirmation(state,null,2300),null);
+ const missed=advanceNodeConfirmation(state,null,2300);assert.equal(missed.hits,3);assert.equal(missed.time,state.time,'miss must not refresh last-match time');
+ assert.equal(advanceNodeConfirmation(state,null,2300,true),null);
  assert.equal(advanceNodeConfirmation(state,'node-a',8000).hits,1);
  assert.equal(advanceNodeConfirmation(state,'node-a',1700).hits,1);
  assert.equal(advanceNodeConfirmation(state,'node-a',2200).hits,3);
+});
+test('three of five accepted samples tolerate brief misses, never confirm from failures alone',()=>{
+ let state=null;
+ for(const [i,id] of ['a',null,'a',null,'a'].entries())state=advanceNodeConfirmation(state,id,1000+i*400);
+ assert.equal(state.hits,3);assert.equal(state.nodeId,'a');
+ for(let i=0;i<5;i++)state=advanceNodeConfirmation(state,null,2800+i*100);
+ assert.equal(state,null);
+ state=advanceNodeConfirmation(null,'a',1000);
+ for(const [i,id] of [null,null,null,'a'].entries())state=advanceNodeConfirmation(state,id,1400+i*400);
+ assert.equal(state.hits,2);
+ state=advanceNodeConfirmation(state,'b',3000);assert.equal(state.hits,1);assert.equal(state.nodeId,'b');
+ state=advanceNodeConfirmation(state,null,7500);assert.equal(state,null);
 });

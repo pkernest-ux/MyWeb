@@ -25,6 +25,13 @@ test('near tied different nodes are rejected, overlapping views at one node rema
  assert.equal(exports.ambiguousNodes({nodeId:'a',inliers:25},{nodeId:'a',inliers:24}),false);
  assert.equal(exports.ambiguousNodes({nodeId:'a',inliers:40},{nodeId:'b',inliers:24}),false);
 });
+test('robust fitting rejects degenerate samples and accepts a distributed plane with outliers',()=>{
+ const points=grid(20,20,220,180),target=points.map(p=>({x:p.x*1.3+15,y:p.y*.9+20}));
+ target[3]={x:400,y:15};target[7]={x:20,y:300};
+ assert.equal(exports.fitLocalHomography(points,target),true);
+ const line=points.map((p,i)=>({x:i*10,y:i*10}));assert.equal(exports.fitLocalHomography(line,line),false);
+ assert.equal(exports.fitLocalHomography(points.slice(0,3),target.slice(0,3)),false);
+});
 test('cancelled reference preparation never recreates a worker after leaving camera',async()=>{
  const source=await readFile(new URL('../src/ar-v4-image-recognition.ts',import.meta.url),'utf8');
  const cacheSource=await readFile(new URL('../src/ar-v4-feature-cache.ts',import.meta.url),'utf8');
@@ -32,7 +39,8 @@ test('cancelled reference preparation never recreates a worker after leaving cam
  const cacheURL=`data:text/javascript;base64,${Buffer.from(cacheCode).toString('base64')}`;
  const compiled=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.ES2020}}).outputText.replace('./ar-v4-feature-cache',cacheURL);
  const {OrbImageTracker,recognitionFrameSize}=await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
- assert.deepEqual(recognitionFrameSize(1080,1920),{width:236,height:420});
+ assert.deepEqual(recognitionFrameSize(1080,1920),{width:360,height:640});
+ assert.deepEqual(recognitionFrameSize(768,576,420),{width:420,height:315},'reference extraction remains pack compatible');
  const oldImage=globalThis.Image,oldWindow=globalThis.window;
  globalThis.window={setTimeout,clearTimeout};
  globalThis.Image=class{set src(value){queueMicrotask(()=>this.onerror?.());}};
