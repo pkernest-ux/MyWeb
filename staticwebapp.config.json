@@ -1,5 +1,7 @@
 {
   "routes": [
+    { "route": "/assets/ar-v4-public/catalog.json", "headers": { "Cache-Control": "no-store" } },
+    { "route": "/assets/ar-v4-public/*", "headers": { "Cache-Control": "public, max-age=31536000, immutable" } },
     { "route": "/ar-v4-demo.html", "headers": { "Cache-Control": "no-store" } },
     { "route": "/assets/ar-v4-demo/*", "headers": { "Cache-Control": "no-store" } },
     { "route": "/ar-v4-navigation.html", "headers": { "Cache-Control": "no-store" } },

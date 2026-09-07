@@ -23,6 +23,7 @@ type ImagePayload = {
 };
 
 type WorkerRequest =
+  | { type: 'preparePacked'; requestId:number; targets:{id:string;nodeId:string;bytes:ArrayBuffer}[] }
   | {
       type: "prepareMany";
       requestId: number;
@@ -176,6 +177,38 @@ const prepareTargetPattern = (target: ImagePayload): TargetPattern => {
     height: target.height,
     levels: targetLevels,
   };
+};
+
+export const PACK_ALGORITHM='v4-jsfeat-orb-1';
+// Published packs contain coordinates + binary descriptors only, never pixels.
+export function compileFeatureTarget(target:ImagePayload):ArrayBuffer{
+ const p=prepareTargetPattern(target);
+ const header=new TextEncoder().encode(JSON.stringify({algorithm:PACK_ALGORITHM,id:p.id,nodeId:p.nodeId,width:p.width,height:p.height,levels:p.levels.map(l=>({scale:l.scale,count:l.count}))}));
+ const buffer=new ArrayBuffer(4+header.length+p.levels.reduce((n,l)=>n+l.count*40,0));const view=new DataView(buffer);const bytes=new Uint8Array(buffer);
+ view.setUint32(0,header.length,true);bytes.set(header,4);let offset=4+header.length;
+ for(const l of p.levels){for(const point of l.corners){view.setFloat32(offset,point.x,true);view.setFloat32(offset+4,point.y,true);offset+=8;}bytes.set(l.descriptors.data.subarray(0,l.count*32),offset);offset+=l.count*32;}
+ return buffer;
+}
+export function decodeFeatureTarget(buffer:ArrayBuffer,expected:{id:string;nodeId:string}):TargetPattern{
+ if(!buffer||buffer.byteLength<8||buffer.byteLength>65536)throw new Error('特徵包大小不正確');
+ const view=new DataView(buffer),length=view.getUint32(0,true);
+ if(length<2||length>4096||length+4>buffer.byteLength)throw new Error('特徵包標頭不正確');
+ const h=JSON.parse(new TextDecoder().decode(new Uint8Array(buffer,4,length)));
+ if(h.algorithm!==PACK_ALGORITHM||h.id!==expected.id||h.nodeId!==expected.nodeId||!Number.isInteger(h.width)||!Number.isInteger(h.height)||h.width<1||h.height<1||h.width>420||h.height>420||h.levels?.length!==3)throw new Error('特徵包版本或節點不一致');
+ let offset=4+length;const levels:FeatureLevel[]=[];
+ for(let i=0;i<h.levels.length;i++){
+  const l=h.levels[i];if(!Number.isInteger(l.count)||l.count<0||l.count>TARGET_FEATURE_LIMIT||l.scale!==TARGET_SCALE_STEP**i||offset+l.count*40>buffer.byteLength)throw new Error('特徵包層級不正確');
+  const corners=[];for(let j=0;j<l.count;j++){const x=view.getFloat32(offset,true),y=view.getFloat32(offset+4,true);offset+=8;if(!Number.isFinite(x)||!Number.isFinite(y)||x<0||y<0||x>h.width+2||y>h.height+2)throw new Error('特徵座標不正確');corners.push({x,y});}
+  const descriptors=new jsfeat.matrix_t(32,TARGET_FEATURE_LIMIT,jsfeat.U8_t|jsfeat.C1_t);descriptors.data.set(new Uint8Array(buffer,offset,l.count*32));offset+=l.count*32;levels.push({...l,corners,descriptors});
+ }
+ if(offset!==buffer.byteLength||levels.reduce((n,l)=>n+l.count,0)<MIN_MATCHES)throw new Error('特徵包未完整或特徵不足');
+ return {id:h.id,nodeId:h.nodeId,width:h.width,height:h.height,levels};
+}
+const preparePacked=(request:Extract<WorkerRequest,{type:'preparePacked'}>):Preparation=>{
+ if(request.targets.length>64)throw new Error('本輪特徵包超過上限');
+ const failures:Preparation['failures']=[];
+ targetPatterns=request.targets.flatMap(t=>{try{return [decodeFeatureTarget(t.bytes,t)];}catch(e:any){failures.push({id:t.id,reason:e.message});return [];}});
+ return {prepared:true,targetCount:targetPatterns.length,skippedTargetCount:failures.length,failures,targets:targetPatterns.map(t=>({id:t.id,width:t.width,height:t.height,featureCount:t.levels.reduce((n,l)=>n+l.count,0)}))};
 };
 
 const prepareTargets = (request: Extract<WorkerRequest, { type: "prepareMany" }>) => {
@@ -415,7 +448,7 @@ const detect = (request:Extract<WorkerRequest,{type:'detect'}>):DetectionReport 
 scope.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
   const request = event.data;
   try {
-    const result = request.type === "prepareMany" ? prepareTargets(request) : detect(request);
+    const result = request.type === 'preparePacked' ? preparePacked(request) : request.type === "prepareMany" ? prepareTargets(request) : detect(request);
     scope.postMessage({ requestId: request.requestId, ok: true, result });
   } catch (error: any) {
     scope.postMessage({

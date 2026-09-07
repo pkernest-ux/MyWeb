@@ -216,6 +216,7 @@ export async function startLocalServer(options = {}) {
     res.end(JSON.stringify(body));
   }
 
+  let publicSnapshot=null;
   const server = createServer(async (req, res) => {
     let sha = "";
     try {
@@ -233,6 +234,17 @@ export async function startLocalServer(options = {}) {
         return;
       }
       const query = new URL(req.url, origin).searchParams;
+      if(req.method==='GET'&&pathname?.startsWith('/assets/ar-v4-public/')){
+        const snapshot=await readSnapshot();
+        if(!publicSnapshot||publicSnapshot.sha!==snapshot.sha){
+          const pending=import('./ar-v4-feature-publisher.mjs').then(m=>m.compilePublicCatalog(snapshot.json,{rootDir}));
+          publicSnapshot={sha:snapshot.sha,pending};pending.catch(()=>{if(publicSnapshot?.pending===pending)publicSnapshot=null;});
+        }
+        const result=await publicSnapshot.pending;
+        const bytes=result.assets.get(pathname.slice(1));
+        if(!bytes){respond(res,404,{error:'Published feature asset not found.'});return;}
+        res.writeHead(200,{'Content-Type':pathname.endsWith('.json')?'application/json':pathname.endsWith('.jpg')?'image/jpeg':'application/octet-stream','Cache-Control':pathname.endsWith('catalog.json')?'no-store':'public, max-age=31536000, immutable','X-Content-Type-Options':'nosniff'});res.end(bytes);return;
+      }
       if (pathname === "/api/ar-demo-library") {
         const context = {};
         await require("../api/ar-demo-library/index.js")(context, { method: req.method });

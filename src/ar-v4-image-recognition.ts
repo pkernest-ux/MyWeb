@@ -1,4 +1,5 @@
 import type { Diagnostic, Preparation, DetectionReport } from './ar-v4-recognition-types';
+import {fetchFeaturePack} from './ar-v4-feature-cache';
 export type RecognitionPoint = {
   x: number;
   y: number;
@@ -68,6 +69,7 @@ const imageToPixels = (image: HTMLImageElement) => {
 };
 
 export class OrbImageTracker {
+  private loadController: AbortController | null = null;
   private generation = 0;
   public preparation: Preparation | null = null;
   public diagnostics: Diagnostic | null = null;
@@ -83,6 +85,29 @@ export class OrbImageTracker {
 
   async prepare(imageUrl: string) {
     await this.prepareMany([{ id: "target", imageUrl }]);
+  }
+
+  async preparePacked(targets:{id:string;nodeId:string;packUrl?:string;packError?:string}[]){
+    this.dispose();const generation=this.generation;
+    this.preparation=null;this.diagnostics=null;
+    const controller=new AbortController();this.loadController=controller;
+    const timer=setTimeout(()=>controller.abort(),45000);
+    const ready:{id:string;nodeId:string;bytes:ArrayBuffer}[]=[],failures:Preparation['failures']=[];
+    const unique=targets.filter((t,i,a)=>a.findIndex(x=>x.id===t.id)===i).slice(0,64);let next=0;
+    const load=async()=>{while(next<unique.length&&!controller.signal.aborted){const t=unique[next++];try{
+      if(!t.packUrl)throw new Error(t.packError||'此照片尚未發布特徵包');
+      ready.push({id:t.id,nodeId:t.nodeId,bytes:await fetchFeaturePack(t.packUrl,controller.signal)});
+    }catch(e:any){failures.push({id:t.id,reason:e.message||'特徵包載入失敗'});}}};
+    try{await Promise.all([load(),load()]);}finally{clearTimeout(timer);}
+    if(generation!==this.generation)throw new Error('圖像辨識已停止');
+    for(const t of unique.slice(next))failures.push({id:t.id,reason:'特徵包載入逾時'});
+    if(!ready.length){this.preparation={prepared:true,targetCount:0,skippedTargetCount:failures.length,targets:[],failures};throw new Error('沒有可用的特徵包，請稍後重試或使用地圖');}
+    const worker=new Worker(new URL('./ar-v4-image-recognition.worker.ts',import.meta.url),{name:'v4-local-features',type:'module'});
+    this.worker=worker;worker.addEventListener('message',this.handleMessage);worker.addEventListener('error',this.handleWorkerError);
+    const result=await this.request({type:'preparePacked',targets:ready},ready.map(t=>t.bytes),10000);
+    if(!('prepared' in result))throw new Error('特徵包回應格式錯誤');
+    this.preparation={...result,failures:[...failures,...result.failures],skippedTargetCount:result.skippedTargetCount+failures.length};
+    this.prepared=result.targetCount>0;if(!this.prepared)throw new Error('特徵包不相容或損壞，請重新發布');return this.preparation;
   }
 
   async prepareMany(targets: RecognitionTarget[]) {
@@ -160,6 +185,7 @@ export class OrbImageTracker {
 
   dispose() {
     this.generation++;
+    this.loadController?.abort();this.loadController=null;
     const disposedError = new Error("圖像辨識已停止");
     this.pending.forEach(({ reject, timeoutId }) => {
       window.clearTimeout(timeoutId);

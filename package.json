@@ -6,19 +6,20 @@
   "scripts": {
     "dev:ar-v4": "vite --config vite.config.v4.ts --host 127.0.0.1 --port 5176 --open ar-v4-field-dev.html",
     "preview:ar-v4": "node scripts/ar-v4-local-server.mjs",
-    "build:ar-v4": "vite build && vite build --config vite.config.v4.ts && vite build --config vite.config.v4-navigation.ts && vite build --config vite.config.v4-demo.ts",
+    "build:ar-v4": "vite build && vite build --config vite.config.v4.ts && vite build --config vite.config.v4-navigation.ts && vite build --config vite.config.v4-demo.ts && npm run build:ar-v4-features",
     "typecheck:ar-v4": "tsc --project tsconfig.v4.json --noEmit",
     "test:ar-v4": "node --test api/test/ar-field-survey.test.js api/test/ar-sync.test.js test/ar-v4-field-core.test.mjs test/ar-v4-local-server.test.mjs test/ar-v4-recognition-profile.test.mjs test/ar-v4-editor-layout.test.mjs",
     "test:ar-v4-browser": "node test/ar-v4-browser.mjs && node test/ar-v4-safety-browser.mjs && node test/ar-v4-graph-browser.mjs && node test/ar-v4-graph-safety-browser.mjs",
     "test:ar-v4-wizard": "node test/ar-v4-wizard-browser.mjs && node test/ar-v4-panorama-browser.mjs",
-    "test:ar-v4-public": "tsc -p tsconfig.v4-public.json --noEmit && node --test test/ar-v4-public-scope.test.mjs && node test/ar-v4-public-browser.mjs",
+    "test:ar-v4-public": "tsc -p tsconfig.v4-public.json --noEmit && node --test test/ar-v4-public-scope.test.mjs test/ar-v4-feature-publisher.test.mjs && node test/ar-v4-public-browser.mjs",
     "test:ar-v4-partial": "node --test test/ar-v4-local-features.test.mjs && node test/ar-v4-local-features-browser.mjs",
     "test:ar-v4-graph-browser": "node test/ar-v4-graph-browser.mjs && node test/ar-v4-graph-safety-browser.mjs",
     "dev:ar": "vite --host 127.0.0.1 --port 5173 ar-dev.html",
     "dev:ar-v2": "vite --host 127.0.0.1 --port 5174 ar-v2-dev.html",
     "dev:ar-v3": "vite --host 127.0.0.1 --port 5175 ar-v3-dev.html",
     "test:ar-sync-browser": "node test/ar-sync-browser.mjs",
-    "build": "vite build",
+    "build": "vite build && npm run build:ar-v4-features",
+    "build:ar-v4-features": "node scripts/ar-v4-feature-publisher.mjs",
     "build:ar": "vite build",
     "build:ar-v2": "vite build --config vite.config.v2.ts",
     "build:ar-v3": "vite build --config vite.config.v3.ts"
@@ -36,6 +37,7 @@
   "devDependencies": {
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.49",
+    "sharp": "^0.35.4",
     "tailwindcss": "^3.4.17"
   }
 }

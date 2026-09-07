@@ -27,7 +27,10 @@ test('near tied different nodes are rejected, overlapping views at one node rema
 });
 test('cancelled reference preparation never recreates a worker after leaving camera',async()=>{
  const source=await readFile(new URL('../src/ar-v4-image-recognition.ts',import.meta.url),'utf8');
- const compiled=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.ES2020}}).outputText;
+ const cacheSource=await readFile(new URL('../src/ar-v4-feature-cache.ts',import.meta.url),'utf8');
+ const cacheCode=ts.transpileModule(cacheSource,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.ES2020}}).outputText;
+ const cacheURL=`data:text/javascript;base64,${Buffer.from(cacheCode).toString('base64')}`;
+ const compiled=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2020,module:ts.ModuleKind.ES2020}}).outputText.replace('./ar-v4-feature-cache',cacheURL);
  const {OrbImageTracker,recognitionFrameSize}=await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`);
  assert.deepEqual(recognitionFrameSize(1080,1920),{width:236,height:420});
  const oldImage=globalThis.Image,oldWindow=globalThis.window;

@@ -1489,7 +1489,7 @@ function WelcomeScreen({ config, onStart }: { config?: any; onStart: () => void 
   );
 }
 
-export default function ARNavigationV3({ v4RouteFocus = false, PublicGuide }: { v4RouteFocus?: boolean; PublicGuide?: React.ComponentType<any> } = {}) {
+export default function ARNavigationV3({ v4RouteFocus = false, PublicGuide, loadPublicProject }: { v4RouteFocus?: boolean; PublicGuide?: React.ComponentType<any>; loadPublicProject?:()=>Promise<any> } = {}) {
   const [showWelcome, setShowWelcome] = useState(!PublicGuide);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -1726,6 +1726,12 @@ export default function ARNavigationV3({ v4RouteFocus = false, PublicGuide }: { 
     let active = true;
     const load = async () => {
       try {
+        // V4 supplies a photo-free published catalog. V3's loader is unchanged.
+        if (PublicGuide && loadPublicProject) {
+          const selected = await loadPublicProject();
+          if (active) { defaultsAppliedProjectRef.current = null; setProject(selected); setLoadError(''); }
+          return;
+        }
         let localRaw: any = null;
         try {
           const fallbackResponse = await fetch("./ar-data.json", { cache: "no-store" });
