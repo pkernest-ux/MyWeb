@@ -3,6 +3,7 @@ import { ArrowUp, Camera, Check, ChevronRight, CloudUpload, Compass, Download, E
 import { OrbImageTracker, recognitionFrameSize } from './ar-v4-image-recognition';
 import { RECOGNITION_REASONS, type Diagnostic, type Preparation } from './ar-v4-recognition-types';
 import { RecognitionInspector } from './ar-v4-recognition-inspector';
+import { advanceNodeConfirmation, type NodeConfirmation } from './ar-v4-recognition-stability';
 import {
   EMPTY_SENSOR, bearingBetween, encodeObservationImage, extractPanoramaView, flattenProject,
   loadPanorama, mapBearingFromSensor, nodeLabel, normalizeBearing, prepareImage, sensorFromEvent, signedAngle,
@@ -625,8 +626,7 @@ export default function FieldApp() {
       if (generation !== detectGeneration.current) return;
       setRecognitionPreparation(instance.preparation);
       const frame = document.createElement('canvas');
-      let previous = '';
-      let confirmations = 0;
+      let confirmation: NodeConfirmation | null = null;
       const started = Date.now();
       do {
         if (generation !== detectGeneration.current) return;
@@ -643,16 +643,15 @@ export default function FieldApp() {
         setRecognitionFrame(frame.toDataURL('image/jpeg',.65));
         const ref = detection?.targetId ? testRefs.find((r) => r.id === detection.targetId) : null;
         if (ref && detection && detection.inliers >= 12) {
-          confirmations = previous === ref.id ? confirmations + 1 : 1;
-          previous = ref.id;
-          if (still || confirmations >= 3) {
+          confirmation = advanceNodeConfirmation(confirmation, ref.nodeId, Date.now());
+          if (still || confirmation!.hits >= 3) {
             setCandidate({ reference: ref, inliers: detection.inliers, matches: detection.matchCount });
             setRecognitionMessage(`候選節點：${ref.label}。${still ? '單張照片比對' : '連續 3 幀吻合'}；仍需現場確認，不代表精確座標。`);
             break;
           }
-          setRecognitionMessage(`正在確認 ${ref.label}（${confirmations}/3）…`);
+          setRecognitionMessage(`正在確認 ${ref.label}（${confirmation!.hits}/3，同節點不同方向可接續）…`);
         } else {
-          previous = ''; confirmations = 0;
+          confirmation = null;
           setRecognitionMessage(`尚未匹配：${instance.diagnostics?RECOGNITION_REASONS[instance.diagnostics.reason]:'請調整取景'}。`);
         }
         if (still) break;

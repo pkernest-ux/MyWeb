@@ -12,3 +12,23 @@ export function publicReferences(nodes:any[]):PublicReference[]{
  return result;
 }
 export function confirmProgress(index:number,length:number,confirmed:boolean){return confirmed?Math.min(index+1,length):index;}
+
+// Keep every endpoint photo first. Spend the remaining budget fairly across
+// route-interior and one-hop neighbours, never search unrelated floors.
+export function publicRecognitionScope(graph:any,leg:any,current:any,target:any,limit=64){
+ const eligible=(n:any)=>n&&n.fId===current?.fId&&n.enabled!==false&&n.navigable!==false;
+ // Route previews may insert a synthetic "manual-origin" copying the start's
+ // photos. Only index persisted nodes; otherwise identical photos compete as
+ // two different places and every start match becomes ambiguous.
+ const resolve=(n:any)=>graph.nodes[n?.id];
+ const route=[current,target,...(leg?.points||[]).map(resolve)].filter(eligible);
+ const adjacent=route.flatMap((n:any)=>Object.keys(graph.adjacency[n.id]||{}).map(id=>graph.nodes[id])).filter(eligible);
+ const nodes=[...route,...adjacent].filter((n,i,a)=>a.findIndex(x=>x.id===n.id)===i);
+ const endpoints=nodes.filter(n=>n.id===current?.id||n.id===target?.id);
+ const others=nodes.filter(n=>!endpoints.includes(n));
+ const primary=publicReferences(endpoints),groups=others.map(n=>publicReferences([n]));
+ const secondary:PublicReference[]=[];
+ for(let i=0;i<Math.max(0,...groups.map(g=>g.length));i++)for(const group of groups)if(group[i])secondary.push(group[i]);
+ const all=[...primary,...secondary],references=all.slice(0,Math.max(0,limit));
+ return {references,nodes,total:all.length,omitted:all.length-references.length};
+}
