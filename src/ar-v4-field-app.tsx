@@ -6,7 +6,9 @@ import {
   loadPanorama, mapBearingFromSensor, nodeLabel, normalizeBearing, prepareImage, sensorFromEvent, signedAngle,
   type FieldObservation, type FieldSensor,
 } from './ar-v4-field-core';
-import { downloadJson, draftStore, readJson } from './ar-v4-field-storage';
+import { downloadJson, draftStore, readJson, workStore } from './ar-v4-field-storage';
+import { EMPTY_STEPS, FLOW_STEPS, Help, Modal, Step, groupObservations, type WorkDraft } from './ar-v4-field-wizard';
+import './ar-v4-field-wizard.css';
 
 type Tab = 'location' | 'graph' | 'camera' | 'capture' | 'calibrate' | 'records';
 const FIELD_TABS = [
@@ -64,6 +66,9 @@ export default function FieldApp() {
   const [draft, setDraft] = useState<FieldObservation | null>(null);
   const [draftLoadedKey, setDraftLoadedKey] = useState('');
   const [draftMessage, setDraftMessage] = useState('');
+  const [photoWriting, setPhotoPending] = useState(false);
+  const [savedPhoto, setSavedPhoto] = useState<FieldObservation|null>(null);
+  const [photoDraftError, setPhotoDraftError] = useState(false);
   const [bearing, setBearing] = useState(0);
   const [mapUp, setMapUp] = useState('');
   const [saveMapUp, setSaveMapUp] = useState(false);
@@ -71,9 +76,27 @@ export default function FieldApp() {
   const [nextNodeId, setNextNodeId] = useState('');
   const [mapZoom, setMapZoom] = useState(1);
   const [panorama, setPanorama] = useState<HTMLImageElement | null>(null);
+  const [panoFile, setPanoFile] = useState<File|null>(null);
+  const [steps, setSteps] = useState({ ...EMPTY_STEPS });
+  const [captureKind, setCaptureKind] = useState<'photo'|'panorama'>('photo');
+  const [cameraTask, setCameraTask] = useState<'photo'|'recognition'|'direction'|'navigation'>('recognition');
+  const [expertMode, setExpertMode] = useState(new URLSearchParams(location.search).get('ui') === 'classic');
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [recordDetail, setRecordDetail] = useState<string|null>(null);
+  const [recordScope, setRecordScope] = useState('node');
+  const [workLoadedKey, setWorkLoadedKey] = useState('');
+  const [workMessage, setWorkMessage] = useState('');
+  const [workWriting, setWorkPending] = useState(false);
+  const [savedWork, setSavedWork] = useState<WorkDraft|null>(null);
+  const [workError, setWorkError] = useState(false);
+  const [calibrationReview, setCalibrationReview] = useState(false);
+  const step = steps[tab];
+  function goStep(value:number, destination:Tab=tab) { if(destination==='camera'&&value===0){stopCamera();setNavigationOpen(false);} setSteps(old=>({...old,[destination]:Math.max(0,Math.min(FLOW_STEPS[destination].length-1,value))})); }
   const [panoYaw, setPanoYaw] = useState(0);
   const [panoPitch, setPanoPitch] = useState(0);
   const [panoZero, setPanoZero] = useState('');
+  const [panoBatch, setPanoBatch] = useState<FieldObservation[]>([]);
+  const [panoSaved, setPanoSaved] = useState<string[]>([]);
   const panoCanvas = useRef<HTMLCanvasElement>(null);
   const [detecting, setDetecting] = useState(false);
   const [recognitionMessage, setRecognitionMessage] = useState('尚未進行辨識測試');
@@ -89,6 +112,9 @@ export default function FieldApp() {
   const floor = floors.find((f) => `${f.buildingId}/${f.id}` === floorKey) || floors[0];
   const node = floor?.nodes.find((n) => n.id === nodeId);
   const scope = node ? [projectId, floor.buildingId, floor.id, node.nodeType, node.id].join('/') : '';
+  const workSnapshot=useMemo<WorkDraft>(()=>({version:1,revision,bearing,mapUp,saveMapUp,nextNodeId,panoFile,panoBatch,panoSaved,panoZero,panoYaw,panoPitch,steps,captureKind,calibrationReview}),[revision,bearing,mapUp,saveMapUp,nextNodeId,panoFile,panoBatch,panoSaved,panoZero,panoYaw,panoPitch,steps,captureKind,calibrationReview]);
+  const photoPending=photoWriting || Boolean(draft&&draftLoadedKey===scope&&savedPhoto!==draft);
+  const workPending=photoPending || workWriting || Boolean(scope&&workLoadedKey===scope&&savedWork!==workSnapshot);
   const activeScope = useRef(scope);
   activeScope.current = scope;
   const neighbors = useMemo(() => {
@@ -116,7 +142,9 @@ export default function FieldApp() {
   const turnAngle = targetBearing !== null && currentMapHeading !== null ? signedAngle(targetBearing - currentMapHeading) : null;
 
   function selectTab(next: Tab) {
+    setMenuOpen(false);
     if (tabRef.current === next) return;
+    setNotice(old=>old?.kind==='error'?old:null);
     tabScroll.current[tabRef.current] = window.scrollY;
     tabRef.current = next;
     setTab(next);
@@ -149,7 +177,7 @@ export default function FieldApp() {
     setLock(null);
     setCameraMessage('相機已關閉，仍可匯入照片與校正節點');
   }
-  async function loadProject(id: string, selected?: { buildingId: string; floorId: string }, refreshGeneration?: number) {
+  async function loadProject(id: string, selected?: { buildingId: string; floorId: string }, refreshGeneration?: number, restore?: {floorKey:string;nodeId:string;tab:Tab}|null) {
     const generation = refreshGeneration ?? ++loadGeneration.current;
     if (generation !== loadGeneration.current) return;
     setLoading(true);
@@ -159,6 +187,7 @@ export default function FieldApp() {
       if (!Array.isArray(result.body.buildings)) throw new Error('後台專案沒有可用的樓層資料');
       setProject(result.body);
       setProjectId(id);
+      if(restore){setFloorKey(restore.floorKey);setNodeId(restore.nodeId);if(!new URLSearchParams(location.search).has('view')&&!location.pathname.includes('admin-ar-v4'))selectTab(restore.tab);}
       setRevision(result.revision);
       setStorage(result.storage);
       // Refresh the displayed server calibration too; a new revision must not
@@ -291,9 +320,10 @@ export default function FieldApp() {
       }
       if (!mounted) return;
       setProjects(summaries);
-      const selected = summaries.find((p) => p.project.id === activeId) || summaries[0];
+      const previous=await workStore<{projectId:string;floorKey:string;nodeId:string;tab:Tab}>('selection:v4').catch(()=>null);
+      const selected = summaries.find((p) => p.project.id === previous?.projectId) || summaries.find((p) => p.project.id === activeId) || summaries[0];
       if (!selected) throw new Error('尚未建立專案，請到「路網」建立場域、樓層與節點。');
-      await loadProject(selected.project.id);
+      await loadProject(selected.project.id,undefined,undefined,previous&&selected.project.id===previous.projectId?previous:null);
     })().catch((error) => { if (mounted) { setNotice({ kind: 'error', text: error.message }); setLoading(false); } });
     const onOnline = () => setOnline(navigator.onLine);
     window.addEventListener('online', onOnline);
@@ -324,28 +354,64 @@ export default function FieldApp() {
     setNextNodeId('');
     setLock(null);
     setCandidate(null);
-    setPanorama(null);
+    setPanorama(null); setPanoFile(null); setWorkLoadedKey(''); setWorkMessage(''); setWorkError(false); setCalibrationReview(false);
+    setPanoBatch([]); setPanoSaved([]);
+    setSteps(old=>({...EMPTY_STEPS,location:old.location})); setCaptureKind('photo');
     stopDetection();
     setDraft(null);
+    setPhotoPending(false);setPhotoDraftError(false);setSavedPhoto(null);
     setDraftLoadedKey('');
     setDraftMessage('');
     let active = true;
     if (scope) draftStore(scope).then((saved) => {
       if (!active) return;
       setDraft(saved);
+      setSavedPhoto(saved);
       setDraftLoadedKey(scope);
       if (saved) setDraftMessage('已還原此節點的本機草稿');
     }).catch(() => {
       if (active) { setDraftLoadedKey(scope); setDraftMessage('此瀏覽器無法保存草稿，離開前請上傳或匯出。'); }
     });
+    if (scope) workStore<WorkDraft>(`work:${scope}`).then(async saved => {
+      if (!active) return;
+      if (saved?.version === 1) {
+        setBearing(saved.bearing); setMapUp(saved.mapUp); setSaveMapUp(saved.saveMapUp); setNextNodeId(saved.nextNodeId);
+        setPanoBatch(saved.panoBatch); setPanoSaved(saved.panoSaved); setPanoZero(saved.panoZero); setPanoYaw(saved.panoYaw); setPanoPitch(saved.panoPitch);
+        setSteps(old=>({...EMPTY_STEPS,...saved.steps,location:old.location,camera:0})); setCaptureKind(saved.captureKind || 'photo');
+        setCalibrationReview(Boolean(saved.calibrationReview) || saved.revision !== revision && (saved.bearing !== (optionalAngle(node?.guideReferenceBearing) ?? 0) || saved.saveMapUp));
+        if (saved.panoFile) { const image=await loadPanorama(saved.panoFile); if(!active)return; setPanoFile(saved.panoFile); setPanorama(image); }
+        setWorkMessage('已恢復此節點的作業草稿');
+      }
+      if(active)setWorkLoadedKey(scope);
+    }).catch(()=>{if(active){setWorkLoadedKey(scope);setWorkError(true);setWorkMessage('作業草稿無法恢復，離開前請保存或匯出。');}});
     return () => { active = false; };
   }, [scope]);
+  useEffect(()=>{if(scope&&workLoadedKey===scope&&!loading)void workStore('selection:v4',{projectId,floorKey,nodeId,tab}).catch(()=>{});},[scope,workLoadedKey,loading,tab]);
+  useEffect(() => {
+    if (!scope || workLoadedKey !== scope) return;
+    let active=true; setWorkPending(true);
+    const value=workSnapshot;
+    workStore(`work:${scope}`,value).then(()=>{if(active){setSavedWork(value);setWorkPending(false);setWorkError(false);setWorkMessage('作業草稿已暫存於此裝置');}}).catch(()=>{if(active){setWorkPending(false);setWorkError(true);setWorkMessage('裝置空間不足或草稿保存失敗，請先保存到後台或匯出。');}});
+    return ()=>{active=false;};
+  },[scope,workLoadedKey,workSnapshot]);
+  useEffect(()=>{
+    if(!workPending&&!workError&&!photoPending&&!photoDraftError)return;
+    const warn=(e:BeforeUnloadEvent)=>{e.preventDefault();e.returnValue='';};
+    window.addEventListener('beforeunload',warn);return()=>window.removeEventListener('beforeunload',warn);
+  },[workPending,workError,photoPending,photoDraftError]);
+  useEffect(()=>{
+    if(expertMode)return;
+    document.title=`${activeTab.label} · ${step+1}/${FLOW_STEPS[tab].length}｜V4 工作台`;
+    window.scrollTo(0,0);
+    document.getElementById('flow-title')?.focus({preventScroll:true});
+  },[tab,step,expertMode]);
   useEffect(() => {
     if (!draft || draftLoadedKey !== scope) return;
     let active = true;
+    setPhotoPending(true);setPhotoDraftError(false);
     setDraftMessage('正在保存本機草稿…');
-    draftStore(scope, draft).then(() => { if (active) setDraftMessage('草稿已保存在此瀏覽器，尚未上傳'); })
-      .catch(() => { if (active) setDraftMessage('草稿保存失敗，請保持頁面開啟並匯出備份。'); });
+    draftStore(scope, draft).then(() => { if (active) {setSavedPhoto(draft);setPhotoPending(false);setDraftMessage('草稿已保存在此瀏覽器，尚未上傳');} })
+      .catch(() => { if (active) {setPhotoPending(false);setPhotoDraftError(true);setDraftMessage('草稿保存失敗，請保持頁面開啟並匯出備份。');} });
     return () => { active = false; };
   }, [draft, scope, draftLoadedKey]);
   useEffect(() => {
@@ -357,7 +423,7 @@ export default function FieldApp() {
       canvas.height = view.height;
       canvas.getContext('2d')?.drawImage(view, 0, 0);
     } catch (error) { setNotice({ kind: 'error', text: (error as Error).message }); }
-  }, [panorama, panoYaw, panoPitch, tab]);
+  }, [panorama, panoYaw, panoPitch, tab, expertMode, captureKind]);
   useEffect(() => {
     const hidden = () => { if (document.hidden) stopCamera(); };
     document.addEventListener('visibilitychange', hidden);
@@ -431,7 +497,7 @@ export default function FieldApp() {
     const newDraft: FieldObservation = { id: crypto.randomUUID(), capturedAt, source, ...encoded, mapBearing: panoBearing, headingSource: panoBearing === null ? 'unconfirmed' : 'manual', sensor: snapshot, note: '', ...(pano ? { panorama: pano } : {}) };
     setDraft(newDraft);
     setPromote(false);
-    selectTab('capture');
+    setCaptureKind('photo'); goStep(1,'capture'); selectTab('capture');
     setNotice({ kind: 'info', text: '照片已建立本機草稿。請確認節點與拍照朝向，再按「上傳到後台」。' });
   }
   async function capture() {
@@ -450,9 +516,63 @@ export default function FieldApp() {
   }
   async function importPanorama(file?: File) {
     if (!file) return;
+    if (panoBatch.length && panoSaved.length < panoBatch.length && !window.confirm('目前環景還有未完成的上傳。換圖會清除待傳批次，但不會刪除已保存照片，確定換圖？')) return;
+    const target = scope;
     setBusy('正在開啟環景');
-    try { setPanorama(await loadPanorama(file)); setPanoYaw(0); setPanoPitch(0); setPanoZero(''); selectTab('capture'); }
+    try { const image = await loadPanorama(file); if (activeScope.current !== target) return; setPanorama(image); setPanoFile(file); setCaptureKind('panorama'); setPanoBatch([]); setPanoSaved([]); setPanoYaw(0); setPanoPitch(0); setPanoZero(''); goStep(1,'capture'); selectTab('capture'); }
     catch (error) { setNotice({ kind: 'error', text: (error as Error).message }); }
+    finally { setBusy(''); }
+  }
+  async function splitPanorama() {
+    const zero = optionalAngle(panoZero);
+    if (busy || !panorama || !node || zero === null) return;
+    if ((node.fieldObservations || []).length + 8 > 24) { setNotice({ kind: 'error', text: '此節點剩餘容量不足 8 張；不會刪除既有照片。' }); return; }
+    const target = scope;
+    setBusy('正在自動拆解環景');
+    try {
+      const batch: FieldObservation[] = [];
+      const batchId = crypto.randomUUID();
+      for (let yaw = 0; yaw < 360; yaw += 45) {
+        await new Promise(resolve => setTimeout(resolve, 0));
+        if (activeScope.current !== target) return;
+        const encoded = await encodeObservationImage(extractPanoramaView(panorama, yaw, 0, 75));
+        batch.push({ id: crypto.randomUUID(), capturedAt: new Date().toISOString(), source: 'panorama-frame', ...encoded,
+          mapBearing: normalizeBearing(zero + yaw), headingSource: 'manual', sensor: { ...EMPTY_SENSOR },
+          note: `環景批次取景；中央地圖方向 ${zero}°；非地磁北方。`, panorama: { yaw, pitch: 0, fov: 75, batchId } });
+      }
+      if (activeScope.current === target) { setPanoBatch(batch); setPanoSaved([]); goStep(2,'capture'); setNotice({ kind: 'info', text: '8 張參考照已產生，確認方向後即可保存。' }); }
+    } catch (error) { setNotice({ kind: 'error', text: (error as Error).message }); }
+    finally { setBusy(''); }
+  }
+  async function savePanoramaBatch() {
+    if (busy || loading || editorLocked || !node || !floor || !canWrite || !online || !panoBatch.length) return;
+    const target = scope;
+    const generation = loadGeneration.current;
+    const current = () => activeScope.current === target && loadGeneration.current === generation;
+    let saved = [...panoSaved];
+    setBusy('正在保存環景參考照');
+    try {
+      // Fresh revision also makes retries safe after an uncertain network response.
+      const snapshot = await readJson(`./api/ar-content?projectId=${encodeURIComponent(projectId)}&ts=${Date.now()}`);
+      if (!current()) return;
+      let sha = snapshot.revision;
+      const freshNode = flattenProject(snapshot.body).find(f => f.buildingId === floor.buildingId && f.id === floor.id)?.nodes.find(n => n.nodeType === node.nodeType && n.id === node.id);
+      if (!freshNode) throw new Error('節點已變更或刪除，請重新確認位置。');
+      const existing = freshNode.fieldObservations || [];
+      const pending = panoBatch.filter(item => !existing.some((old: FieldObservation) => old.id === item.id));
+      if (existing.length + pending.length > 24) throw new Error('後台剩餘容量不足，未開始本次上傳。既有照片均保留。');
+      for (const observation of panoBatch) {
+        if (!current()) return;
+        setBusy(`正在保存環景參考照 ${saved.length}／8`);
+        const result = await readJson('./api/save-ar-content', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-AR-Save-Contract': 'ar-field-survey-v1' }, body: JSON.stringify({ expectedSourceBlobSha: sha, fieldSurvey: { projectId, buildingId: floor.buildingId, floorId: floor.id, nodeId: node.id, nodeType: node.nodeType, observation, promoteToGuide: false } }) });
+        if (!result.body.ok) throw new Error('後台尚未確認保存，請重試。');
+        sha = result.revision || result.body.sourceBlobSha || '';
+        if (!saved.includes(observation.id)) saved.push(observation.id);
+        if (current()) { setPanoSaved([...saved]); setRevision(sha); }
+      }
+      const updated = await readJson(`./api/ar-content?projectId=${encodeURIComponent(projectId)}&ts=${Date.now()}`);
+      if (current()) { setProject(updated.body); setRevision(updated.revision); goStep(3,'capture'); setNotice({ kind: 'success', text: `8 張環景參考照與方向已保存到${storage === 'local' ? '本機後台（未同步 GitHub）' : '後台'}。可到「相機測試」辨識；未替換 V3 導引照片。` }); }
+    } catch (error) { if (current()) setNotice({ kind: 'error', text: `已確認 ${saved.length}／8 張。${(error as Error).message} 保持此頁並按重試，會沿用原照片編號，不重複新增。` }); }
     finally { setBusy(''); }
   }
   async function save(mode: 'photo' | 'calibration') {
@@ -460,6 +580,7 @@ export default function FieldApp() {
     const generation = loadGeneration.current;
     const stillCurrent = () => generation === loadGeneration.current && activeScope.current === scope;
     const photo = draft;
+    if (mode === 'calibration' && calibrationReview) { setNotice({kind:'error',text:'後台已更新，請先核對恢復的校正草稿。'}); return; }
     if (mode === 'photo' && promote && !window.confirm('將取代此節點在 V3 使用的導引照片。V4 歷史觀測照片會保留，確定繼續？')) return;
     if (mode === 'calibration' && saveMapUp && optionalAngle(mapUp) === null) { setNotice({ kind: 'error', text: '請先填入樓層地圖上方對應的方位。' }); return; }
     setBusy(mode === 'photo' ? '正在上傳照片' : '正在保存角度');
@@ -476,8 +597,8 @@ export default function FieldApp() {
         if (stillCurrent()) { setDraft(null); setDraftMessage('照片已上傳，本機待傳草稿已清除'); }
       }
       const updated = await readJson(`./api/ar-content?projectId=${encodeURIComponent(projectId)}&ts=${Date.now()}`).catch(() => null);
-      if (updated && stillCurrent()) { setProject(updated.body); setRevision(updated.revision); }
-      if (stillCurrent()) setNotice({ kind: 'success', text: `${mode === 'photo' ? '照片與方位紀錄' : '節點角度'}已保存到${storage === 'local' ? '本機後台（未同步 GitHub）' : '後台'}。${updated ? '' : '重新讀取失敗，請稍後刷新後台。'}` });
+      if (updated && stillCurrent()) { setProject(updated.body); setRevision(updated.revision); if(mode==='calibration')setSaveMapUp(false); }
+      if (stillCurrent()) { goStep(3,mode === 'photo'?'capture':'calibrate'); setNotice({ kind: 'success', text: `${mode === 'photo' ? '照片與方位紀錄' : '節點角度'}已保存到${storage === 'local' ? '本機後台（未同步 GitHub）' : '後台'}。${updated ? '' : '重新讀取失敗，請稍後刷新後台。'}` }); }
     } catch (error) { if (stillCurrent()) setNotice({ kind: 'error', text: (error as Error).message }); }
     finally { setBusy(''); }
   }
@@ -555,7 +676,7 @@ export default function FieldApp() {
   const writeDisabled = disabled || editorLocked || !canWrite || !revision || storage === 'readonly' || !online;
   const sensorDerived = draft ? mapBearingFromSensor(draft.sensor, optionalAngle(mapUp), Date.parse(draft.capturedAt)) : null;
 
-  return <div className={`field-app app-tabs-layout active-${tab}`}>
+  const classicView = <div className={`field-app app-tabs-layout active-${tab}`}>
     <header className="field-header">
       <a className="field-brand" href="./ar-v4-field.html"><span className="brand-symbol"><Navigation size={23} /></span><span>室內導引 <b>FIELD LAB</b><small>V4 現場 AR 工作台</small></span></a>
       <div className="header-links"><span className="version-tag">V4 · 試作版</span><a href="./ar-v3.html" target="_blank" rel="noreferrer">開啟 V3 <ChevronRight size={14} /></a><a href="./admin-ar-v4.html" target="_blank" rel="noreferrer">現場資料後台 <ChevronRight size={14} /></a></div>
@@ -603,8 +724,8 @@ export default function FieldApp() {
             <button aria-pressed={navigationOpen} disabled={loading || !!busy || editorLocked || !projectId} onClick={() => { stopCamera(); setNavigationOpen(true); }}><Navigation size={17} />導航流程</button>
           </div>
           {navigationOpen && tab === 'camera' && !editorLocked && <section className="navigation-test panel" aria-label="導航流程測試">
-            <div className="navigation-test-help"><h2>導航流程測試</h2><p>V4 獨立導航測試：路線預覽會自動聚焦目前路段，按「下一轉角」重新縮放。請在下方選擇「{project?.project?.name || '目前場域'}」，再選起終點；不會自動套用工作台節點。</p><p>使用已保存的後台路網；AR 與辨識仍沿用 V3 流程，V4 採集的觀測照片尚未接入。這不是完整 V4 自動定位導航。</p><small>切換頁籤、場域或重新讀取資料會結束此測試；照片與路網草稿不受影響。</small></div>
-            <iframe src="./ar-v4-navigation.html" title="AR 導航流程測試" className="navigation-test-frame" allow="camera; accelerometer; gyroscope; magnetometer; fullscreen" allowFullScreen />
+            <div className="navigation-test-help"><h2>V4 民眾導引測試</h2><p>以目前工作台節點模擬 Kiosk 起點。選目的地預覽 V3 路線，再啟用相機與方向感測；持續比對 V4 照片，抵達由使用者確認。皮卡是方向示意，非精確 3D 錨點。</p><small>切換頁籤會結束測試，草稿不受影響。</small></div>
+            <iframe src={`./ar-v4-navigation.html?projectId=${encodeURIComponent(projectId)}&origin=${encodeURIComponent(nodeId)}`} title="AR 導航流程測試" className="navigation-test-frame" allow="camera; accelerometer; gyroscope; magnetometer; fullscreen" allowFullScreen />
           </section>}
           <div hidden={navigationOpen}>
           <div className="camera-card">
@@ -630,7 +751,21 @@ export default function FieldApp() {
           {tab === 'capture' && <div id="field-panel-capture" role="tabpanel" aria-labelledby="field-tab-capture" tabIndex={0} className="tool-content">
             <div className="panel-title"><span className="step-number">02</span><div><h2>建立節點參考照片</h2><p>多個方向可分別拍攝、保存</p></div></div>
             <div className="capture-actions"><button className="primary-button" disabled={disabled || !node || draftLoadedKey !== scope} onClick={() => selectTab('camera')}><Camera size={18} />前往相機拍攝</button><button disabled={disabled || !node || draftLoadedKey !== scope} onClick={() => photoInput.current?.click()}><ImagePlus size={17} />匯入照片</button><button disabled={disabled || !node || draftLoadedKey !== scope} onClick={() => panoramaInput.current?.click()}><Expand size={17} />360 環景取景</button></div>
-            {panorama && <div className="panorama-editor"><b>環景方向取景</b><canvas ref={panoCanvas} aria-label="環景透視預覽" /><label>水平取景 {panoYaw}°<input aria-label="環景水平取景" type="range" min="-180" max="180" value={panoYaw} onChange={(e) => setPanoYaw(Number(e.target.value))} /></label><label>仰俯角 {panoPitch}°<input aria-label="環景仰俯角" type="range" min="-45" max="45" value={panoPitch} onChange={(e) => setPanoPitch(Number(e.target.value))} /></label><label>環景中央對應的地圖方向（可留白）<input type="number" min="0" max="359.9" step="0.1" placeholder="地圖上方 = 0°" value={panoZero} onChange={(e) => setPanoZero(e.target.value)} /></label><button className="soft-button" disabled={disabled} onClick={async () => { setBusy('正在擷取環景'); try { await makeDraft('panorama-frame', extractPanoramaView(panorama, panoYaw, panoPitch, 75), { yaw: panoYaw, pitch: panoPitch, fov: 75 }); } catch (e) { setNotice({ kind: 'error', text: (e as Error).message }); } finally { setBusy(''); } }}>擷取這個方向</button><p className="helper">僅上傳這張透視照片，不上傳 360 原檔；這不是 VPS 建圖。</p></div>}
+            {panorama && <div className="panorama-editor"><b>① 環景已載入 → ② 校正 0° → ③ 拆解保存</b>
+              <p>目前節點：{node ? nodeLabel(node) : '未選擇'}。地圖上方 0°、右方 90°；不是地磁北方。</p>
+              <canvas ref={panoCanvas} aria-label="環景透視預覽" />
+              <label>水平取景 {panoYaw}°<input disabled={disabled || !!panoBatch.length} aria-label="環景水平取景" type="range" min="-180" max="180" value={panoYaw} onChange={e => setPanoYaw(Number(e.target.value))} /></label>
+              <label>仰俯角 {panoPitch}°<input disabled={disabled || !!panoBatch.length} aria-label="環景仰俯角" type="range" min="-45" max="45" value={panoPitch} onChange={e => setPanoPitch(Number(e.target.value))} /></label>
+              <p className="helper">將預覽轉到「地圖上方」的現場地標，按下方按鈕校正；也可直接填入環景中央的地圖方向。</p>
+              <button disabled={disabled || !!panoBatch.length} onClick={() => setPanoZero(String(normalizeBearing(-panoYaw)))}>目前預覽面向地圖上方（0°）</button>
+              <label>環景中央對應的地圖方向<input aria-label="環景中央地圖方向" disabled={disabled || !!panoBatch.length} type="number" min="0" max="359.9" step="0.1" placeholder="請先校正；上方 0°、右方 90°" value={panoZero} onChange={e => setPanoZero(e.target.value)} /></label>
+              {!panoBatch.length && <><button className="primary-button" disabled={disabled || !node || optionalAngle(panoZero) === null} onClick={splitPanorama}>自動拆解 8 個方向</button>
+              <button className="soft-button" disabled={disabled} onClick={async () => { setBusy('正在擷取環景'); try { await makeDraft('panorama-frame', extractPanoramaView(panorama, panoYaw, panoPitch, 75), { yaw: panoYaw, pitch: panoPitch, fov: 75 }); } catch (e) { setNotice({ kind: 'error', text: (e as Error).message }); } finally { setBusy(''); } }}>只擷取目前方向（舊工具）</button></>}
+              {!!panoBatch.length && <><p>③ 預覽 8 張水平參考照 · 已確認保存 {panoSaved.length}／8</p><div className="panorama-batch-grid">{panoBatch.map(item => <figure key={item.id}><img src={item.imageUrl} alt={`地圖方向 ${item.mapBearing} 度的環景參考照`} /><figcaption>地圖 {angleText(item.mapBearing)} {panoSaved.includes(item.id) ? '✓ 已保存' : '待保存'}</figcaption></figure>)}</div>
+              <button className="primary-button" disabled={disabled || editorLocked || !canWrite || !online} onClick={savePanoramaBatch}>{panoSaved.length === 8 ? '重新核對後台保存結果' : panoSaved.length ? '重試保存剩餘照片' : '確認方向，保存 8 張到此節點'}</button>
+              <button disabled={disabled || (panoSaved.length > 0 && panoSaved.length < 8)} onClick={() => { setPanoBatch([]); setPanoSaved([]); }}>結束此批／重新校正</button></>}
+              <p className="helper">支援已拼接的 2:1 JPEG／PNG，最大 30 MB。自動拆解使用水平仰角 0°、視角 75°。只保存壓縮參考照及方向，不上傳 360 原檔；不覆蓋既有照片。待傳批次未永久保存，請勿重新整理或切換節點。</p>
+            </div>}
             {draft ? <div className="photo-draft"><img src={draft.imageUrl} alt="待上傳的節點參考照片" /><div className="photo-meta"><span>{sourceText[draft.source]}</span><span>{draft.width} × {draft.height} · 約 {Math.ceil(draft.imageUrl.length * 0.75 / 1024)} KB</span></div><p className="draft-state">{draftMessage}</p><label>這張照片的拍攝朝向（地圖角度）<input aria-label="照片拍攝朝向" type="number" min="0" max="359.9" step="0.1" placeholder="尚未確認，先留白" value={draft.mapBearing ?? ''} disabled={disabled} onChange={(e) => setDraft({ ...draft, mapBearing: optionalAngle(e.target.value), headingSource: e.target.value === '' ? 'unconfirmed' : 'manual' })} /></label><div className="button-row compact"><button disabled={disabled} onClick={() => setDraft({ ...draft, mapBearing: bearing, headingSource: 'manual' })}>套用校正面板 {angleText(bearing)}</button><button disabled={disabled || sensorDerived === null} onClick={() => sensorDerived !== null && setDraft({ ...draft, mapBearing: sensorDerived, headingSource: 'sensor-map' })}>採用拍攝時羅盤</button></div><p className="helper">0° 指向地圖上方，90° 指向右方。羅盤須有已校準的樓層北向；匯入照片不會套用現在手機的方位。</p><label>現場備註<textarea aria-label="現場備註" maxLength={1000} placeholder="例如：站在電梯左側，面向服務台；下午逆光" value={draft.note || ''} disabled={disabled} onChange={(e) => setDraft({ ...draft, note: e.target.value })} /></label>{draft.quality?.warnings?.length > 0 && <div className="quality-warnings">{draft.quality.warnings.map((warning, i) => <p key={i}>△ {warning}</p>)}<small>影像品質提示僅供檢查，不是辨識成功率。</small></div>}<label className="check-label"><input type="checkbox" checked={promote} disabled={disabled} onChange={(e) => setPromote(e.target.checked)} /><span>也設為 V3 此節點的主要導引照片<small>會取代舊主圖；預設只新增 V4 觀測紀錄。</small></span></label><button className="primary-button full-width" disabled={writeDisabled} onClick={() => save('photo')}><CloudUpload size={18} />上傳到{storage === 'local' ? '本機' : ''}後台</button><button className="text-button" onClick={() => downloadJson(`ar-v4-draft-${draft.id}.json`, { scope, observation: draft })}><Download size={15} />匯出草稿備份</button></div> : <div className="empty-draft"><ImagePlus size={34} strokeWidth={1.3} /><b>此節點尚無待傳照片</b><p>請拍攝或匯入一張照片。原始檔不會自動上傳。</p></div>}
             <div className="helper-box"><b>現場拍攝小提醒</b><p>先停下來、鏡頭直立；避開可辨識的人臉及個資。建議同一節點分拍前、左、右方，逐張校正方向。</p><p>環景請先用 Insta360 工具匯出 2:1 JPG／PNG。此試作每張檔案上限 30 MB，每節點最多 24 筆觀測。</p></div>
           </div>}
@@ -662,5 +797,91 @@ export default function FieldApp() {
     <input ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(e) => { importPhoto(e.target.files?.[0]); e.target.value = ''; }} />
     <input ref={panoramaInput} type="file" accept="image/jpeg,image/png" hidden onChange={(e) => { importPanorama(e.target.files?.[0]); e.target.value = ''; }} />
     <input ref={testInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(e) => { testPhoto(e.target.files?.[0]); e.target.value = ''; }} />
+  </div>;
+
+  const destination = storage === 'local' ? '本機後台' : '雲端後台';
+  const ready = !disabled && workLoadedKey === scope && draftLoadedKey === scope;
+  const currentRecords = records.filter(r=>recordScope==='floor'||r.nodeId===nodeId);
+  const recordGroups = groupObservations(currentRecords);
+  const detailGroup = recordGroups.find(g=>g[0].observation.id===recordDetail);
+  const beginCamera = (task:typeof cameraTask) => {stopCamera();setCameraTask(task);setNavigationOpen(task==='navigation');goStep(1,'camera');selectTab('camera');};
+  const next = () => {
+    if(tab==='location'){ if(step<2)goStep(step+1);else {goStep(0,'capture');selectTab('capture');} }
+    if(tab==='capture'){
+      if(step===1){if(captureKind==='panorama'){if(panoBatch.length)goStep(2);else void splitPanorama();}else goStep(2);}
+      else if(step===2){if(captureKind==='panorama')void savePanoramaBatch();else void save('photo');}
+      else if(step===3){goStep(0);}
+    }
+    if(tab==='calibrate'){if(step<2)goStep(step+1);else if(step===2)void save('calibration');else {goStep(0);selectTab('camera');}}
+    if(tab==='camera'){if(step===1)goStep(2);else {goStep(1);setCandidate(null);}}
+  };
+  const nextLabel = tab==='location' ? step===2?'位置確認，開始採集':'下一步'
+    : tab==='capture' ? step===1?(captureKind==='panorama'&&!panoBatch.length?'產生 8 個方向':'下一步'):step===2?`保存到${destination}`:'再採集一組'
+    : tab==='calibrate' ? step===2?`保存到${destination}`:step===3?'前往相機測試':'下一步'
+    : tab==='camera' ? step===1?'查看結果':'重新測試':'下一步';
+  const nextDisabled = !ready || (tab==='location'&&!node) || (tab==='capture'&&(step===1?(captureKind==='panorama'?optionalAngle(panoZero)===null:!draft):step===2?(writeDisabled||(captureKind==='panorama'?!panoBatch.length:!draft)):false))
+    || (tab==='calibrate' && (step===2&&(writeDisabled||calibrationReview||(saveMapUp&&optionalAngle(mapUp)===null)))) || (tab==='camera'&&(detecting||!(candidate||lockFresh)));
+  const taskStart = tab==='capture'&&step===0 || tab==='camera'&&step===0;
+  const footer = !taskStart && tab!=='graph'&&tab!=='records';
+  const fullTools = () => {if(editorLocked){setNotice({kind:'error',text:'請先保存路網草稿，再切換工具介面。'});return;} stopCamera();setExpertMode(value=>!value);};
+  if(expertMode)return <><div className="classic-return"><button onClick={fullTools} disabled={editorLocked}>返回精靈介面</button><span>完整工具 · 所有原有功能</span></div>{classicView}</>;
+  return <div className={`field-app flow-app active-${tab} ${footer?'has-flow-footer':''}`}>
+    <header className="flow-header"><button className="flow-brand" onClick={()=>setMenuOpen(true)} aria-label="功能選單"><Navigation size={22}/><span>室內導引</span></button>
+      <span className={`flow-storage ${!online||!canWrite?'warning':''}`}>{!online?'離線':storage==='local'?'本機':storage==='readonly'?'唯讀':'雲端'}{canWrite?'':' · 未登入'}</span>
+      <Help title="工作台"><p>V4 現場採集與校正。資料版本：{revision||'無'}。{storage==='local'?'本機資料不會自動同步 GitHub。':'保存將透過有權限的後台進行。'}</p><p>{workMessage}</p><div className="flow-stack"><button disabled={disabled||editorLocked||!projectId} onClick={()=>loadProject(projectId).catch(e=>setNotice({kind:'error',text:e.message}))}>重新讀取後台</button><button disabled={editorLocked} onClick={fullTools}>完整工具（進階功能）</button><a href="./ar-v3.html" target="_blank" rel="noreferrer">開啟 V3</a><a href="./admin-ar-v4.html" target="_blank" rel="noreferrer">現場資料後台</a><a href="./admin.html" target="_blank" rel="noreferrer">登入後台</a><a href="./ar-v4-demo.html" target="_blank" rel="noreferrer">螢幕辨識 Demo · 模擬素材</a></div></Help>
+    </header>
+    <main className="flow-main">
+      <div className="flow-heading"><div><small>{FLOW_STEPS[tab].length>1?`${step+1} / ${FLOW_STEPS[tab].length} · ${activeTab.label}`:activeTab.label}</small><h1 id="flow-title" tabIndex={-1}>{FLOW_STEPS[tab][step]}</h1></div><Help title={activeTab.label}><p>{activeTab.hint}</p><p>地圖上方是 0°、右方是 90°，不是手機的地磁北方。返回會保留作業草稿，只有按保存才會寫入後台。</p><p>現場請站定操作，避免拍攝個資。節點辨識不是公尺級定位或全程移動追蹤。</p><button disabled={editorLocked} onClick={fullTools}>開啟此功能的完整工具</button></Help></div>
+      {tab!=='graph'&&<button className="flow-context" onClick={()=>{goStep(0,'location');selectTab('location');}} disabled={disabled||workPending||workError}><MapPin size={17}/><span>{floor?.name||'選樓層'} · {node?nodeLabel(node):'選節點'}</span><ChevronRight size={16}/></button>}
+      {notice&&<div className={`notice ${notice.kind}`} role={notice.kind==='error'?'alert':'status'}><span>{notice.text}</span><button aria-label="關閉提示" onClick={()=>setNotice(null)}>×</button></div>}
+      {workError&&<div className="notice error" role="alert">{workMessage}<button onClick={()=>downloadJson('v4-work-draft.json',{scope,bearing,mapUp,panoBatch,panoSaved,observation:draft})}>匯出草稿</button></div>}
+      {photoDraftError&&<div className="notice error" role="alert">{draftMessage}<button onClick={()=>downloadJson('v4-photo-draft.json',{scope,observation:draft})}>匯出待傳照片</button></div>}
+      {editorLocked&&tab!=='graph'&&<div className="notice" role="status">路網有未保存變更，請先完成保存。<button onClick={()=>selectTab('graph')}>回路網</button></div>}
+      {loading&&<p role="status">正在讀取資料…</p>}
+      <fieldset disabled={disabled} className="flow-fieldset">
+      <section id="field-panel-location" role="tabpanel" aria-label="作業位置" hidden={tab!=='location'}>
+        <Step visible={step===0}><label>場域<select aria-label="場域" disabled={disabled||editorLocked||workPending||workError} value={projectId} onChange={e=>loadProject(e.target.value).catch(error=>setNotice({kind:'error',text:error.message}))}>{projects.map(p=><option key={p.project.id} value={p.project.id}>{p.project.name||p.project.id}</option>)}</select></label><label>建物／樓層<select aria-label="樓層" disabled={disabled||editorLocked||workPending||workError} value={floor?`${floor.buildingId}/${floor.id}`:''} onChange={e=>setFloorKey(e.target.value)}>{floors.map(f=><option key={`${f.buildingId}/${f.id}`} value={`${f.buildingId}/${f.id}`}>{f.buildingName} · {f.name}</option>)}</select></label><button onClick={()=>selectTab('graph')}>建立／編輯場域與路網</button></Step>
+        <Step visible={step===1}><label>目前節點<select aria-label="目前節點" value={nodeId} disabled={disabled||workPending||workError} onChange={e=>setNodeId(e.target.value)}>{floor?.nodes.map(n=><option key={n.id} value={n.id}>{nodeLabel(n)}</option>)}</select></label><div className="map-heading"><span>點選作業位置</span><button aria-label="切換地圖放大" onClick={()=>setMapZoom(mapZoom===1?1.7:1)}><Expand size={19}/></button></div><div className="map-scroll"><div className="floor-map" style={{width:`${mapZoom*100}%`}}>{floor?.imageUrl?<img src={floor.imageUrl} alt={`${floor.name} 現有樓層平面圖`}/>:<p>此樓層尚無底圖</p>}<svg className="map-edges" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true">{floor?.edges?.map((e:any,i:number)=>{const a=floor.nodes.find(n=>n.id===e.start),b=floor.nodes.find(n=>n.id===e.end);return a&&b?<line key={i} x1={a.x*1000} y1={a.y*1000} x2={b.x*1000} y2={b.y*1000}/>:null;})}</svg>{floor?.nodes.map((n,i)=><button className={`map-node ${n.id===nodeId?'selected':''}`} key={n.id} disabled={disabled||workPending||workError} style={{left:`${n.x*100}%`,top:`${n.y*100}%`}} aria-label={`選擇節點 ${nodeLabel(n)}`} onClick={()=>setNodeId(n.id)}>{i+1}</button>)}</div></div></Step>
+        <Step visible={step===2}><div className="flow-summary"><MapPin size={32}/><h2>{node?nodeLabel(node):'請選節點'}</h2><p>{project?.project?.name} · {floor?.name}</p><small>本樓層已有照片：{coveredNodes} / {floor?.nodes.length||0} 個節點</small></div><button onClick={()=>selectTab('graph')}>編輯地圖、路徑與 AR 點位</button></Step>
+      </section>
+      <section id="field-panel-graph" role="tabpanel" aria-label="路網編輯" hidden={tab!=='graph'}><div className="flow-inline"><span>編輯、測試與保存均在下方完成</span><Help title="路網資料安全"><p>路網草稿跨頁籤保留，按保存後才更新後台。刪除節點會連帶移除其照片，必須確認。跨樓層連通、尺規、底圖、匯出及復原都保留於工具選單。</p></Help></div>{!canWrite&&<p>需要作業權限，請從右上角登入後台。</p>}{editorSrc&&<iframe ref={editorFrame} src={editorSrc} title="地圖與路網編輯器" className="graph-editor-frame"/>}</section>
+      <section id="field-panel-camera" role="tabpanel" aria-label="相機測試" hidden={tab!=='camera'}>
+        <Step visible={step===0}><div className="flow-choices"><button onClick={()=>beginCamera('recognition')}><ScanLine/>照片定位測試</button><button onClick={()=>beginCamera('direction')}><Compass/>方向提示測試</button><button disabled={editorLocked} onClick={()=>beginCamera('navigation')}><Navigation/>導航流程</button><button onClick={()=>beginCamera('photo')}><Camera/>拍攝參考照片</button></div><a className="flow-demo" href="./ar-v4-demo.html?mode=scan" target="_blank" rel="noreferrer">示範素材 · 螢幕辨識 Demo</a></Step>
+        <div hidden={step===0||cameraTask==='navigation'}><div className="flow-camera"><video ref={video} autoPlay playsInline muted/><span>{cameraState==='ready'?'相機已啟用':'相機未啟用'}</span></div><div className="flow-inline"><button disabled={disabled||cameraState==='requesting'} onClick={startCamera}>{cameraState==='ready'?'重新啟用相機':'開啟相機'}</button><button disabled={cameraState!=='ready'} onClick={stopCamera}>關閉相機</button></div>
+          {cameraTask==='photo'&&<button className="primary-button" disabled={!ready||cameraState!=='ready'||!node} onClick={capture}>拍攝此畫面</button>}
+          {(cameraTask==='recognition'||cameraTask==='direction')&&<><div className="flow-inline"><button className="primary-button" disabled={disabled||!testRefs.length||cameraState!=='ready'} onClick={()=>detecting?stopDetection():runRecognition()}>{detecting?'停止辨識':'開始相機辨識'}</button><button disabled={disabled||detecting||!testRefs.length} onClick={()=>testInput.current?.click()}>匯入測試照</button></div><p className="recognition-status" role="status">{recognitionMessage}</p>{!testRefs.length&&<button onClick={()=>selectTab('capture')}>先建立參考照片</button>}{candidate&&<div className="flow-result"><img src={candidate.reference.imageUrl} alt="匹配的參考照片"/><h2>候選：{candidate.reference.label}</h2><p>方向 {angleText(candidate.reference.bearing)} · 仍需人工確認</p><button disabled={disabled} onClick={()=>{confirmCandidate();goStep(2,'camera');}}>我確認在此節點，且面向照片同方向</button><Help title="辨識結果"><p>幾何內點 {candidate.inliers}／匹配 {candidate.matches}，不是定位正確率。本輪使用 {testRefs.length} 張參考照，優先目前節點。</p></Help></div>}</>}
+          {cameraTask==='direction'&&<div className="flow-summary"><ArrowUp size={34} style={{transform:`rotate(${turnAngle??0}deg)`}}/><b>{turnAngle===null?'先確認目前面向':Math.abs(turnAngle)<18?'面向正確':`向${turnAngle>0?'右':'左'}轉 ${Math.round(Math.abs(turnAngle))}°`}</b><p>{lockFresh?'校正有效 · 20 秒':'校正已過期／未確認'} · {staleSensor?'感測待啟用':angleText(sensor.heading)}</p><button onClick={requestSensors}>啟用方位感測</button><button onClick={()=>selectTab('calibrate')}>選地標並校正</button></div>}
+          <Help title="相機與感測"><p>{cameraMessage}。{sensorMessage}。只辨識候選節點，不追蹤步行距離；切換頁籤會暫停鏡頭。感測來源：{sensor.kind}；精度欄位 {sensor.accuracy??'未知'}。</p><button onClick={requestSensors}>重新啟用方位感測</button></Help>
+        </div>
+        {navigationOpen&&tab==='camera'&&step>0&&!editorLocked&&<div><p className="flow-safety">目前節點模擬 Kiosk 起點 · V4 連續辨識，抵達由使用者確認</p><iframe src={`./ar-v4-navigation.html?projectId=${encodeURIComponent(projectId)}&origin=${encodeURIComponent(nodeId)}`} title="AR 導航流程測試" className="navigation-test-frame" allow="camera; accelerometer; gyroscope; magnetometer; fullscreen" allowFullScreen/></div>}
+      </section>
+      <section id="field-panel-capture" role="tabpanel" aria-label="照片採集" hidden={tab!=='capture'}>
+        <Step visible={step===0}><div className="flow-choices"><button disabled={!ready||!node} onClick={()=>beginCamera('photo')}><Camera/>現場拍攝</button><button disabled={!ready||!node} onClick={()=>photoInput.current?.click()}><ImagePlus/>匯入照片</button><button disabled={!ready||!node} onClick={()=>panoramaInput.current?.click()}><Expand/>匯入 360 環景</button></div>{(draft||panoBatch.length>0||panorama)&&<button onClick={()=>{if(panoBatch.length||panorama)setCaptureKind('panorama');else setCaptureKind('photo');goStep(1);}}>繼續此節點的草稿</button>}<Help title="照片來源"><p>JPEG／PNG 環景必須先拼接成 2:1，最多 30 MB；一般照片另支援 WebP。原檔只留在裝置，不上傳到後台。每節點最多 24 張觀測照片。</p></Help></Step>
+        <Step visible={step===1}>
+          {captureKind==='panorama'?<><canvas ref={panoCanvas} className="flow-preview" aria-label="環景透視預覽"/><label>轉向參考地標<input aria-label="環景水平取景" type="range" min="-180" max="180" value={panoYaw} disabled={disabled||!!panoBatch.length} onChange={e=>setPanoYaw(Number(e.target.value))}/></label><button disabled={disabled||!!panoBatch.length} onClick={()=>setPanoZero(String(normalizeBearing(-panoYaw)))}>目前畫面朝向地圖上方（0°）</button><label>環景中央地圖方向<input aria-label="環景中央地圖方向" type="number" placeholder="尚未校正" min="0" max="359.9" value={panoZero} disabled={disabled||!!panoBatch.length} onChange={e=>setPanoZero(e.target.value)}/></label><Help title="環景校正"><p>先把畫面轉到地圖上方的地標，再確認。0° 不是地磁北方。自動產生八張水平、視角 75° 的照片。</p><p>單張取景、仰俯角等仍可在完整工具操作。</p></Help>{panoBatch.length>0&&<button disabled={disabled||panoSaved.length>0} onClick={()=>setPanoBatch([])}>重新校正這批方向</button>}</>
+          :draft?<><img className="flow-preview" src={draft.imageUrl} alt="待上傳的節點參考照片"/><label>照片拍攝朝向<input aria-label="照片拍攝朝向" type="number" placeholder="尚未確認，可留白" value={draft.mapBearing??''} onChange={e=>setDraft({...draft,mapBearing:optionalAngle(e.target.value),headingSource:optionalAngle(e.target.value)===null?'unconfirmed':'manual'})}/></label><div className="flow-inline"><button onClick={()=>setDraft({...draft,mapBearing:bearing,headingSource:'manual'})}>套用節點方向</button><button disabled={sensorDerived===null} onClick={()=>sensorDerived!==null&&setDraft({...draft,mapBearing:sensorDerived,headingSource:'sensor-map'})}>採用拍攝時羅盤</button></div><details><summary>備註與進階選項</summary><label>現場備註<textarea aria-label="現場備註" value={draft.note||''} maxLength={1000} onChange={e=>setDraft({...draft,note:e.target.value})}/></label><label className="check-label"><input type="checkbox" checked={promote} onChange={e=>setPromote(e.target.checked)}/>也取代 V3 此節點主要導引照片</label><button onClick={()=>downloadJson(`ar-v4-draft-${draft.id}.json`,{scope,observation:draft})}>匯出草稿備份</button></details>{draft.quality?.warnings?.map((warning,i)=><p key={i} className="flow-safety">△ {warning}</p>)}</>:<button onClick={()=>goStep(0)}>返回選擇來源</button>}
+        </Step>
+        <Step visible={step===2}><div className="flow-summary"><h2>{node?nodeLabel(node):'未選節點'}</h2><p>{captureKind==='panorama'?`${panoBatch.length} 張環景參考照`:'1 張參考照片'} → {destination}</p><small>{captureKind==='panorama'?`已確認保存 ${panoSaved.length} / ${panoBatch.length}`:draft?.mapBearing===null?'方向待確認':`方向 ${angleText(draft?.mapBearing??null)}`}</small></div>{captureKind==='panorama'?<div className="panorama-batch-grid">{panoBatch.map(o=><figure key={o.id}><img src={o.imageUrl} alt={`環景方向 ${o.mapBearing} 度`}/><figcaption>{angleText(o.mapBearing)} {panoSaved.includes(o.id)?'✓ 已保存':''}</figcaption></figure>)}</div>:draft&&<img className="flow-preview" src={draft.imageUrl} alt="即將保存的照片"/>}{promote&&captureKind==='photo'&&<p className="flow-safety">此操作會取代 V3 主圖；保存時再次確認。</p>}</Step>
+        <Step visible={step===3}><div className="flow-summary"><Check size={36}/><h2>後台已確認保存</h2><p>{destination} · {node?nodeLabel(node):''}</p></div><div className="flow-choices"><button onClick={()=>selectTab('records')}>查看紀錄</button><button onClick={()=>beginCamera('recognition')}>測試辨識</button></div></Step>
+      </section>
+      <section id="field-panel-calibrate" role="tabpanel" aria-label="方向校正" hidden={tab!=='calibrate'}>
+        <Step visible={step===0}><label>參考相鄰地標<select aria-label="下一個節點" value={nextNode?.id||''} onChange={e=>{setNextNodeId(e.target.value);setLock(null);}}>{neighbors.length?neighbors.map(n=><option key={n.id} value={n.id}>{nodeLabel(n)}</option>):<option value="">沒有相鄰路段，請使用人工方向</option>}</select></label><button disabled={targetBearing===null} onClick={()=>targetBearing!==null&&setBearing(targetBearing)}>採用此路段方向 {angleText(targetBearing)}</button>{!neighbors.length&&<button onClick={()=>selectTab('graph')}>到路網連接節點</button>}<p>也可按下一步，直接設定人工方向。</p></Step>
+        <Step visible={step===1}><div className="flow-dial"><Navigation size={65} style={{transform:`rotate(${bearing-45}deg)`}}/><strong>{angleText(bearing)}</strong><small>地圖上方 0°</small></div><label>參考朝向<input aria-label="節點參考朝向" type="range" min="0" max="359" value={bearing} onChange={e=>setBearing(Number(e.target.value))}/></label><details><summary>精確微調與整層北向</summary><div className="angle-adjust">{[-5,-1].map(n=><button key={n} onClick={()=>setBearing(normalizeBearing(bearing+n))}>{n}°</button>)}<input aria-label="節點角度數值" type="number" value={bearing} onChange={e=>setBearing(optionalAngle(e.target.value)??0)}/>{[1,5].map(n=><button key={n} onClick={()=>setBearing(normalizeBearing(bearing+n))}>+{n}°</button>)}</div><label>樓層地圖北向<input aria-label="樓層地圖北向" type="number" value={mapUp} onChange={e=>setMapUp(e.target.value)}/></label><label className="check-label"><input type="checkbox" checked={saveMapUp} onChange={e=>setSaveMapUp(e.target.checked)}/>同時更新整層北向（影響本樓層羅盤換算）</label></details><button onClick={()=>{if(!node)return;setLock({nodeId:node.id,bearing,sensorHeading:staleSensor?null:sensor.heading,sensorKind:sensor.kind,screenAngle:sensor.screenAngle,time:Date.now()});setCameraTask('direction');goStep(1,'camera');selectTab('camera');}}>我已面向這個方向 · 測試轉向</button></Step>
+        <Step visible={step===2}><div className="flow-summary"><h2>{node?nodeLabel(node):''}</h2><p>節點方向 {angleText(bearing)}</p><p>保存到{destination}</p>{saveMapUp&&<p className="flow-safety">也會更新整層北向為 {angleText(optionalAngle(mapUp))}</p>}</div>{calibrationReview&&<div className="notice error"><span>恢復的草稿與後台版本不同。後台節點方向 {angleText(optionalAngle(node?.guideReferenceBearing))}，請核對後再保存。</span><button onClick={()=>setCalibrationReview(false)}>我已核對，使用此校正草稿</button></div>}</Step>
+        <Step visible={step===3}><div className="flow-summary"><Check size={36}/><h2>校正已保存</h2><p>歷史照片方向未變更</p></div></Step>
+      </section>
+      <section id="field-panel-records" role="tabpanel" aria-label="後台紀錄" hidden={tab!=='records'}><div className="flow-inline"><label>查閱範圍<select aria-label="紀錄範圍" value={recordScope} onChange={e=>setRecordScope(e.target.value)}><option value="node">目前節點</option><option value="floor">本樓層</option></select></label><button disabled={!project} onClick={()=>downloadJson(`ar-v4-field-${projectId}.json`,{exportedAt:new Date().toISOString(),storage,revision,project})}><Download size={18}/>匯出專案備份</button></div><p>{currentRecords.length} 張照片 · {destination}</p><div className="flow-records">{recordGroups.map(g=><button className="flow-record" key={`${g[0].nodeId}/${g[0].observation.id}`} onClick={()=>setRecordDetail(g[0].observation.id)}><img src={g[0].observation.imageUrl} alt={`${g[0].label} 的照片批次`}/><span><b>{g[0].label}</b><small>{g.length>1?`環景批次 · ${g.length} 張`:sourceText[g[0].observation.source]}</small><small>{g.every(r=>r.observation.mapBearing!==null)?'方向已設定':'方向待確認'}</small></span><ChevronRight size={20}/></button>)}</div>{!currentRecords.length&&<div className="flow-summary"><p>尚無觀測紀錄</p><button onClick={()=>selectTab('capture')}>建立參考照片</button></div>}<Help title="紀錄與批次"><p>只有具相同批次編號的環景會合併顯示；舊資料逐張保留。已設定方向不等於已通過辨識驗收。</p><a href="./ar-v4-demo.html?mode=records" target="_blank" rel="noreferrer">獨立模擬素材後台</a></Help></section>
+      </fieldset>
+      {!node&&!loading&&tab!=='graph'&&<p className="notice error">此樓層沒有節點。<button onClick={()=>selectTab('graph')}>到路網建立</button></p>}
+      {busy&&<div className="flow-busy" role="status">{busy}…</div>}
+      {scope&&<p className="flow-draft-status" role="status">{workPending?'正在暫存…':workMessage}{draft?' · 有待傳照片':''}</p>}
+    </main>
+    {footer&&<div className="flow-footer"><button onClick={()=>step===0?setMenuOpen(true):goStep(step-1)} disabled={disabled}>{step===0?'功能':'上一步'}</button>{!(tab==='camera'&&(cameraTask==='navigation'||cameraTask==='photo'))&&<button className="primary-button" disabled={nextDisabled} onClick={next}>{nextLabel}<ChevronRight size={18}/></button>}</div>}
+    <nav className="flow-nav" aria-label="現場工作台分頁"><div role="tablist" aria-label="現場工具">{FIELD_TABS.map(({id,label,short,icon:Icon},index)=><button role="tab" key={id} id={`field-tab-${id}`} aria-label={label} aria-selected={tab===id} aria-controls={`field-panel-${id}`} tabIndex={tab===id?0:-1} onClick={()=>selectTab(id)} onKeyDown={e=>tabKeyDown(e,index)}><Icon size={21}/><span>{short}</span></button>)}</div></nav>
+    {menuOpen&&<Modal title="六大功能" close={()=>setMenuOpen(false)}><div className="flow-choices">{FIELD_TABS.map(({id,label,icon:Icon})=><button key={id} onClick={()=>selectTab(id)}><Icon/>{label}</button>)}</div><button disabled={editorLocked} onClick={()=>{setMenuOpen(false);fullTools();}}>完整工具（進階功能）</button></Modal>}
+    {detailGroup&&<Modal title={`${detailGroup[0].label} · ${detailGroup.length} 張`} close={()=>setRecordDetail(null)}><div className="panorama-batch-grid">{detailGroup.map(({observation:o})=><figure key={o.id}><img src={o.imageUrl} alt={`參考朝向 ${angleText(o.mapBearing)}`}/><figcaption>{angleText(o.mapBearing)} · {readableDate(o.capturedAt)}</figcaption><p>{o.note}</p></figure>)}</div><button disabled={workPending||workError} onClick={()=>{setNodeId(detailGroup[0].nodeId);setRecordDetail(null);goStep(0,'capture');selectTab('capture');}}>到此節點補拍</button><button onClick={()=>downloadJson('v4-observations.json',{projectId,floorId:floor?.id,nodeId:detailGroup[0].nodeId,observations:detailGroup.map(r=>r.observation)})}>匯出此組紀錄</button></Modal>}
+    <input ref={photoInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={e=>{importPhoto(e.target.files?.[0]);e.target.value='';}}/>
+    <input ref={panoramaInput} type="file" accept="image/jpeg,image/png" hidden onChange={e=>{importPanorama(e.target.files?.[0]);e.target.value='';}}/>
+    <input ref={testInput} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={e=>{testPhoto(e.target.files?.[0]);e.target.value='';}}/>
   </div>;
 }

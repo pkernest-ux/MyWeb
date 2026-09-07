@@ -95,7 +95,9 @@ async function mapPoint(x, y) {
   return { x: bounds.x + bounds.width * x, y: bounds.y + bounds.height * y };
 }
 async function clickMap(x, y) {
-  const point = await mapPoint(x, y);
+  let point = await mapPoint(x, y);
+  const viewport=page.viewportSize();
+  if(point.y>viewport.height-140||point.y<50){await page.evaluate(dy=>scrollBy(0,dy),point.y-viewport.height/2);point=await mapPoint(x,y);}
   await page.mouse.click(point.x, point.y);
 }
 async function clickInEditor(locator) {
@@ -116,13 +118,13 @@ async function setMode(name) {
 }
 async function openToolGroup(id) {
   if (!await editor.locator('#v4-editor-tools').isVisible()) {
-    await clickInEditor(editor.getByRole('button', { name: '工具選單', exact: true }));
+    await clickInEditor(editor.locator(`.v4-quick-actions button[aria-controls="v4-panel-${id}"]`));
   }
   const toggle = editor.locator(`#v4-tool-${id}`);
   if (await toggle.getAttribute('aria-expanded') !== 'true') await clickInEditor(toggle);
 }
 async function collapseTools() {
-  const toggle = editor.getByRole('button', { name: '收合工具', exact: true });
+  const toggle = editor.getByRole('button', { name: '關閉工具選單', exact: true });
   if (await toggle.isVisible()) await clickInEditor(toggle);
 }
 async function saveEditor(expectedStatus = 200) {
@@ -228,7 +230,7 @@ try {
   await fs.writeFile(path.join(dataDir, 'ar-data.json'), JSON.stringify(collection, null, 2));
   local = await startLocalServer({ port: 0, rootDir, dataDir }); report.allowedOrigin = local.origin;
   assert.notEqual(new URL(local.origin).port, '8080');
-  await page.goto(`${local.origin}/ar-v4-field.html`, { waitUntil: 'networkidle' }); await ready();
+  await page.goto(`${local.origin}/ar-v4-field.html?ui=classic`, { waitUntil: 'networkidle' }); await ready();
   assert.equal(await page.getByRole('tab').count(), 6);
   await shot('graph-bottom-tabs', '新增第六個路網頁籤', page.getByRole('tablist'));
   await page.getByLabel('場域', { exact: true }).selectOption('manual-second');
@@ -339,7 +341,7 @@ try {
   assert.equal(observedWp.fieldObservations.length, 1);
   assert.equal(observedWp.fieldObservations[0].mapBearing, 90);
   assert.equal(withPhoto.floor.markers.find(n => n.id === 'A01').fieldObservations.length, 1);
-  await page.reload({ waitUntil: 'networkidle' }); await ready();
+  await page.reload({ waitUntil: 'networkidle' }); await ready(); await tab('作業位置');
   await page.getByLabel('目前節點', { exact: true }).selectOption(newWp.id);
   await tab('後台紀錄');
   await page.getByText('路網新節點 A04 補拍測試，非現場定位驗收。', { exact: true }).waitFor();
@@ -347,6 +349,26 @@ try {
   passed('new waypoint accepts a photo and calibration; subsequent graph save and page reload retain both');
 
   await openEditor();
+  await setMode('路徑節點');
+  await editor.locator('.waypoint-pin').first().click();
+  await closeInspector();
+  assert.equal(await editor.getByRole('button',{name:'工具選單',exact:true}).count(),0);
+  await openToolGroup('floor');
+  await clickInEditor(editor.getByRole('button',{name:'座標、比例尺與方向基準設定',exact:true}));
+  await editor.getByLabel('平面圖實際寬度（公尺）').fill('0');
+  await clickInEditor(editor.getByRole('button',{name:'儲存套用',exact:true}));
+  await editor.getByText('寬度與高度必須是大於 0 的有效公尺數。',{exact:true}).waitFor();
+  await clickInEditor(editor.getByRole('button',{name:'我知道了',exact:true}));
+  await editor.getByLabel('平面圖實際寬度（公尺）').fill('120');
+  await editor.getByLabel('平面圖實際高度（公尺）').fill('80');
+  await shot('11-map-scale','輸入實際公尺數設定底圖比例尺');
+  await clickInEditor(editor.getByRole('button',{name:'儲存套用',exact:true}));
+  await clickInEditor(editor.getByRole('button',{name:'我知道了',exact:true}));
+  await saveEditor();
+  const scaled=await snapshot();assert.equal(scaled.floor.bounds.trX-scaled.floor.bounds.blX,120);assert.equal(scaled.floor.bounds.trY-scaled.floor.bounds.blY,80);
+  assert.ok(scaled.floor.markers.find(n=>n.id==='A01').fieldObservations.length);
+  passed('direct category controls retain tools; scale rejects zero and persists real width/height without losing photos');
+  await collapseTools();
   await setMode('路徑節點');
   await editor.locator('.waypoint-pin').first().click();
   await editor.getByLabel('轉角名稱', { exact: true }).fill('A04 衝突待核對草稿');

@@ -30,7 +30,7 @@ export type FieldObservation = {
   sensor: FieldSensor;
   note: string;
   quality: ImageQuality;
-  panorama?: { yaw: number; pitch: number; fov: number };
+  panorama?: { yaw: number; pitch: number; fov: number; batchId?: string };
 };
 
 export type FieldNode = {

@@ -135,7 +135,8 @@ const validateObservation = value => {
     if (!Array.isArray(value.quality.warnings) || value.quality.warnings.length > 16 || value.quality.warnings.some(item => typeof item !== "string" || item.length > 200)) fail("Invalid quality warnings.");
   }
   if (own(value, "panorama")) {
-    assertKeys(value.panorama, ["yaw", "pitch", "fov"], "panorama");
+    assertKeys(value.panorama, ["yaw", "pitch", "fov", "batchId"], "panorama");
+    if (own(value.panorama, "batchId")) id(value.panorama.batchId, "panorama batch id");
     range(value.panorama.yaw, -360, 360, "panorama yaw");
     range(value.panorama.pitch, -90, 90, "panorama pitch");
     range(value.panorama.fov, Number.EPSILON, 180, "panorama field of view", true);

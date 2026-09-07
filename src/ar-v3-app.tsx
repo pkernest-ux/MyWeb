@@ -939,7 +939,7 @@ function FloorTabs({
   );
 }
 
-function MapPanel({
+export function MapPanel({
   floor,
   graph,
   mode,
@@ -1489,8 +1489,8 @@ function WelcomeScreen({ config, onStart }: { config?: any; onStart: () => void 
   );
 }
 
-export default function ARNavigationV3({ v4RouteFocus = false }: { v4RouteFocus?: boolean } = {}) {
-  const [showWelcome, setShowWelcome] = useState(true);
+export default function ARNavigationV3({ v4RouteFocus = false, PublicGuide }: { v4RouteFocus?: boolean; PublicGuide?: React.ComponentType<any> } = {}) {
+  const [showWelcome, setShowWelcome] = useState(!PublicGuide);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [project, setProject] = useState<any>(null);
@@ -1781,7 +1781,9 @@ export default function ARNavigationV3({ v4RouteFocus = false }: { v4RouteFocus?
           throw new Error("雲端尚未建立可用的 AR 專案");
         }
 
-        const preferredOption = options.find((option) => option.name.includes("新竹市政府")) || options[0];
+        const requestedProject = PublicGuide ? new URLSearchParams(location.search).get('projectId') : null;
+        if(requestedProject&&!options.some(option=>option.id===requestedProject))throw new Error('此 QR Code 的場域不存在，請回導覽機重新掃描。');
+        const preferredOption = options.find(option=>option.id===requestedProject) || options.find((option) => option.name.includes("新竹市政府")) || options[0];
         const selected = await loadProjectOption(preferredOption);
 
         if (active) {
@@ -1851,6 +1853,7 @@ export default function ARNavigationV3({ v4RouteFocus = false }: { v4RouteFocus?
     [publicStops],
   );
   const defaultOrigin = useMemo(() => {
+    if(PublicGuide){const id=new URLSearchParams(location.search).get('origin');return id?graph.nodes[id]||null:null;}
     if (!defaultDestination) return null;
 
     const namedOrigin = publicStops.find((node) =>
@@ -1897,11 +1900,11 @@ export default function ARNavigationV3({ v4RouteFocus = false }: { v4RouteFocus?
       !projectId ||
       defaultsAppliedProjectRef.current === projectId ||
       !defaultOrigin ||
-      !defaultDestination
+      (!defaultDestination&&!PublicGuide)
     ) return;
 
     defaultsAppliedProjectRef.current = projectId;
-    setDestinationId(defaultDestination.id);
+    if(defaultDestination&&!PublicGuide)setDestinationId(defaultDestination.id);
     setOriginSelection(defaultOrigin.id);
     setOrigin({
       floorId: defaultOrigin.fId,
@@ -2725,6 +2728,7 @@ export default function ARNavigationV3({ v4RouteFocus = false }: { v4RouteFocus?
     setDestinationId(markerId || null);
     const marker = graph.nodes[markerId];
     if (marker) setSelectedFloorId(marker.fId);
+    if(PublicGuide&&origin?.snapId&&markerId&&shortestPathThroughStops(graph,[origin.snapId,markerId]).length>=2){setReviewStepIndex(0);setSegmentIndex(0);setCompletedSegmentIndex(0);setScreen('review');}
   };
 
   const openRouteReview = () => {
@@ -2895,6 +2899,8 @@ export default function ARNavigationV3({ v4RouteFocus = false }: { v4RouteFocus?
   if (showWelcome) {
     return <WelcomeScreen config={project?.systemConfig} onStart={() => setShowWelcome(false)} />;
   }
+
+  if(PublicGuide&&(screen==='calibrate'||screen==='navigate'))return <PublicGuide key={`${origin?.snapId}/${destinationId}`} graph={graph} segments={guideSegments} points={navigationPoints} destinationId={destinationId} origin={origin} onExit={(confirmedId?:string)=>{if(confirmedId&&graph.nodes[confirmedId]){setRuntimeAnchorId(confirmedId);setReviewStepIndex(0);setSegmentIndex(0);setCompletedSegmentIndex(0);}setScreen('review');}} MapView={MapPanel}/>;
 
   if (screen === "navigate") {
     const isLastGuideSegment = !nextGuideSegment;
@@ -3390,7 +3396,7 @@ export default function ARNavigationV3({ v4RouteFocus = false }: { v4RouteFocus?
             <button
               type="button"
               className="v2-review-ar-button"
-              onClick={() => goToGuideSegment(safeReviewStepIndex)}
+              onClick={() => goToGuideSegment(PublicGuide ? 0 : safeReviewStepIndex)}
               aria-label="開啟 AR 導引"
             >
               <span>AR</span>
@@ -3503,9 +3509,10 @@ export default function ARNavigationV3({ v4RouteFocus = false }: { v4RouteFocus?
         />
       </section>
 
-      <section className="v3-route-form" aria-label="設定導航起點與終點">
+      <section className={`v3-route-form ${PublicGuide?'v4-public-form':''}`} aria-label="設定導航起點與終點">
+        {PublicGuide&&<p className="v4-origin-note">{defaultOrigin?`起點：${nodeLabel(defaultOrigin)}（QR Code 指定；請確認您仍在此處）`:'未取得導覽機位置，請先選目前起點；不能僅由目的地推算您在哪裡。'}</p>}
         <div className="v3-route-fields">
-          <label>
+          <label hidden={Boolean(PublicGuide&&defaultOrigin)}>
             <span><LocateFixed aria-hidden="true" />起點</span>
             <select value={originSelection} onChange={(event) => selectOriginMarker(event.target.value)}>
               <option value="map">直接點擊地圖位置</option>

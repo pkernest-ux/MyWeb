@@ -151,3 +151,7 @@
   .bottom-tabs .tab-icon { height: 26px; }
   .app-tabs-layout .busy-indicator { bottom: calc(78px + env(safe-area-inset-bottom)); }
 }
+.panorama-batch-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+.panorama-batch-grid figure { margin:0; min-width:0; }
+.panorama-batch-grid img { width:100%; border-radius:10px; }
+.panorama-batch-grid figcaption { font-size:12px; padding:4px 0; }

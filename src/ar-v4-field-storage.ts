@@ -2,7 +2,7 @@ import type { FieldObservation } from './ar-v4-field-core';
 
 // Site photographs remain on this device until the operator explicitly uploads.
 const DATABASE = 'ar-v4-field-drafts';
-export function draftStore(key: string, value?: FieldObservation | null): Promise<FieldObservation | null> {
+export function workStore<T>(key: string, value?: T | null): Promise<T | null> {
   return new Promise((resolve, reject) => {
     const open = indexedDB.open(DATABASE, 1);
     open.onupgradeneeded = () => open.result.createObjectStore('drafts');
@@ -12,7 +12,7 @@ export function draftStore(key: string, value?: FieldObservation | null): Promis
       const tx = db.transaction('drafts', value === undefined ? 'readonly' : 'readwrite');
       const store = tx.objectStore('drafts');
       const request = value === undefined ? store.get(key) : value === null ? store.delete(key) : store.put(value, key);
-      let result: FieldObservation | null = null;
+      let result: T | null = null;
       request.onsuccess = () => { result = value === undefined ? request.result || null : value; };
       tx.oncomplete = () => { db.close(); resolve(result); };
       tx.onerror = () => { db.close(); reject(tx.error); };
@@ -20,6 +20,7 @@ export function draftStore(key: string, value?: FieldObservation | null): Promis
     };
   });
 }
+export const draftStore = (key: string, value?: FieldObservation | null) => workStore<FieldObservation>(key, value);
 
 export async function readJson(url: string, init?: RequestInit) {
   const response = await fetch(url, { cache: 'no-store', credentials: 'same-origin', ...init });

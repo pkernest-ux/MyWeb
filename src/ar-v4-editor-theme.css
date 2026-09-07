@@ -69,3 +69,15 @@ body:has(.v4-map-editor) { background: #f3f5f3; color-scheme: light; }
 .v4-map-editor .v4-map-scale { background: #fffffff2; color: var(--field-text); box-shadow: 0 3px 12px #243d341a; }
 .v4-map-editor .v4-map-scale > div { background: #719582; border-color: var(--field-primary); }
 .v4-map-editor :is(button, select, input, textarea, summary):focus-visible { outline: 3px solid #84ad55; outline-offset: 3px; }
+/* V4-only map-first layout. Legacy editor and V3 assets remain unchanged. */
+.v4-map-editor{height:100dvh!important;min-height:0!important;overflow:hidden!important}
+.v4-map-editor .v4-editor-workspace{display:flex;flex-direction:column;min-height:0;height:100%;overflow:hidden}
+.v4-map-editor .v4-editor-context{flex:none;position:relative;z-index:35}
+.v4-map-editor [data-testid="editor-map"]{flex:1 1 0;min-height:240px;height:auto;grid-column:1/-1;width:100%;align-self:stretch;position:relative;top:auto}
+.v4-map-editor .v4-editor-tools{position:absolute;top:0;left:0;bottom:0;width:min(370px,100%);z-index:55;overflow:auto;box-shadow:12px 0 40px #243d3430;padding:12px 16px}
+.v4-map-editor :is(.v4-tools-heading,.v4-floor-heading){display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.v4-map-editor .v4-quick-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.v4-map-editor .v4-quick-actions button{flex:1;min-height:44px}
+.v4-map-editor .v4-floor-dialog{border:1px solid #c9d9c2;border-radius:18px;width:min(440px,calc(100vw - 24px));max-height:85dvh;overflow:auto;padding:18px;margin:auto;background:#fff;color:#244a3b}.v4-map-editor .v4-floor-dialog::backdrop{background:#243c3b66}.v4-map-editor .v4-floor-dialog h2{font-size:20px;font-weight:700}.v4-map-editor .v4-floor-dialog h3{margin:16px 0 10px;font-weight:600}.v4-map-editor .v4-floor-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.v4-map-editor .v4-floor-options button{min-height:52px;font-size:16px}
+.v4-map-editor .v4-tool-toggle small{display:none}.v4-map-editor .v4-tool-toggle{min-height:52px}.v4-map-editor .v4-tool-field select{font-size:16px;min-height:44px}.v4-map-editor .v4-tool-panel p{font-size:13px;line-height:1.6}
+@media(max-width:767px){.v4-map-editor .v4-editor-context{padding:8px 10px}.v4-map-editor .v4-editor-workspace [data-testid="editor-map"]{flex:1 1 0;min-height:240px;height:auto}.v4-map-editor .v4-mode-guidance{font-size:12px;margin-top:7px}.v4-map-editor .v4-quick-actions{gap:5px}.v4-map-editor .v4-quick-actions button{padding:6px;font-size:13px}.v4-map-editor .v4-editor-tools{width:100%}}
+.v4-map-editor .v4-scale-size{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:16px}.v4-map-editor .v4-scale-size label{font-size:14px}.v4-map-editor .v4-scale-size input{width:100%;min-height:44px;border:1px solid #b4cbb9;border-radius:8px;padding:8px;margin-top:6px;font-size:16px}.v4-map-editor .v4-scale-size p{grid-column:1/-1;font-size:12px}.v4-map-editor .v4-editor-modal>div{max-height:90dvh;overflow:auto}

@@ -69,7 +69,7 @@ test('V4 route focus fits all current-segment points and reserves overlay space 
   assert.ok(levels.at(-1) > 2 && levels.at(-1) < 3.5, 'Short legs are closer than the old cap without excessive enlargement');
   const legacyEntry = readFileSync(new URL('../src/ar-v3-entry.tsx', import.meta.url), 'utf8');
   assert.ok(!legacyEntry.includes('v4RouteFocus'));
-  assert.ok(readFileSync(new URL('../src/ar-v4-navigation-entry.tsx', import.meta.url), 'utf8').includes('<ARNavigationV3 v4RouteFocus />'));
+  assert.ok(readFileSync(new URL('../src/ar-v4-navigation-entry.tsx', import.meta.url), 'utf8').includes('<ARNavigationV3 v4RouteFocus PublicGuide={PublicGuide} />'));
 });
 
 function findVariable(name) {
@@ -160,7 +160,8 @@ test('V4 renders five labelled tool categories with unique disclosure and region
   }
   assert.ok(html.includes('data-map-control="tools"'));
   assert.ok(html.includes('data-map-control="context"'));
-  assert.ok(html.includes('aria-controls="v4-editor-tools"'));
+  assert.ok(html.includes('class="v4-quick-actions"'));
+  assert.ok(!html.includes('>瀏覽地圖</span>'));
   assert.ok(html.includes('id="v4-editor-tools"'));
 });
 
@@ -356,7 +357,7 @@ test('return-to-capture only switches the parent tab and leaves the editor draft
   assert.deepEqual(calls, ['location']);
 
   const selectTab = descendants(parent, node => ts.isFunctionDeclaration(node) && node.name?.text === 'selectTab')[0];
-  const context = { exports: {}, tabRef: { current: 'graph' }, tabScroll: { current: {} }, window: { scrollY: 173 }, setTab: tab => calls.push(tab) };
+  const context = { exports: {}, setMenuOpen:()=>{}, setNotice:()=>{}, tabRef: { current: 'graph' }, tabScroll: { current: {} }, window: { scrollY: 173 }, setTab: tab => calls.push(tab) };
   vm.runInNewContext(ts.transpileModule(`${selectTab.getText(parent)}; exports.selectTab = selectTab;`, { compilerOptions }).outputText, context);
   context.exports.selectTab('location');
   assert.equal(context.tabRef.current, 'location');
@@ -381,7 +382,8 @@ test('navigation test stops the capture camera and mounts only in the active unl
   vm.runInNewContext(`(${action.getText(parent)})`, { stopCamera: () => calls.push('stop'), setNavigationOpen: value => calls.push(value) })();
   assert.deepEqual(calls, ['stop', true]);
   const frame = descendants(parent, ts.isJsxSelfClosingElement).find(node => jsxAttribute(node, 'title')?.initializer?.text === 'AR 導航流程測試');
-  assert.equal(jsxAttribute(frame, 'src').initializer.text, './ar-v4-navigation.html');
+  const url=vm.runInNewContext(jsxAttribute(frame,'src').initializer.expression.getText(parent),{projectId:'project/a',nodeId:'node&b',encodeURIComponent});
+  assert.equal(url,'./ar-v4-navigation.html?projectId=project%2Fa&origin=node%26b');
   let guard = frame.parent;
   while (guard && !ts.isBinaryExpression(guard)) guard = guard.parent;
   assert.ok(guard);

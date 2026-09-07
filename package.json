@@ -10,6 +10,8 @@
     "typecheck:ar-v4": "tsc --project tsconfig.v4.json --noEmit",
     "test:ar-v4": "node --test api/test/ar-field-survey.test.js api/test/ar-sync.test.js test/ar-v4-field-core.test.mjs test/ar-v4-local-server.test.mjs test/ar-v4-recognition-profile.test.mjs test/ar-v4-editor-layout.test.mjs",
     "test:ar-v4-browser": "node test/ar-v4-browser.mjs && node test/ar-v4-safety-browser.mjs && node test/ar-v4-graph-browser.mjs && node test/ar-v4-graph-safety-browser.mjs",
+    "test:ar-v4-wizard": "node test/ar-v4-wizard-browser.mjs && node test/ar-v4-panorama-browser.mjs",
+    "test:ar-v4-public": "tsc -p tsconfig.v4-public.json --noEmit && node test/ar-v4-public-browser.mjs",
     "test:ar-v4-graph-browser": "node test/ar-v4-graph-browser.mjs && node test/ar-v4-graph-safety-browser.mjs",
     "dev:ar": "vite --host 127.0.0.1 --port 5173 ar-dev.html",
     "dev:ar-v2": "vite --host 127.0.0.1 --port 5174 ar-v2-dev.html",

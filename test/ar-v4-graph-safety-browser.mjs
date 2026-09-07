@@ -52,7 +52,7 @@ async function environment(name, collection) {
   target.setDefaultTimeout(12_000);
   target.on('pageerror', error => report.errors.push(error.message));
   target.on('dialog', dialog => dialog.dismiss());
-  await target.goto(`${local.origin}/ar-v4-field.html`, { waitUntil: 'networkidle' });
+  await target.goto(`${local.origin}/ar-v4-field.html?ui=classic`, { waitUntil: 'networkidle' });
   await target.locator('.environment-strip').filter({ hasText: '本機後台 · 不會同步 GitHub' }).waitFor();
   return { local, context, page: target };
 }
@@ -63,7 +63,7 @@ async function openEditor(target) {
   const frame = await handle.contentFrame();
   const tools = frame.locator('#v4-editor-tools');
   await tools.waitFor({ state: 'attached' });
-  if (!await tools.isVisible()) await frame.getByRole('button', { name: '工具選單', exact: true }).click();
+  if (!await tools.isVisible()) await frame.getByRole('button', { name: '核對保存', exact: true }).click();
   const saveGroup = frame.locator('#v4-tool-save');
   if (await saveGroup.getAttribute('aria-expanded') !== 'true') await saveGroup.click();
   await until(async () => await frame.getByRole('button', { name: '保存到本機後台', exact: true }).isEnabled().catch(() => false), 'Editor must finish loading.');

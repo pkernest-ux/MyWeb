@@ -33,7 +33,7 @@ try {
   const page = await context.newPage();
   page.setDefaultTimeout(20_000);
   page.on('pageerror', (error) => report.errors.push(error.message));
-  await page.goto(`${local.origin}/ar-v4-field.html`);
+  await page.goto(`${local.origin}/ar-v4-field.html?ui=classic`);
   await page.waitForFunction(() => !!document.querySelector('select[aria-label="目前節點"]')?.value && !document.querySelector('select[aria-label="目前節點"]').disabled);
   await switchTab(page, '相機測試');
   await page.getByRole('button', { name: '開啟相機與方位感測', exact: true }).click();

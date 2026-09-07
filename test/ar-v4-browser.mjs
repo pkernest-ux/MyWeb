@@ -153,7 +153,7 @@ try {
   const page = await context.newPage();
   mainPage = page;
   page.setDefaultTimeout(20_000);
-  await page.goto(`${local.origin}/ar-v4-field.html`, { waitUntil: 'networkidle' });
+  await page.goto(`${local.origin}/ar-v4-field.html?ui=classic`, { waitUntil: 'networkidle' });
   await ready(page);
   assert.equal(await page.getByRole('tab', { name: '作業位置', exact: true }).getAttribute('aria-selected'), 'true');
   await selectedTarget(page);
@@ -239,7 +239,7 @@ try {
   passed('real POST persists observation and clears the local pending draft', { observationId: savedObservation.id });
 
   const recordsPage = await context.newPage();
-  await recordsPage.goto(`${local.origin}/admin-ar-v4.html`, { waitUntil: 'networkidle' });
+  await recordsPage.goto(`${local.origin}/admin-ar-v4.html?ui=classic`, { waitUntil: 'networkidle' });
   await ready(recordsPage);
   await recordsPage.getByText(testNote, { exact: true }).waitFor();
   assert.equal(await recordsPage.getByRole('tab', { name: '後台紀錄', exact: true }).getAttribute('aria-selected'), 'true');
@@ -293,8 +293,8 @@ try {
   await uploadAndWait(page, 1, 'synthetic-panorama-2to1.jpg', images.panorama);
   await page.getByLabel('環景透視預覽', { exact: true }).waitFor();
   await page.getByLabel('環景水平取景', { exact: true }).fill('45');
-  await page.getByLabel('環景中央對應的地圖方向（可留白）', { exact: true }).fill('90');
-  await page.getByRole('button', { name: '擷取這個方向', exact: true }).click();
+  await page.getByLabel('環景中央地圖方向', { exact: true }).fill('90');
+  await page.getByRole('button', { name: '只擷取目前方向（舊工具）', exact: true }).click();
   await page.getByAltText('待上傳的節點參考照片', { exact: true }).waitFor();
   assert.equal(await page.getByLabel('照片拍攝朝向', { exact: true }).inputValue(), '135');
   assert.equal((await snapshot()).node.fieldObservations.length, initialObservationCount + 1, 'Panorama extraction must remain a draft until uploaded.');
@@ -370,7 +370,7 @@ try {
   const cameraPage = await cameraContext.newPage();
   cameraPage.on('pageerror', error => report.pageErrors.push(error.message));
   cameraPage.on('console', message => { if (message.type() === 'error') report.consoleErrors.push(message.text()); });
-  await cameraPage.goto(`${local.origin}/ar-v4-field.html`, { waitUntil: 'networkidle' });
+  await cameraPage.goto(`${local.origin}/ar-v4-field.html?ui=classic`, { waitUntil: 'networkidle' });
   await ready(cameraPage);
   await selectedTarget(cameraPage);
   await cameraPage.getByRole('button', { name: '前往相機拍攝', exact: true }).click();

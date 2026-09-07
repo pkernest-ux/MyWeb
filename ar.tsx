@@ -679,7 +679,15 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const [v4Notice, setV4Notice] = useState('正在讀取後台路網，請稍候。');
   const [v4ProjectOptions, setV4ProjectOptions] = useState([]);
   const [v4ToolGroup, setV4ToolGroup] = useState(null);
-  const [v4ToolsVisible, setV4ToolsVisible] = useState(true);
+  const [v4ToolsVisible, setV4ToolsVisible] = useState(false);
+  const [v4FloorPickerOpen, setV4FloorPickerOpen] = useState(false);
+  const v4FloorDialog = useRef(null);
+  useEffect(()=>{if(v4FloorPickerOpen)v4FloorDialog.current?.showModal();},[v4FloorPickerOpen]);
+  useEffect(()=>{
+    if(!v4Integration||!v4ToolsVisible)return;
+    const escape=(event)=>{if(event.key==='Escape'){setV4ToolsVisible(false);v4ToolsToggleRef.current?.focus();}};
+    window.addEventListener('keydown',escape);return()=>window.removeEventListener('keydown',escape);
+  },[v4Integration,v4ToolsVisible]);
   const [v4LoadFailed, setV4LoadFailed] = useState(false);
   const v4EndModeRef = useRef(null);
   const v4ToolsToggleRef = useRef(null);
@@ -3135,7 +3143,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const renderV4ToolGroup = (id, title, summary, Icon, children) => (
     <section className={`v4-tool-group ${v4ToolGroup === id ? 'is-open' : ''}`} data-tool-group={id}>
       <h3>
-        <button type="button" id={`v4-tool-${id}`} className="v4-tool-toggle" aria-expanded={v4ToolGroup === id} aria-controls={`v4-panel-${id}`} onClick={() => setV4ToolGroup(previous => previous === id ? null : id)}>
+        <button type="button" id={`v4-tool-${id}`} className="v4-tool-toggle" aria-label={`${title}工具分類`} aria-expanded={v4ToolGroup === id} aria-controls={`v4-panel-${id}`} onClick={() => setV4ToolGroup(previous => previous === id ? null : id)}>
           <Icon aria-hidden="true" />
           <span><strong>{title}</strong><small>{summary}</small></span>
           <ChevronDown aria-hidden="true" className="v4-tool-chevron" />
@@ -3197,17 +3205,19 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               <div className="v4-editor-location">
                 <Layers aria-hidden="true" />
                 <div><small>{systemConfig.projectName || activeProject?.name || '尚未選擇專案'} · {currentBuilding?.name || '尚未選擇建物'}</small><strong>{currentFloor?.name || '尚未選擇樓層'}</strong></div>
-                <button type="button" className="v4-tool-button" onClick={() => { setV4ToolsVisible(true); setV4ToolGroup('floor'); }}><Layers aria-hidden="true" />切換樓層</button>
+                <button type="button" className="v4-tool-button" onClick={() => setV4FloorPickerOpen(true)}><Layers aria-hidden="true" />切換樓層</button>
               </div>
               <div className="v4-editor-mode" role="status">
-                <button ref={v4ToolsToggleRef} type="button" className="v4-tool-button" aria-expanded={v4ToolsVisible} aria-controls="v4-editor-tools" onClick={() => setV4ToolsVisible(visible => !visible)}><Menu aria-hidden="true" />{v4ToolsVisible ? '收合工具' : '工具選單'}</button>
-                <span className={`v4-mode-badge ${v4Mode ? 'is-active' : ''}`}>{v4ModeName}</span>
+                {v4Mode&&<span className="v4-mode-badge is-active">{v4ModeName}</span>}
                 <span className={`v4-save-state ${v4Dirty || v4LoadFailed ? 'is-dirty' : ''}`}>{v4Busy ? '後台處理中' : v4LoadFailed ? '讀取失敗：請至資料保存重試' : !v4Ready ? '正在連線' : v4Dirty ? '有未保存變更' : '無未保存變更'}</span>
                 {v4Mode && <button ref={v4EndModeRef} type="button" className="v4-tool-button v4-end-mode" onClick={() => setV4EditingMode(null)}><X aria-hidden="true" />結束操作</button>}
               </div>
-              <p className="v4-mode-guidance">{v4ModeHint}</p>
+              {v4Mode&&<p className="v4-mode-guidance">{v4ModeHint}</p>}
+              <div className="v4-quick-actions">{[['floor','底圖／比例尺'],['path','路徑點'],['marker','AR 點'],['test','測試'],['save','核對保存']].map(([id,label])=><button key={id} ref={id==='floor'?v4ToolsToggleRef:undefined} type="button" className="v4-tool-button" aria-expanded={v4ToolsVisible&&v4ToolGroup===id} aria-controls={`v4-panel-${id}`} onClick={()=>{setV4ToolsVisible(true);setV4ToolGroup(id);}}>{label}</button>)}</div>
             </header>
+            {v4FloorPickerOpen&&<dialog ref={v4FloorDialog} className="v4-floor-dialog" aria-label="選擇編輯樓層" onCancel={()=>setV4FloorPickerOpen(false)} onClose={()=>setV4FloorPickerOpen(false)}><div className="v4-floor-heading"><h2>選擇樓層</h2><button autoFocus className="v4-tool-button" aria-label="關閉樓層選單" onClick={()=>setV4FloorPickerOpen(false)}><X/></button></div>{buildings.map(building=><section key={building.id}><h3>{building.name}</h3><div className="v4-floor-options">{building.floors.map(floor=><button key={floor.id} className="v4-tool-button" aria-pressed={building.id===activeBuildingId&&floor.id===activeFloorId} onClick={()=>{if(building.id!==activeBuildingId){setActiveBuildingId(building.id);setReferenceFloorId('');}switchEditingFloor(floor.id);setV4FloorPickerOpen(false);}}>{floor.name}</button>)}</div></section>)}</dialog>}
             <aside id="v4-editor-tools" className="v4-editor-tools" data-map-control="tools" aria-label="路網功能分類" hidden={!v4ToolsVisible}>
+              <div className="v4-tools-heading"><strong>工具選單</strong><button className="v4-tool-button" aria-label="關閉工具選單" onClick={()=>{setV4ToolsVisible(false);v4ToolsToggleRef.current?.focus();}}><X/></button></div>
               {renderV4ToolGroup('floor', '樓層與底圖', `${currentFloor?.name || '選樓層'} · 切換、上傳、比例尺`, Layers, <>
                 <label className="v4-tool-field">專案<select aria-label="編輯專案" disabled={v4ActiveDirty || v4Busy} value={activeProjectId} onChange={(e) => !projects.some(project => project.id === e.target.value) ? loadV4Backend({ projectId: e.target.value }) : setActiveProjectId(e.target.value)}>
                   {[...v4ProjectOptions, ...projects.filter(project => !v4ProjectOptions.some(option => option.id === project.id))].map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
@@ -3721,6 +3731,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           <div className="bg-slate-900 border border-blue-900/50 rounded-xl w-full max-w-md p-6">
             <h3 className="text-lg font-bold text-blue-400 mb-4 flex items-center"><Target className="w-5 h-5 mr-2" /> 樓層實體座標與比例尺設定</h3>
             <p className="text-slate-400 text-xs mb-4 leading-relaxed">設定此樓層對應的真實物理座標 (公尺)。<br/>修改差值即等同設定這張圖片在真實空間的總寬度與總長度。</p>
+            {v4Integration&&<div className="v4-scale-size"><label>平面圖實際寬度（公尺）<input aria-label="平面圖實際寬度（公尺）" type="number" min="0.01" step="0.01" value={boundsModal.trX-boundsModal.blX} onChange={e=>setBoundsModal({...boundsModal,trX:boundsModal.blX+Number(e.target.value)})}/></label><label>平面圖實際高度（公尺）<input aria-label="平面圖實際高度（公尺）" type="number" min="0.01" step="0.01" value={boundsModal.trY-boundsModal.blY} onChange={e=>setBoundsModal({...boundsModal,trY:boundsModal.blY+Number(e.target.value)})}/></label><p>輸入整張底圖的實際涵蓋尺寸；不是螢幕放大倍率。套用後請再核對保存到後台。</p></div>}
             <div className="grid grid-cols-2 gap-4 mb-6">
               <div className="space-y-3 p-3 bg-slate-950 rounded border border-slate-800">
                 <h4 className="text-xs font-bold text-slate-300">↙️ 左下角 (Bottom-Left)</h4>
@@ -3764,6 +3775,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               )}
             </div>
             <button onClick={() => {
+              if(v4Integration&&(![boundsModal.blX,boundsModal.blY,boundsModal.trX,boundsModal.trY].every(Number.isFinite)||boundsModal.trX<=boundsModal.blX||boundsModal.trY<=boundsModal.blY)){setAlertModal({isOpen:true,message:'寬度與高度必須是大於 0 的有效公尺數。'});return;}
               setBuildings(prev => prev.map(b => b.id === activeBuildingId ? { ...b, floors: b.floors.map(f => f.id === activeFloorId ? { ...f, bounds: { blX: boundsModal.blX, blY: boundsModal.blY, trX: boundsModal.trX, trY: boundsModal.trY }, mapUpHeading: boundsModal.mapUpHeading, mapUpHeadingAccuracy: boundsModal.mapUpHeadingAccuracy, mapUpHeadingCapturedAt: boundsModal.mapUpHeadingCapturedAt } : f) } : b));
               setBoundsModal({ isOpen: false }); setAlertModal({ isOpen: true, message: '樓層座標、比例尺與方向基準已更新！' });
             }} className="w-full py-3 bg-blue-500 text-white font-bold rounded-lg shadow-lg">儲存套用</button>

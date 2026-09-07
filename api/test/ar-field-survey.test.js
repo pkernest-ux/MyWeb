@@ -37,6 +37,14 @@ const floorOf = value => value.projects[0].buildings[0].floors[0];
 const nodeOf = value => floorOf(value).markers[0];
 const errorCode = (code, status = 400) => error => error.code === code && error.status === status;
 
+test('panorama batch identity is validated and retained without rewriting legacy metadata',()=>{
+  const input=survey();input.observation.source='panorama-frame';input.observation.panorama={yaw:0,pitch:0,fov:75,batchId:'batch-demo-1'};
+  const result=applyFieldSurvey(collection(),input,TIME);
+  assert.equal(nodeOf(result.collection).fieldObservations[0].panorama.batchId,'batch-demo-1');
+  input.observation.panorama.batchId={invalid:true};
+  assert.throws(()=>validateFieldSurvey(input));
+});
+
 test("observation append clones data and preserves all unrelated nodes and metadata", () => {
   const initial = collection();
   const snapshot = clone(initial);
