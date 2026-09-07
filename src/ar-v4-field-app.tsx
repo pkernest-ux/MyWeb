@@ -6,6 +6,9 @@ import { RecognitionInspector } from './ar-v4-recognition-inspector';
 import { FishnetProfileControl } from './ar-v4-fishnet-controls';
 import { RecognitionCapture } from './ar-v4-recognition-capture';
 import { advanceNodeConfirmation, type NodeConfirmation } from './ar-v4-recognition-stability';
+import {cameraOrientationSensor,isFreshCameraSensor,manualHeadingAgeValid} from './ar-v4-camera-orientation';
+import {useVisualHeading} from './ar-v4-use-visual-heading';
+import {HeadingStatus} from './ar-v4-heading-status';
 import {
   EMPTY_SENSOR, bearingBetween, encodeObservationImage, extractPanoramaView, flattenProject,
   loadPanorama, mapBearingFromSensor, nodeLabel, normalizeBearing, prepareImage, sensorFromEvent, signedAngle,
@@ -74,6 +77,7 @@ export default function FieldApp() {
   const [cameraState, setCameraState] = useState('idle');
   const [cameraMessage, setCameraMessage] = useState('開啟相機，建立第一張節點參考照片');
   const [ticks, setTicks] = useState(Date.now());
+  const visualHeading=useVisualHeading(sensor,ticks);
   const video = useRef<HTMLVideoElement>(null);
   const stream = useRef<MediaStream | null>(null);
   const [draft, setDraft] = useState<FieldObservation | null>(null);
@@ -152,9 +156,12 @@ export default function FieldApp() {
   const records: Array<{ observation: FieldObservation; label: string; nodeId: string }> = (floor?.nodes || []).flatMap((n) => (n.fieldObservations || []).map((observation: FieldObservation) => ({ observation, label: nodeLabel(n), nodeId: n.id })));
   const coveredNodes = new Set(refs.map((r) => r.nodeId)).size;
   const staleSensor = !sensor.capturedAt || ticks - Date.parse(sensor.capturedAt) > 10000;
-  const lockFresh = lock && lock.nodeId === node?.id && ticks - lock.time < 20000 && lock.sensorKind === sensor.kind && lock.screenAngle === sensor.screenAngle;
-  const currentMapHeading = lockFresh && lock.sensorHeading !== null && !staleSensor && sensor.heading !== null
-    ? normalizeBearing(lock.bearing + signedAngle(sensor.heading - lock.sensorHeading)) : null;
+  const cameraSensor=cameraOrientationSensor(sensor);
+  const liveCameraSensor=isFreshCameraSensor(cameraSensor,Date.now());
+  const lockFresh = lock && lock.nodeId === node?.id && manualHeadingAgeValid(lock.time,Date.now()) && liveCameraSensor && lock.sensorKind === cameraSensor.kind && lock.screenAngle === sensor.screenAngle;
+  const currentMapHeading = lockFresh && lock.sensorHeading !== null
+    ? normalizeBearing(lock.bearing + signedAngle(cameraSensor.heading! - lock.sensorHeading)) : visualHeading.view.bearing;
+  useEffect(()=>{if(lock&&(!lockFresh))setLock(null);},[lock,lockFresh]);
   const turnAngle = targetBearing !== null && currentMapHeading !== null ? signedAngle(targetBearing - currentMapHeading) : null;
 
   function selectTab(next: Tab) {
@@ -178,6 +185,7 @@ export default function FieldApp() {
   }
 
   function stopDetection() {
+    visualHeading.reset();
     recognitionCapture.clear();
     detectGeneration.current++;
     tracker.current?.dispose();
@@ -454,7 +462,7 @@ export default function FieldApp() {
   useEffect(() => {
     const onOrientation = (event: DeviceOrientationEvent) => {
       const reading = sensorFromEvent(event, window.screen.orientation?.angle ?? (window as any).orientation ?? 0);
-      if (reading.kind !== 'absolute' && sensorRef.current.kind === 'absolute' && sensorRef.current.capturedAt && Date.now() - Date.parse(sensorRef.current.capturedAt) < 1500) return;
+      if (reading.kind === 'relative' && reading.screenAngle===sensorRef.current.screenAngle && sensorRef.current.kind === 'absolute' && sensorRef.current.capturedAt && Date.now() - Date.parse(sensorRef.current.capturedAt) >= 0 && Date.now() - Date.parse(sensorRef.current.capturedAt) < 1500) return;
       sensorRef.current = reading;
       setSensor(reading);
     };
@@ -652,26 +660,27 @@ export default function FieldApp() {
         if (!image || !width || !height) throw new Error('相機畫面尚未就緒，請重試。');
         const size=recognitionFrameSize(width,height);
         frame.width = size.width; frame.height = size.height;
+        const frameCapturedAt=Date.now(),frameSensor=cameraOrientationSensor(sensorRef.current);
         frame.getContext('2d')!.drawImage(image, 0, 0, frame.width, frame.height);
         const matchStarted=performance.now();
         const detection = await instance.detect(frame);
         const elapsedMs=Math.round(performance.now()-matchStarted);
         if (generation !== detectGeneration.current) return;
+        const ref = detection?.targetId ? testRefs.find((r) => r.id === detection.targetId) : null;
+        const directionResult=visualHeading.observe(instance.diagnostics,{capturedAt:frameCapturedAt,sensor:frameSensor,nodeId:ref?.nodeId,referenceId:ref?.id,eligibleNodeId:nodeId,still:Boolean(still)});
         setRecognitionDiagnostic(instance.diagnostics);
         setRecognitionFrame(frame.toDataURL('image/jpeg',.65));
         if(instance.diagnostics){
-          recognitionCapture.record(frame,instance.diagnostics,{mode:'field',profile:recognitionProfile,revision,nodeId,referenceIds:testRefs.map(r=>r.id),sourceWidth:width,sourceHeight:height});
+          recognitionCapture.record(frame,instance.diagnostics,{mode:'field',profile:recognitionProfile,revision,nodeId,referenceIds:testRefs.map(r=>r.id),sourceWidth:width,sourceHeight:height,heading:{version:'v4-visual-heading-1',frameCapturedAt,sensor:still?null:frameSensor,estimate:directionResult.estimate,still:Boolean(still)}});
           if(still)setTrialResults(old=>({...old,[recognitionProfile]:{diagnostic:instance.diagnostics!,elapsedMs}}));
         }
-        const ref = detection?.targetId ? testRefs.find((r) => r.id === detection.targetId) : null;
         if (ref && detection && detection.inliers >= 12) {
           confirmation = advanceNodeConfirmation(confirmation, ref.nodeId, Date.now());
           if (still || confirmation!.hits >= 3) {
             setCandidate({ reference: ref, inliers: detection.inliers, matches: detection.matchCount });
             setRecognitionMessage(`候選節點：${ref.label}。${still ? '單張照片比對' : '最近 5 次取樣中有 3 次吻合'}；仍需現場確認，不代表精確座標。`);
-            break;
-          }
-          setRecognitionMessage(`正在確認 ${ref.label}（${confirmation!.hits}/3，短暫漏判可接續）…`);
+            if(still||cameraTask!=='direction')break;
+          } else setRecognitionMessage(`正在確認 ${ref.label}（${confirmation!.hits}/3，短暫漏判可接續）…`);
         } else {
           confirmation = advanceNodeConfirmation(confirmation, null, Date.now(), instance.diagnostics?.reason === 'ambiguous');
           setRecognitionMessage(confirmation?`暫時未匹配，近期證據保留 ${confirmation.hits}/3；請停留片刻。`:`尚未匹配：${instance.diagnostics?RECOGNITION_REASONS[instance.diagnostics.reason]:'請調整取景'}。`);
@@ -697,17 +706,19 @@ export default function FieldApp() {
   function confirmCandidate() {
     if (!candidate) return;
     const ref = candidate.reference;
-    const validSensor = !staleSensor ? sensor.heading : null;
+    visualHeading.reset();
+    const validSensor = liveCameraSensor ? cameraSensor.heading : null;
     if (ref.nodeId !== nodeId) setNodeId(ref.nodeId);
     // A match is a node candidate, not a geometric pose. Operator confirmation is explicit.
     const confirmedBearing = ref.bearing;
-    if (ref.nodeId === nodeId && confirmedBearing !== null) setLock({ nodeId: ref.nodeId, bearing: confirmedBearing, sensorHeading: validSensor, sensorKind: sensor.kind, screenAngle: sensor.screenAngle, time: Date.now() });
+    if (ref.nodeId === nodeId && confirmedBearing !== null) setLock({ nodeId: ref.nodeId, bearing: confirmedBearing, sensorHeading: validSensor, sensorKind: cameraSensor.kind, screenAngle: sensor.screenAngle, time: Date.now() });
     setNotice({ kind: 'info', text: confirmedBearing === null ? '已選取候選節點；這張照片尚未記錄方向，請到「方向校正」設定。' : ref.nodeId !== nodeId ? '已切換到此節點。請核對地圖，面向參考照片同方向後，在校正工具確認朝向。' : '已由你確認節點與朝向。感測器僅短暫追蹤轉動，20 秒後須重新校正，沒有量測行走距離。' });
   }
   const disabled = Boolean(busy) || loading;
   const writeDisabled = disabled || editorLocked || !canWrite || !revision || storage === 'readonly' || !online;
   const sensorDerived = draft ? mapBearingFromSensor(draft.sensor, optionalAngle(mapUp), Date.parse(draft.capturedAt)) : null;
   const recognitionTools = <section className="v4-fishnet-trial-tools">
+    <HeadingStatus heading={visualHeading} manual={Boolean(lockFresh)}/>
     <FishnetProfileControl profile={recognitionProfile} onChange={changeRecognitionProfile} disabled={disabled || detecting}/>
     {hasTestFrame && <button disabled={disabled || detecting} onClick={() => { if (lastTestFrame.current) void runRecognition(lastTestFrame.current); }}>重跑這張測試照</button>}
     {Object.keys(trialResults).length > 0 && <details><summary>同圖對照結果</summary>{(['fishnet','legacy'] as const).map((profile) => {
@@ -777,7 +788,7 @@ export default function FieldApp() {
             <div className="guide-hud"><div className="mascot" aria-label="固定畫面吉祥物"><span /><span /><i /></div><div><b>{turnAngle === null ? '小嚮導 · 等待方向確認' : Math.abs(turnAngle) < 18 ? '對準了，朝前方地標看' : `請向${turnAngle > 0 ? '右' : '左'}轉約 ${Math.round(Math.abs(turnAngle))}°`}</b><small>{nextNode ? `下一個地標：${nodeLabel(nextNode)}` : '先選擇相鄰節點，測試轉向提示'}</small></div>{turnAngle !== null && <ArrowUp className="hud-arrow" style={{ transform: `rotate(${turnAngle}deg)` }} />}</div>
             <div className="camera-bottom"><span>節點級定位 · 非公尺級追蹤</span>{cameraState === 'ready' && <button onClick={stopCamera}><VideoOff size={15} />關閉相機</button>}</div>
           </div>
-          <div className="sensor-strip"><Compass size={20} /><div><b>{sensor.kind === 'absolute' ? '羅盤方位' : sensor.kind === 'relative' ? '相對轉動' : '方向感測'}</b><span>{staleSensor ? '尚無有效讀值' : angleText(sensor.heading)}{sensor.kind === 'relative' ? ' · 不是北向' : ''}</span></div><div><b>方向校正</b><span>{lockFresh ? '人工確認 · 20 秒有效' : '未校正／已過期'}</span></div><button onClick={requestSensors} disabled={disabled}>重新啟用</button></div>
+          <div className="sensor-strip"><Compass size={20} /><div><b>{sensor.kind === 'absolute' ? '羅盤方位' : sensor.kind === 'relative' ? '相對轉動' : '方向感測'}</b><span>{staleSensor ? '尚無有效讀值' : angleText(sensor.heading)}{sensor.kind === 'relative' ? ' · 不是北向' : ''}</span></div><div><b>方向校正</b><span>{lockFresh ? '人工確認 · 20 秒有效' : visualHeading.view.bearing!==null?'視覺定向（近似）':'未校正／已過期'}</span></div><button onClick={requestSensors} disabled={disabled}>重新啟用</button></div>
           <p className="sensor-caption">{sensorMessage}。{sensor.accuracy !== null ? `感測器精度欄位 ${sensor.accuracy}°（非定位精度）。` : ''}切換頁籤會暫停鏡頭，返回後恢復。</p>
           <section className="recognition-panel panel">
             <div className="section-heading"><div><h2><ScanLine size={18} />照片辨識測試</h2><p>比對本樓層已保存照片，先找出候選節點</p></div><span className="subtle-tag">{testRefs.length} 張參考照</span></div>
@@ -818,7 +829,7 @@ export default function FieldApp() {
             <button className="soft-button full-width" disabled={disabled || targetBearing === null} onClick={() => targetBearing !== null && setBearing(targetBearing)}><Navigation size={16} />以相鄰路段方向作參考 {angleText(targetBearing)}</button>
             <p className="helper">選擇路段只提供地圖參考；請實際面向對應地標。手機朝向不是行走方向，這裡不會量測已走距離。</p>
             <button className="primary-button full-width" disabled={writeDisabled || !node} onClick={() => save('calibration')}><CloudUpload size={17} />保存節點校正到後台</button>
-            <button className="soft-button full-width" disabled={disabled || !node} onClick={() => { setLock({ nodeId: node!.id, bearing, sensorHeading: staleSensor ? null : sensor.heading, sensorKind: sensor.kind, screenAngle: sensor.screenAngle, time: Date.now() }); selectTab('camera'); setNotice({ kind: 'info', text: '已手動確認目前朝向，僅在此工作階段生效；沒有感測資料時不會顯示動態轉向。' }); }}>我已面向這個方向 · 測試轉向</button>
+            <button className="soft-button full-width" disabled={disabled || !node} onClick={() => { visualHeading.reset();setLock({ nodeId: node!.id, bearing, sensorHeading: staleSensor ? null : cameraSensor.heading, sensorKind: cameraSensor.kind, screenAngle: sensor.screenAngle, time: Date.now() }); selectTab('camera'); setNotice({ kind: 'info', text: '已手動確認目前朝向，僅在此工作階段生效；沒有感測資料時不會顯示動態轉向。' }); }}>我已面向這個方向 · 測試轉向</button>
             <details className="advanced"><summary><SlidersHorizontal size={15} />樓層方位進階設定</summary><label>地圖上方對應的羅盤方位<input aria-label="樓層地圖北向" type="number" min="0" max="359.9" step="0.1" placeholder="尚未校準" value={mapUp} disabled={disabled} onChange={(e) => setMapUp(e.target.value)} /></label><p className="helper">例如地圖上方正對東方，填 90°。需先對準已知方向，勿直接把手機讀值當地圖北向。</p><label className="check-label"><input type="checkbox" checked={saveMapUp} disabled={disabled} onChange={(e) => setSaveMapUp(e.target.checked)} /><span>儲存節點時，也更新此樓層北向<small>影響整層的羅盤換算，請確認後勾選。</small></span></label></details>
             <div className="helper-box"><b>三種資訊分開保存</b><p>照片：找出候選節點。<br />感測器：記錄手機方位來源與時間。<br />人工校正：確認照片／節點在地圖上的方向。</p><p>修改節點角度不會改寫歷史照片的拍攝方向。</p></div>
           </div>}
@@ -891,7 +902,7 @@ export default function FieldApp() {
         <div hidden={step===0||cameraTask==='navigation'}><div className="flow-camera"><video ref={video} autoPlay playsInline muted/><span>{cameraState==='ready'?'相機已啟用':'相機未啟用'}</span></div><div className="flow-inline"><button disabled={disabled||cameraState==='requesting'} onClick={startCamera}>{cameraState==='ready'?'重新啟用相機':'開啟相機'}</button><button disabled={cameraState!=='ready'} onClick={stopCamera}>關閉相機</button></div>
           {cameraTask==='photo'&&<button className="primary-button" disabled={!ready||cameraState!=='ready'||!node} onClick={capture}>拍攝此畫面</button>}
           {(cameraTask==='recognition'||cameraTask==='direction')&&<><div className="flow-inline"><button className="primary-button" disabled={disabled||!testRefs.length||cameraState!=='ready'} onClick={()=>detecting?stopDetection():runRecognition()}>{detecting?'停止辨識':'開始相機辨識'}</button><button disabled={disabled||detecting||!testRefs.length} onClick={()=>testInput.current?.click()}>匯入測試照</button></div>{recognitionTools}<p className="recognition-status" role="status">{recognitionMessage}</p><RecognitionInspector diagnostic={recognitionDiagnostic} preparation={recognitionPreparation} frame={recognitionFrame} references={testRefs} onExport={()=>recognitionCapture.download()}/>{!testRefs.length&&<button onClick={()=>selectTab('capture')}>先建立參考照片</button>}{candidate&&<div className="flow-result"><img src={candidate.reference.imageUrl} alt="匹配的參考照片"/><h2>候選：{candidate.reference.label}</h2><p>方向 {angleText(candidate.reference.bearing)} · 仍需人工確認</p><button disabled={disabled} onClick={()=>{confirmCandidate();goStep(2,'camera');}}>我確認在此節點，且面向照片同方向</button><Help title="辨識結果"><p>幾何內點 {candidate.inliers}／匹配 {candidate.matches}，不是定位正確率。本輪使用 {testRefs.length} 張參考照，優先目前節點。</p></Help></div>}</>}
-          {cameraTask==='direction'&&<div className="flow-summary"><ArrowUp size={34} style={{transform:`rotate(${turnAngle??0}deg)`}}/><b>{turnAngle===null?'先確認目前面向':Math.abs(turnAngle)<18?'面向正確':`向${turnAngle>0?'右':'左'}轉 ${Math.round(Math.abs(turnAngle))}°`}</b><p>{lockFresh?'校正有效 · 20 秒':'校正已過期／未確認'} · {staleSensor?'感測待啟用':angleText(sensor.heading)}</p><button onClick={requestSensors}>啟用方位感測</button><button onClick={()=>selectTab('calibrate')}>選地標並校正</button></div>}
+          {cameraTask==='direction'&&<div className="flow-summary"><ArrowUp size={34} style={{transform:`rotate(${turnAngle??0}deg)`}}/><b>{turnAngle===null?'先確認目前面向':Math.abs(turnAngle)<18?'面向正確':`向${turnAngle>0?'右':'左'}轉 ${Math.round(Math.abs(turnAngle))}°`}</b><p>{lockFresh?'人工校正有效 · 20 秒':visualHeading.view.bearing!==null?'視覺方向有效（近似）':'校正已過期／未確認'} · {staleSensor?'感測待啟用':angleText(sensor.heading)}</p><button onClick={requestSensors}>啟用方位感測</button><button onClick={()=>selectTab('calibrate')}>選地標並校正</button></div>}
           <Help title="相機與感測"><p>{cameraMessage}。{sensorMessage}。只辨識候選節點，不追蹤步行距離；切換頁籤會暫停鏡頭。感測來源：{sensor.kind}；精度欄位 {sensor.accuracy??'未知'}。</p><button onClick={requestSensors}>重新啟用方位感測</button></Help>
         </div>
         {navigationOpen&&tab==='camera'&&step>0&&!editorLocked&&<div><p className="flow-safety">目前節點模擬 Kiosk 起點 · V4 連續辨識，抵達由使用者確認</p><iframe src={`./ar-v4-navigation.html?projectId=${encodeURIComponent(projectId)}&origin=${encodeURIComponent(nodeId)}`} title="AR 導航流程測試" className="navigation-test-frame" allow="camera; accelerometer; gyroscope; magnetometer; fullscreen" allowFullScreen/></div>}
@@ -907,7 +918,7 @@ export default function FieldApp() {
       </section>
       <section id="field-panel-calibrate" role="tabpanel" aria-label="方向校正" hidden={tab!=='calibrate'}>
         <Step visible={step===0}><label>參考相鄰地標<select aria-label="下一個節點" value={nextNode?.id||''} onChange={e=>{setNextNodeId(e.target.value);setLock(null);}}>{neighbors.length?neighbors.map(n=><option key={n.id} value={n.id}>{nodeLabel(n)}</option>):<option value="">沒有相鄰路段，請使用人工方向</option>}</select></label><button disabled={targetBearing===null} onClick={()=>targetBearing!==null&&setBearing(targetBearing)}>採用此路段方向 {angleText(targetBearing)}</button>{!neighbors.length&&<button onClick={()=>selectTab('graph')}>到路網連接節點</button>}<p>也可按下一步，直接設定人工方向。</p></Step>
-        <Step visible={step===1}><div className="flow-dial"><Navigation size={65} style={{transform:`rotate(${bearing-45}deg)`}}/><strong>{angleText(bearing)}</strong><small>地圖上方 0°</small></div><label>參考朝向<input aria-label="節點參考朝向" type="range" min="0" max="359" value={bearing} onChange={e=>setBearing(Number(e.target.value))}/></label><details><summary>精確微調與整層北向</summary><div className="angle-adjust">{[-5,-1].map(n=><button key={n} onClick={()=>setBearing(normalizeBearing(bearing+n))}>{n}°</button>)}<input aria-label="節點角度數值" type="number" value={bearing} onChange={e=>setBearing(optionalAngle(e.target.value)??0)}/>{[1,5].map(n=><button key={n} onClick={()=>setBearing(normalizeBearing(bearing+n))}>+{n}°</button>)}</div><label>樓層地圖北向<input aria-label="樓層地圖北向" type="number" value={mapUp} onChange={e=>setMapUp(e.target.value)}/></label><label className="check-label"><input type="checkbox" checked={saveMapUp} onChange={e=>setSaveMapUp(e.target.checked)}/>同時更新整層北向（影響本樓層羅盤換算）</label></details><button onClick={()=>{if(!node)return;setLock({nodeId:node.id,bearing,sensorHeading:staleSensor?null:sensor.heading,sensorKind:sensor.kind,screenAngle:sensor.screenAngle,time:Date.now()});setCameraTask('direction');goStep(1,'camera');selectTab('camera');}}>我已面向這個方向 · 測試轉向</button></Step>
+        <Step visible={step===1}><div className="flow-dial"><Navigation size={65} style={{transform:`rotate(${bearing-45}deg)`}}/><strong>{angleText(bearing)}</strong><small>地圖上方 0°</small></div><label>參考朝向<input aria-label="節點參考朝向" type="range" min="0" max="359" value={bearing} onChange={e=>setBearing(Number(e.target.value))}/></label><details><summary>精確微調與整層北向</summary><div className="angle-adjust">{[-5,-1].map(n=><button key={n} onClick={()=>setBearing(normalizeBearing(bearing+n))}>{n}°</button>)}<input aria-label="節點角度數值" type="number" value={bearing} onChange={e=>setBearing(optionalAngle(e.target.value)??0)}/>{[1,5].map(n=><button key={n} onClick={()=>setBearing(normalizeBearing(bearing+n))}>+{n}°</button>)}</div><label>樓層地圖北向<input aria-label="樓層地圖北向" type="number" value={mapUp} onChange={e=>setMapUp(e.target.value)}/></label><label className="check-label"><input type="checkbox" checked={saveMapUp} onChange={e=>setSaveMapUp(e.target.checked)}/>同時更新整層北向（影響本樓層羅盤換算）</label></details><button onClick={()=>{if(!node)return;visualHeading.reset();setLock({nodeId:node.id,bearing,sensorHeading:staleSensor?null:cameraSensor.heading,sensorKind:cameraSensor.kind,screenAngle:sensor.screenAngle,time:Date.now()});setCameraTask('direction');goStep(1,'camera');selectTab('camera');}}>我已面向這個方向 · 測試轉向</button></Step>
         <Step visible={step===2}><div className="flow-summary"><h2>{node?nodeLabel(node):''}</h2><p>節點方向 {angleText(bearing)}</p><p>保存到{destination}</p>{saveMapUp&&<p className="flow-safety">也會更新整層北向為 {angleText(optionalAngle(mapUp))}</p>}</div>{calibrationReview&&<div className="notice error"><span>恢復的草稿與後台版本不同。後台節點方向 {angleText(optionalAngle(node?.guideReferenceBearing))}，請核對後再保存。</span><button onClick={()=>setCalibrationReview(false)}>我已核對，使用此校正草稿</button></div>}</Step>
         <Step visible={step===3}><div className="flow-summary"><Check size={36}/><h2>校正已保存</h2><p>歷史照片方向未變更</p></div></Step>
       </section>

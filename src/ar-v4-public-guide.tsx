@@ -6,6 +6,9 @@ import {FishnetProfileControl} from './ar-v4-fishnet-controls';
 import {RecognitionInspector} from './ar-v4-recognition-inspector';
 import {RecognitionCapture} from './ar-v4-recognition-capture';
 import {advanceNodeConfirmation,type NodeConfirmation} from './ar-v4-recognition-stability';
+import {cameraOrientationSensor,isFreshCameraSensor,manualHeadingAgeValid} from './ar-v4-camera-orientation';
+import {useVisualHeading} from './ar-v4-use-visual-heading';
+import {HeadingStatus} from './ar-v4-heading-status';
 import {EMPTY_SENSOR,sensorFromEvent,type FieldSensor,nodeLabel} from './ar-v4-field-core';
 import {angle,delta,wrap,publicRecognitionScope,confirmProgress,type PublicReference} from './ar-v4-public-core';
 import './ar-v4-public-guide.css';
@@ -14,6 +17,7 @@ export default function PublicGuide({graph,segments,points,destinationId,origin,
  const [index,setIndex]=useState(0),[enabled,setEnabled]=useState(false),[busy,setBusy]=useState(false),[message,setMessage]=useState('請站定操作，允許相機與方向感測後開始。');
  const [profile,setProfile]=useState<RecognitionProfile>(new URLSearchParams(location.search).get('recognition')==='legacy'?'legacy':'fishnet');
  const [candidate,setCandidate]=useState<PublicReference|null>(null),[sensor,setSensor]=useState<FieldSensor>(EMPTY_SENSOR),[now,setNow]=useState(Date.now());
+ const visualHeading=useVisualHeading(sensor,now);
  const [baseline,setBaseline]=useState<{id:string;bearing:number;sensor:number;kind:string;screen:number;time:number}|null>(null);
  const [lastSeen,setLastSeen]=useState(0),[mapOpen,setMapOpen]=useState(false);
  const [diagnostic,setDiagnostic]=useState<Diagnostic|null>(null),[preparation,setPreparation]=useState<Preparation|null>(null),[sample,setSample]=useState('');
@@ -32,17 +36,23 @@ export default function PublicGuide({graph,segments,points,destinationId,origin,
  const scope=useMemo(()=>publicRecognitionScope(graph,leg,current,target),[graph,routeIds,current?.id,target?.id]);
  const refs=scope.references;
  const diagnosticRefs=useMemo(()=>refs.map(r=>({...r,label:nodeLabel(graph.nodes[r.nodeId]||{id:r.nodeId})})),[refs,graph]);
- const liveSensor=sensor.heading!==null&&sensor.capturedAt&&now-Date.parse(sensor.capturedAt)<10000;
- const baselineValid=baseline&&now-baseline.time<20000&&liveSensor&&baseline.kind===sensor.kind&&baseline.screen===sensor.screenAngle;
- const facing=baselineValid?wrap(baseline.bearing+delta(sensor.heading!-baseline.sensor)):null;
+ const cameraSensor=cameraOrientationSensor(sensor);
+ const liveSensor=isFreshCameraSensor(cameraSensor,Date.now());
+ const baselineValid=baseline&&manualHeadingAgeValid(baseline.time,Date.now())&&liveSensor&&baseline.kind===cameraSensor.kind&&baseline.screen===sensor.screenAngle;
+ const facing=baselineValid?wrap(baseline.bearing+delta(cameraSensor.heading!-baseline.sensor)):visualHeading.view.bearing;
  const sameFloor=target?.fId===current?.fId;
  const direction=facing!==null&&sameFloor?delta(angle(current,target)-facing):null;
  const nearCandidate=Boolean(candidate?.nodeId===target?.id&&now-lastSeen<5000);
  const targetHasPhoto=refs.some(r=>r.nodeId===target?.id);
- const setReference=(ref:PublicReference)=>{const s=sensorRef.current;if(ref.bearing!==null&&s.heading!==null&&s.capturedAt&&Date.now()-Date.parse(s.capturedAt)<10000)setBaseline(old=>old&&old.id===ref.id&&ref.id!=='manual'&&old.kind===s.kind&&old.screen===s.screenAngle?{...old,time:Date.now()}:{id:ref.id,bearing:ref.bearing!,sensor:s.heading!,kind:s.kind,screen:s.screenAngle,time:Date.now()});};
- const stop=()=>{generation.current++;stream.current?.getTracks().forEach(t=>t.stop());stream.current=null;if(video.current)video.current.srcObject=null;setEnabled(false);setBusy(false);setBaseline(null);setCandidate(null);setLastSeen(0);};
+ const setReference=(ref:PublicReference)=>{const s=cameraOrientationSensor(sensorRef.current);if(ref.bearing!==null&&isFreshCameraSensor(s,Date.now())){visualHeading.reset();setBaseline({id:ref.id,bearing:ref.bearing,sensor:s.heading!,kind:s.kind,screen:s.screenAngle,time:Date.now()});}};
+ const stop=()=>{generation.current++;stream.current?.getTracks().forEach(t=>t.stop());stream.current=null;if(video.current)video.current.srcObject=null;setEnabled(false);setBusy(false);setBaseline(null);visualHeading.reset();setCandidate(null);setLastSeen(0);};
  useEffect(()=>{const tick=setInterval(()=>setNow(Date.now()),400);const hidden=()=>{if(document.hidden){stop();setMessage('已暫停鏡頭，回來後請重新啟用。');}};document.addEventListener('visibilitychange',hidden);return()=>{clearInterval(tick);document.removeEventListener('visibilitychange',hidden);generation.current++;stream.current?.getTracks().forEach(t=>t.stop());};},[]);
- useEffect(()=>{if(!enabled)return;const receive=(e:DeviceOrientationEvent)=>setSensor(sensorFromEvent(e,window.screen.orientation?.angle||0));window.addEventListener('deviceorientation',receive);window.addEventListener('deviceorientationabsolute',receive as EventListener);return()=>{window.removeEventListener('deviceorientation',receive);window.removeEventListener('deviceorientationabsolute',receive as EventListener);};},[enabled]);
+ useEffect(()=>{if(!enabled)return;const receive=(e:DeviceOrientationEvent)=>{
+  const reading=sensorFromEvent(e,window.screen.orientation?.angle??(window as any).orientation??0);
+  if(reading.kind==='relative'&&reading.screenAngle===sensorRef.current.screenAngle&&sensorRef.current.kind==='absolute'&&sensorRef.current.capturedAt&&Date.now()-Date.parse(sensorRef.current.capturedAt!)>=0&&Date.now()-Date.parse(sensorRef.current.capturedAt!)<1500)return;
+  sensorRef.current=reading;setSensor(reading);
+ };window.addEventListener('deviceorientation',receive);window.addEventListener('deviceorientationabsolute',receive as EventListener);return()=>{window.removeEventListener('deviceorientation',receive);window.removeEventListener('deviceorientationabsolute',receive as EventListener);};},[enabled]);
+ useEffect(()=>{if(baseline&&!baselineValid)setBaseline(null);},[baseline,baselineValid]);
  async function start(){
   const token=++generation.current;setBusy(true);setMessage('正在請求相機與方向權限…');
   const orientation=(window as any).DeviceOrientationEvent;
@@ -55,7 +65,7 @@ export default function PublicGuide({graph,segments,points,destinationId,origin,
  useEffect(()=>{
   if(!enabled||arrived)return;
   let cancelled=false,timer:ReturnType<typeof setTimeout>|undefined,confirmation:NodeConfirmation|null=null;const tracker=new OrbImageTracker({fullScene:true,profile});const canvas=document.createElement('canvas');
-  setCandidate(null);setLastSeen(0);
+  setCandidate(null);setLastSeen(0);setBaseline(null);visualHeading.reset();
   setDiagnostic(null);setPreparation(null);setSample('');
   capture.clear();
   if(!refs.length){setMessage('這段尚未建置參考照片；可依小地圖行走，再人工確認抵達。');return;}
@@ -63,20 +73,26 @@ export default function PublicGuide({graph,segments,points,destinationId,origin,
    if(cancelled||document.hidden)return;
    try{const v=video.current;if(v&&v.readyState>=2&&v.videoWidth){
     const size=recognitionFrameSize(v.videoWidth,v.videoHeight);canvas.width=size.width;canvas.height=size.height;
+    const frameCapturedAt=Date.now(),frameSensor=cameraOrientationSensor(sensorRef.current);
     canvas.getContext('2d')?.drawImage(v,0,0,canvas.width,canvas.height);
     const result=await tracker.detect(canvas);if(cancelled)return;
+    const match=refs.find(r=>r.id===result?.targetId);
+    const directionResult=visualHeading.observe(tracker.diagnostics,{capturedAt:frameCapturedAt,sensor:frameSensor,nodeId:match?.nodeId,referenceId:match?.id,eligibleNodeId:current?.id});
     setDiagnostic(tracker.diagnostics);if(diagnosticOpen.current){
      setSample(canvas.toDataURL('image/jpeg',.65));
-     if(tracker.diagnostics)capture.record(canvas,tracker.diagnostics,{mode:'public',profile,nodeId:current?.id,targetNodeId:target?.id,referenceIds:refs.map(r=>r.id),packUrls:refs.flatMap(r=>{const url=profile==='fishnet'?r.fishnetPackUrl:r.packUrl;return url?[url]:[];}),sourceWidth:v.videoWidth,sourceHeight:v.videoHeight});
+     if(tracker.diagnostics)capture.record(canvas,tracker.diagnostics,{mode:'public',profile,nodeId:current?.id,targetNodeId:target?.id,referenceIds:refs.map(r=>r.id),packUrls:refs.flatMap(r=>{const url=profile==='fishnet'?r.fishnetPackUrl:r.packUrl;return url?[url]:[];}),sourceWidth:v.videoWidth,sourceHeight:v.videoHeight,heading:{version:'v4-visual-heading-1',frameCapturedAt,sensor:frameSensor,estimate:directionResult.estimate,still:false}});
     }
-    const match=refs.find(r=>r.id===result?.targetId);
     confirmation=advanceNodeConfirmation(confirmation,match?.nodeId||null,Date.now(),tracker.diagnostics?.reason==='ambiguous');
     if(match&&confirmation){
      // Seeing an interior/nearby node must never unlock arrival at the endpoint.
      setCandidate(old=>old?.nodeId===match.nodeId?old:null);
      if(confirmation.hits>=3){
       setCandidate(match);setLastSeen(Date.now());
-      if(match.nodeId===current?.id)setMessage('已找到目前節點的局部特徵；方向未校正時，請展開協助確認面向。');
+      if(match.nodeId===current?.id){
+       const estimate=directionResult.estimate;
+       const hint=!estimate.accepted&&estimate.reason==='unsupported_center'?'請把固定地標移到畫面中央，讓方向更容易確認。':!estimate.accepted&&['image_only','unknown_map_bearing','invalid_metadata'].includes(estimate.reason)?'這張參考照缺少可用的環景方向資料，請展開協助手動校正。':'正在確認取景方向，也可展開協助手動校正。';
+       setMessage(directionResult.resolved.bearing!==null?'已找到目前節點並估算朝向；請依箭頭轉向，抵達後再確認位置。':`已找到目前節點的局部特徵；${hint}`);
+      }
       else if(match.nodeId===target?.id)setMessage('已看見下一地標；走到後再按「我已到達」，尚未更新位置。');
       else setMessage(`已辨識附近地標：${nodeLabel(graph.nodes[match.nodeId])}；請繼續前往 ${nodeLabel(target)}，位置尚未更新。`);
      }else setMessage(`正在確認 ${nodeLabel(graph.nodes[match.nodeId])}（${confirmation.hits}/3，短暫漏判可接續）…`);
@@ -84,7 +100,7 @@ export default function PublicGuide({graph,segments,points,destinationId,origin,
      setMessage(confirmation?`暫時未匹配，保留 ${nodeLabel(graph.nodes[confirmation.nodeId])} 的近期證據（${confirmation.hits}/3）；請停留片刻。`:RECOGNITION_REASONS[tracker.diagnostics.reason]);
      if(tracker.diagnostics.reason==='ambiguous'){setCandidate(null);setLastSeen(0);setBaseline(null);}
     }
-   }}catch{confirmation=null;if(!cancelled){setCandidate(null);setLastSeen(0);setMessage('照片辨識暫時失敗，請調整取景；也可使用人工抵達確認。');}}
+   }}catch{confirmation=null;if(!cancelled){visualHeading.reset();setCandidate(null);setLastSeen(0);setMessage('照片辨識暫時失敗，請調整取景；也可使用人工抵達確認。');}}
    if(!cancelled)timer=setTimeout(loop,350);
   };
   setMessage(`正在載入 ${refs.length} 組沿途特徵資料（不下載參考照片）…`);
@@ -94,7 +110,7 @@ export default function PublicGuide({graph,segments,points,destinationId,origin,
  function arrive(manual=false){
   if(!target||(!nearCandidate&&!manual))return;
   if(manual&&!window.confirm(`請確認已實際走到「${nodeLabel(target)}」，不能只在遠處看到地標。確定更新位置？`))return;
-  setIndex(confirmProgress(index,segments.length,true));setBaseline(null);setCandidate(null);setLastSeen(0);setMessage('位置已由您確認，繼續辨識下一個地標。');
+  setIndex(confirmProgress(index,segments.length,true));setBaseline(null);visualHeading.reset();setCandidate(null);setLastSeen(0);setMessage('位置已由您確認，繼續辨識下一個地標。');
   if(index+1>=segments.length)stop();
  }
  if(!leg)return <main className="v4-public-guide"><button onClick={()=>onExit(current?.id)}>返回路線</button><p>沒有可導引的路段。</p></main>;
@@ -102,9 +118,9 @@ export default function PublicGuide({graph,segments,points,destinationId,origin,
   <video ref={video} autoPlay playsInline muted className="v4-public-video"/>
   <header><button onClick={()=>{stop();onExit(current?.id);}} aria-label="返回路線预覽"><ArrowLeft/></button><div><strong>{arrived?'已抵達目的地':`前往 ${nodeLabel(target)}`}</strong><small>{current?.fName} · 最後確認：{nodeLabel(current)}</small></div><button onClick={()=>setMapOpen(x=>!x)} aria-label="展開或收合小地圖"><MapIcon/></button></header>
   {!enabled&&!arrived&&<section className="v4-public-permission"><Camera size={32}/><h1>跟著皮卡走</h1><p>{message}</p><p>照片比對不會量測距離；看到地標後，仍須實際走到再確認。</p><button disabled={busy} onClick={start}>{busy?'正在開啟…':'開啟相機與方向感測'}</button></section>}
-  {enabled&&!arrived&&<><div className="v4-public-status" role="status">{message}</div><div className="v4-pika" style={{left:direction===null?'50%':`${50+Math.max(-1,Math.min(1,direction/65))*27}%`}}><span>{sameFloor?'我在下一個地標等你':'請依地圖前往 '+target?.fName}</span><div className="v4-pika-wave"><img src="./assets/ar/mascot-walking-small.png" alt="皮卡揮手引導"/><b aria-hidden="true">👋</b></div><small>方向示意 · 非現場 3D 定位</small></div></>}
+  {enabled&&!arrived&&<><div className="v4-public-status" role="status">{message}</div><div className="v4-pika" style={{left:direction===null?'50%':`${50+Math.max(-1,Math.min(1,direction/65))*27}%`}}><span>{!sameFloor?'請依地圖前往 '+target?.fName:direction===null?'請先對準固定地標':'我在下一個地標等你'}</span><div className="v4-pika-wave"><img src="./assets/ar/mascot-walking-small.png" alt="皮卡揮手引導"/><b aria-hidden="true">👋</b></div><small>方向示意 · 非現場 3D 定位</small></div></>}
   <section className={`v4-public-minimap ${mapOpen?'expanded':''}`} aria-label="最後確認位置與路徑"><div>最後確認位置 · {current?.fName}</div><MapView floor={floor} graph={graph} mode="route" origin={current?{floorId:current.fId,x:current.x,y:current.y,physX:current.physX,physY:current.physY,snapId:current.id}:origin} destinationId={destinationId} routePoints={points} routeSegments={segments} activeRouteIndex={Math.min(index,segments.length-1)} completedRouteIndex={index} compact imageMode="navigation" focusActiveSegment/></section>
-  {arrived?<section className="v4-public-arrived"><img src="./assets/ar/mascot-walking-small.png" alt="皮卡"/><h1>已由您確認抵達</h1><p>{nodeLabel(current)}</p><button onClick={()=>onExit(current?.id)}>返回路線預覽</button></section>:enabled&&<footer><div className="v4-public-compass" aria-label="指向皮卡的方向箭頭"><ArrowUp size={44} style={{transform:`rotate(${direction??0}deg)`,opacity:direction===null?.3:1}}/><strong>{direction===null?'方向待校正':Math.abs(direction)<18?'往皮卡方向前進':Math.abs(direction)>150?'請轉身尋找皮卡':`向${direction>0?'右':'左'}轉`}</strong><small>{index+1}/{segments.length} · 本段約 {Number(leg.distance||0).toFixed(1)} 公尺（地圖距離）</small></div><button className="v4-arrival" disabled={!nearCandidate} onClick={()=>arrive()}>我已到達{nearCandidate?' · 接續導引':''}</button><details><summary>辨識／方向需要協助</summary><p>{!targetHasPhoto?'下一節點尚無照片。':'若辨識未成功，可核對地圖後人工確認。'}相機比對是候選位置，不是精確測距。</p><button onClick={()=>arrive(true)}>人工確認已到此地標</button><button disabled={!liveSensor||!sameFloor} onClick={()=>setReference({id:'manual',nodeId:current.id,imageUrl:'',bearing:angle(current,target)})}><Compass/>我已面向下一地標，校正方向</button><button onClick={()=>{stop();setMessage('請重新啟用相機與方向感測。');}}><RefreshCw/>重新啟用感測</button></details>
+  {arrived?<section className="v4-public-arrived"><img src="./assets/ar/mascot-walking-small.png" alt="皮卡"/><h1>已由您確認抵達</h1><p>{nodeLabel(current)}</p><button onClick={()=>onExit(current?.id)}>返回路線預覽</button></section>:enabled&&<footer><div className="v4-public-compass" aria-label="指向皮卡的方向箭頭"><ArrowUp size={44} style={{transform:`rotate(${direction??0}deg)`,opacity:direction===null?.3:1}}/><strong>{direction===null?'方向待校正':Math.abs(direction)<18?'往皮卡方向前進':Math.abs(direction)>150?'請轉身尋找皮卡':`向${direction>0?'右':'左'}轉`}</strong><HeadingStatus heading={visualHeading} manual={Boolean(baselineValid)}/><small>{index+1}/{segments.length} · 本段約 {Number(leg.distance||0).toFixed(1)} 公尺（地圖距離）</small></div><button className="v4-arrival" disabled={!nearCandidate} onClick={()=>arrive()}>我已到達{nearCandidate?' · 接續導引':''}</button><details><summary>辨識／方向需要協助</summary><p>{!targetHasPhoto?'下一節點尚無照片。':'若辨識未成功，可核對地圖後人工確認。'}相機比對是候選位置，不是精確測距。</p><button onClick={()=>arrive(true)}>人工確認已到此地標</button><button disabled={!liveSensor||!sameFloor} onClick={()=>setReference({id:'manual',nodeId:current.id,imageUrl:'',bearing:angle(current,target)})}><Compass/>我已面向下一地標，校正方向</button><button onClick={()=>{stop();setMessage('請重新啟用相機與方向感測。');}}><RefreshCw/>重新啟用感測</button></details>
    <details className="v4-public-diagnostics" onToggle={e=>{diagnosticOpen.current=e.currentTarget.open;if(!e.currentTarget.open){setSample('');capture.clear();}}}><summary>辨識診斷與搜尋範圍</summary>
     <FishnetProfileControl profile={profile} onChange={p=>{setCandidate(null);setLastSeen(0);setBaseline(null);setProfile(p);}} disabled={busy}/>
     <button disabled={!sample||!capture.ready} onClick={()=>capture.download()}>匯出這次辨識畫面</button>
