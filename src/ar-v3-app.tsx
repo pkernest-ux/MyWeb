@@ -3345,7 +3345,10 @@ export default function ARNavigationV3({ v4RouteFocus = false, PublicGuide, load
           snapId: activeReviewStep.start.id,
         }
       : origin;
-    const reviewGuideImageUrl = activeReviewStep?.referenceImageUrl || DEFAULT_GUIDE_IMAGE_URL;
+    // V4's public catalog intentionally contains no reference photographs.
+    // Never present another venue's legacy fallback as a local landmark.
+    const reviewGuideIsMascot = Boolean(PublicGuide && !activeReviewStep?.referenceImageUrl);
+    const reviewGuideImageUrl = activeReviewStep?.referenceImageUrl || (PublicGuide ? './assets/ar/mascot-walking-small.png' : DEFAULT_GUIDE_IMAGE_URL);
 
     return (
       <main className="v2-review-app">
@@ -3388,16 +3391,16 @@ export default function ARNavigationV3({ v4RouteFocus = false, PublicGuide, load
             />
             <button
               type="button"
-              className={`v3-review-guide-image ${guideImageExpanded ? "is-expanded" : ""}`}
+              className={`v3-review-guide-image ${guideImageExpanded ? "is-expanded" : ""} ${reviewGuideIsMascot ? "v4-pika-preview" : ""}`}
               onClick={() => setGuideImageExpanded((current) => !current)}
-              aria-label={guideImageExpanded ? "縮小方向提示圖片" : "放大方向提示圖片"}
+              aria-label={reviewGuideIsMascot ? (guideImageExpanded ? '縮小皮卡提示圖' : '放大皮卡提示圖') : (guideImageExpanded ? "縮小方向提示圖片" : "放大方向提示圖片")}
               aria-expanded={guideImageExpanded}
             >
               <img
                 src={reviewGuideImageUrl}
-                alt={`${activeReviewStep?.title || "目前轉角"}方向提示`}
+                alt={reviewGuideIsMascot ? '皮卡導引示意，非現場照片' : `${activeReviewStep?.title || "目前轉角"}方向提示`}
               />
-              <span>{guideImageExpanded ? "點一下縮小" : "方向提示"}</span>
+              <span>{guideImageExpanded ? "點一下縮小" : reviewGuideIsMascot ? '皮卡導引' : "方向提示"}</span>
             </button>
             <button
               type="button"

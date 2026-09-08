@@ -127,6 +127,14 @@ try {
     await checkDestination(page, 'Geox');
     assert.equal(new URL(page.url()).searchParams.get('projectId'), 'geox-fixture');
     await page.screenshot({path: path.join(out, `geox-${width}.png`), fullPage: true});
+    await page.getByRole('combobox').first().selectOption('entrance');
+    await page.getByRole('combobox').last().selectOption('service');
+    const plan = page.locator('.v3-plan-route-button');
+    if (await plan.isVisible()) await plan.click();
+    await page.getByRole('button', {name: '開啟 AR 導引', exact: true}).waitFor();
+    await page.getByRole('img', {name: '皮卡導引示意，非現場照片', exact: true}).waitFor();
+    assert.equal(await page.locator('img[src*="hsinchu-city-hall-navigation-clean"]').count(), 0, 'Geox never shows another venue as a landmark photo');
+    await page.getByRole('button', {name: '返回地圖', exact: true}).click();
     await switchVenue(page).click(); await chooser(page).waitFor();
     await enterCity(page).click(); await checkDestination(page, '市民服務中心');
     report.widths.push(width);
