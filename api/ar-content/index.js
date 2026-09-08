@@ -1,6 +1,13 @@
 const repo = process.env.GITHUB_REPO || "pkernest-ux/MyWeb";
 const branch = process.env.GITHUB_BRANCH || "main";
 const path = "ar-data.json";
+const sourceBlobShaHeader = "X-AR-Source-Blob-Sha";
+
+const jsonResponseHeaders = (sourceBlobSha = "") => ({
+  "Content-Type": "application/json; charset=utf-8",
+  "Cache-Control": "no-store, max-age=0",
+  [sourceBlobShaHeader]: sourceBlobSha
+});
 
 const normalizeCollection = (json) => {
   if (Array.isArray(json?.projects)) {
@@ -54,6 +61,8 @@ module.exports = async function (context, req) {
     headers.Authorization = `Bearer ${token}`;
   }
 
+  let sourceBlobSha = "";
+
   try {
     const response = await fetch(`${apiUrl}?ref=${encodeURIComponent(branch)}`, { headers });
 
@@ -62,6 +71,10 @@ module.exports = async function (context, req) {
     }
 
     const file = await response.json();
+    sourceBlobSha = typeof file.sha === "string" ? file.sha : "";
+    if (!sourceBlobSha) {
+      throw new Error("GitHub AR content response did not include a blob SHA.");
+    }
     let text = "";
 
     if (file.encoding === "base64" && file.content) {
@@ -91,6 +104,7 @@ module.exports = async function (context, req) {
       body = {
         version: collection.version,
         activeProjectId: collection.activeProjectId,
+        revision: sourceBlobSha,
         projects: collection.projects.map(summarizeProject)
       };
     } else if (query.projectId) {
@@ -98,9 +112,7 @@ module.exports = async function (context, req) {
       if (!body) {
         context.res = {
           status: 404,
-          headers: {
-            "Cache-Control": "no-store, max-age=0"
-          },
+          headers: jsonResponseHeaders(sourceBlobSha),
           body: { error: "AR project not found." }
         };
         return;
@@ -113,19 +125,14 @@ module.exports = async function (context, req) {
 
     context.res = {
       status: 200,
-      headers: {
-        "Content-Type": "application/json",
-        "Cache-Control": "no-store, max-age=0"
-      },
+      headers: jsonResponseHeaders(sourceBlobSha),
       body
     };
   } catch (error) {
     context.log.error(error);
     context.res = {
       status: 500,
-      headers: {
-        "Cache-Control": "no-store, max-age=0"
-      },
+      headers: jsonResponseHeaders(sourceBlobSha),
       body: { error: error.message }
     };
   }

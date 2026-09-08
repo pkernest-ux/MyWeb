@@ -3,6 +3,14 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
+  worker: {
+    format: "iife",
+    rollupOptions: {
+      output: {
+        entryFileNames: "assets/ar-v3/ar-v3-recognition-worker.js",
+      },
+    },
+  },
   build: {
     outDir: ".",
     emptyOutDir: false,

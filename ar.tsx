@@ -7,9 +7,18 @@ import {
   ZoomIn, ZoomOut, Maximize, Scan, Info, Smartphone,
   ArrowUp, ArrowDown, ArrowLeft, ArrowRight,
   ArrowUpLeft, ArrowUpRight, ArrowDownLeft, ArrowDownRight, Minus, Navigation,
-  Building, Layers, ArrowUpDown, Eye, Ruler, Route, GitCommit, MousePointer2, Activity,
-  Eraser, Undo2
+  Building, Layers, ArrowUpDown, Eye, Ruler, Route, GitCommit, MousePointer2, Activity, RefreshCw,
+  Eraser, Undo2, ChevronDown, Save
 } from 'lucide-react';
+import { OrbImageTracker } from './src/ar-v3-image-recognition';
+import { NodePhotoViewer } from './src/ar-v4-node-photo-viewer';
+
+// V4 browsing never promotes an observation to the legacy recognition image.
+// Keep the existing upload/remove controls accessible without implying that
+// they edit whichever panorama direction is currently being previewed.
+const LegacyNodePhoto = ({ v4, children }) => v4
+  ? <details className="v4-legacy-node-photo"><summary>舊版主圖（上傳／更換）</summary>{children}</details>
+  : <>{children}</>;
 
 // ==========================================
 // 圖片壓縮工具
@@ -48,6 +57,137 @@ const ArrowIcon = ({ direction, className }) => {
   return <Icon className={className} />;
 };
 
+const GuideDirectionFields = ({ node, floor, onUpdate, showAlert }) => {
+  const [isCapturing, setIsCapturing] = useState(false);
+  const hasNumericValue = (value) =>
+    value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value));
+  const directionMode = ['sensor', 'manual'].includes(node?.guideDirectionMode)
+    ? node.guideDirectionMode
+    : 'auto';
+  const hasReferenceBearing = hasNumericValue(node?.guideReferenceBearing);
+  const referenceBearing = hasReferenceBearing
+    ? Math.max(0, Math.min(359, Number(node.guideReferenceBearing)))
+    : 0;
+  const floorMapUpHeading = hasNumericValue(floor?.mapUpHeading)
+    ? normalizeAngle(Number(floor.mapUpHeading))
+    : null;
+  const capturedHeading = hasNumericValue(node?.guideDeviceHeading)
+    ? normalizeAngle(Number(node.guideDeviceHeading))
+    : null;
+
+  const recordCurrentHeading = async () => {
+    if (floorMapUpHeading === null) {
+      showAlert('請先開啟「座標、比例尺與方向基準設定」，記錄平面圖上方所對應的現場方位。');
+      return;
+    }
+    setIsCapturing(true);
+    try {
+      const result = await captureCurrentDeviceHeading();
+      onUpdate('guideDirectionMode', 'sensor');
+      onUpdate('guideDeviceHeading', result.heading);
+      onUpdate('guideReferenceBearing', normalizeAngle(result.heading - floorMapUpHeading));
+      onUpdate('guideHeadingAccuracy', result.accuracy);
+      onUpdate('guideHeadingCapturedAt', new Date().toISOString());
+      showAlert(`方位記錄完成：手機 ${result.heading.toFixed(0)}°，換算平面圖方位 ${normalizeAngle(result.heading - floorMapUpHeading).toFixed(0)}°。`);
+    } catch (error) {
+      showAlert(error?.message || '無法記錄目前方位。');
+    } finally {
+      setIsCapturing(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950/70 p-3 space-y-3">
+      <div>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs font-bold text-cyan-300">V3 AR 起始角度</span>
+          <span className="rounded bg-cyan-500/10 px-2 py-1 text-[10px] font-bold text-cyan-200">
+            {directionMode === 'auto' ? '自動' : hasReferenceBearing ? `${referenceBearing.toFixed(0)}°` : '未設定'}
+          </span>
+        </div>
+        <p className="mt-1 text-[10px] leading-relaxed text-slate-500">
+          設定辨識成功時，鏡頭正前方在平面圖上所對應的角度；路線方向仍會依目前節點到下一節點自動計算。
+        </p>
+      </div>
+      <label className="block">
+        <span className="block text-[11px] text-slate-400 mb-1">起始角度設定方式</span>
+        <select
+          value={directionMode}
+          onChange={(event) => {
+            const nextMode = event.target.value;
+            onUpdate('guideDirectionMode', nextMode);
+            if (nextMode === 'manual' && !hasReferenceBearing) onUpdate('guideReferenceBearing', 0);
+          }}
+          className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs text-slate-200 focus:border-cyan-500"
+        >
+          <option value="sensor">現場記錄手機起始角度</option>
+          <option value="manual">手動設定起始角度</option>
+          <option value="auto">沿路網方向自動推估（舊資料相容）</option>
+        </select>
+      </label>
+      {directionMode === 'sensor' ? (
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={recordCurrentHeading}
+            disabled={isCapturing}
+            className="w-full flex items-center justify-center gap-2 rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-3 py-2.5 text-xs font-bold text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+          >
+            <Navigation className="w-4 h-4" />
+            {isCapturing ? '正在穩定取樣...' : '記錄目前手機面向'}
+          </button>
+          <p className="text-[10px] leading-relaxed text-slate-500">
+            {floorMapUpHeading === null
+              ? '尚未設定本樓層的方向基準，請先至座標與比例尺設定完成校正。'
+              : capturedHeading === null
+                ? `樓層方向基準 ${floorMapUpHeading.toFixed(0)}° 已就緒，請站在照片固定位置並面向照片拍攝方向。`
+                : `已記錄手機 ${capturedHeading.toFixed(0)}°，照片對應平面圖 ${referenceBearing.toFixed(0)}°。`}
+          </p>
+        </div>
+      ) : directionMode === 'manual' ? (
+        <label className="block">
+          <span className="block text-[11px] text-slate-400 mb-1">辨識照片正前方的平面圖角度</span>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min="0"
+              max="359"
+              step="1"
+              value={referenceBearing}
+              onChange={(event) => {
+                const nextValue = Number(event.target.value);
+                onUpdate(
+                  'guideReferenceBearing',
+                  Number.isFinite(nextValue) ? Math.max(0, Math.min(359, nextValue)) : 0
+                );
+              }}
+              className="min-w-0 flex-1 bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 focus:border-cyan-500"
+            />
+            <span className="text-xs font-semibold text-slate-400">度</span>
+          </div>
+          <input
+            type="range"
+            min="0"
+            max="359"
+            step="1"
+            value={referenceBearing}
+            onChange={(event) => onUpdate('guideReferenceBearing', Number(event.target.value))}
+            className="mt-3 w-full accent-cyan-400"
+            aria-label="V3 AR 起始角度"
+          />
+          <span className="mt-1.5 block text-[10px] leading-relaxed text-slate-500">
+            角度以平面圖為基準：上方 0°、右方 90°、下方 180°、左方 270°。這是照片拍攝方向，不是把路線固定成某個方向。
+          </span>
+        </label>
+      ) : (
+        <p className="text-[10px] leading-relaxed text-slate-500">
+          系統假設辨識照片朝向規劃路徑的下一節點。此模式只供既有資料相容，現場新點位建議改用手機記錄方位。
+        </p>
+      )}
+    </div>
+  );
+};
+
 const getFloorLevel = (name) => {
   if (!name) return 0;
   const upper = name.toUpperCase().trim();
@@ -62,6 +202,114 @@ const getFloorLevel = (name) => {
 const getFloorBounds = (floor) => floor?.bounds || { blX: 0, blY: 0, trX: 100, trY: 100 };
 
 const cloneData = (value) => JSON.parse(JSON.stringify(value));
+
+const AR_PROJECT_CACHE_DB = 'ar-manager-cache-v1';
+const AR_PROJECT_CACHE_STORE = 'projects';
+const AR_PROJECTS_LOCAL_KEY = 'arManager_projects';
+const AR_LEGACY_BUILDINGS_KEY = 'arManager_buildings';
+const AR_LEGACY_CONFIG_KEY = 'arManager_config';
+const AR_ACTIVE_PROJECT_KEY = 'arManager_activeProjectId';
+
+const normalizeProjectSync = (project, defaults = {}) => {
+  const existingSync = project?._sync && typeof project._sync === 'object'
+    ? project._sync
+    : {};
+  return {
+    baseSha: typeof existingSync.baseSha === 'string' && existingSync.baseSha
+      ? existingSync.baseSha
+      : (defaults.baseSha || null),
+    lastSyncedAt: existingSync.lastSyncedAt || defaults.lastSyncedAt || null,
+    dirty: typeof existingSync.dirty === 'boolean'
+      ? existingSync.dirty
+      : (defaults.dirty ?? true),
+    source: existingSync.source || defaults.source || 'local'
+  };
+};
+
+const normalizeCachedProject = (project) => ({
+  ...project,
+  _sync: normalizeProjectSync(project)
+});
+
+const readLocalStoredProjects = () => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(AR_PROJECTS_LOCAL_KEY) || '[]');
+    return Array.isArray(parsed)
+      ? parsed.filter(project => project?.id).map(normalizeCachedProject)
+      : [];
+  } catch (error) {
+    console.warn('Unable to read legacy local project cache:', error);
+    return [];
+  }
+};
+
+const openProjectCache = (databaseName = AR_PROJECT_CACHE_DB) => new Promise((resolve, reject) => {
+  if (!window.indexedDB) {
+    reject(new Error('此瀏覽器不支援 IndexedDB 專案暫存。'));
+    return;
+  }
+  const request = window.indexedDB.open(databaseName, 1);
+  request.onupgradeneeded = () => {
+    const database = request.result;
+    if (!database.objectStoreNames.contains(AR_PROJECT_CACHE_STORE)) {
+      database.createObjectStore(AR_PROJECT_CACHE_STORE, { keyPath: 'id' });
+    }
+  };
+  request.onsuccess = () => resolve(request.result);
+  request.onerror = () => reject(request.error || new Error('無法開啟 IndexedDB 專案暫存。'));
+  request.onblocked = () => reject(new Error('IndexedDB 正被其他後台分頁使用，請關閉舊分頁後重試。'));
+});
+
+const readIndexedProjectCache = async (databaseName = AR_PROJECT_CACHE_DB) => {
+  const database = await openProjectCache(databaseName);
+  try {
+    return await new Promise((resolve, reject) => {
+      const transaction = database.transaction(AR_PROJECT_CACHE_STORE, 'readonly');
+      const request = transaction.objectStore(AR_PROJECT_CACHE_STORE).getAll();
+      request.onsuccess = () => resolve(
+        Array.isArray(request.result)
+          ? request.result.filter(project => project?.id).map(normalizeCachedProject)
+          : []
+      );
+      request.onerror = () => reject(request.error || new Error('無法讀取 IndexedDB 專案暫存。'));
+    });
+  } finally {
+    database.close();
+  }
+};
+
+const replaceIndexedProjectCache = async (projects, databaseName = AR_PROJECT_CACHE_DB) => {
+  const database = await openProjectCache(databaseName);
+  try {
+    await new Promise((resolve, reject) => {
+      const transaction = database.transaction(AR_PROJECT_CACHE_STORE, 'readwrite');
+      const store = transaction.objectStore(AR_PROJECT_CACHE_STORE);
+      store.clear();
+      (projects || []).filter(project => project?.id).forEach(project => store.put(cloneData(project)));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error || new Error('無法更新 IndexedDB 專案暫存。'));
+      transaction.onabort = () => reject(transaction.error || new Error('IndexedDB 專案暫存已取消。'));
+    });
+  } finally {
+    database.close();
+  }
+};
+
+const removeLargeLegacyLocalCache = () => {
+  localStorage.removeItem(AR_PROJECTS_LOCAL_KEY);
+  localStorage.removeItem(AR_LEGACY_BUILDINGS_KEY);
+  localStorage.removeItem(AR_LEGACY_CONFIG_KEY);
+};
+
+const setSmallLocalCacheValue = (key, value) => {
+  try {
+    localStorage.setItem(key, value);
+    return true;
+  } catch (error) {
+    console.warn(`Unable to update local setting ${key}:`, error);
+    return false;
+  }
+};
 
 const normalizeAngleDelta = (current, base) => (((current - base) + 540) % 360) - 180;
 
@@ -83,6 +331,59 @@ const getHeadingFromOrientationEvent = (event) => {
     return normalizeAngle(360 - event.alpha);
   }
   return null;
+};
+
+const captureCurrentDeviceHeading = async () => {
+  if (!window.isSecureContext) throw new Error('方位記錄需要 HTTPS 或 localhost。');
+  const Orientation = window.DeviceOrientationEvent;
+  if (Orientation?.requestPermission) {
+    const permission = await Orientation.requestPermission();
+    if (permission !== 'granted') throw new Error('未允許動作與方向權限。');
+  }
+
+  return new Promise((resolve, reject) => {
+    const samples = [];
+    const accuracies = [];
+    let timeoutId = null;
+    let settled = false;
+
+    const cleanup = () => {
+      window.removeEventListener('deviceorientation', onOrientation, true);
+      window.removeEventListener('deviceorientationabsolute', onOrientation, true);
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+    };
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (samples.length < 4) {
+        reject(new Error('尚未取得穩定方位，請確認手機已開啟方向感測後再試一次。'));
+        return;
+      }
+      const meanSin = samples.reduce((total, value) => total + Math.sin(value * Math.PI / 180), 0) / samples.length;
+      const meanCos = samples.reduce((total, value) => total + Math.cos(value * Math.PI / 180), 0) / samples.length;
+      const heading = normalizeAngle(Math.atan2(meanSin, meanCos) * 180 / Math.PI);
+      resolve({
+        heading,
+        accuracy: accuracies.length
+          ? accuracies.reduce((total, value) => total + value, 0) / accuracies.length
+          : null,
+        sampleCount: samples.length
+      });
+    };
+    const onOrientation = (event) => {
+      const heading = getHeadingFromOrientationEvent(event);
+      if (heading == null) return;
+      samples.push(heading);
+      const accuracy = Number(event.webkitCompassAccuracy);
+      if (Number.isFinite(accuracy) && accuracy >= 0) accuracies.push(accuracy);
+      if (samples.length >= 12) finish();
+    };
+
+    window.addEventListener('deviceorientation', onOrientation, true);
+    window.addEventListener('deviceorientationabsolute', onOrientation, true);
+    timeoutId = window.setTimeout(finish, 2400);
+  });
 };
 
 const getBearingFromNodes = (currentNode, nextNode) => {
@@ -257,6 +558,9 @@ const createDefaultBuildings = () => [
         markers: [],
         waypoints: [],
         edges: [],
+        mapUpHeading: null,
+        mapUpHeadingAccuracy: null,
+        mapUpHeadingCapturedAt: null,
         bounds: { blX: 0, blY: 0, trX: 100, trY: 100 }
       }
     ]
@@ -269,17 +573,32 @@ const createProject = (name = '新導引專案', description = '') => ({
   description,
   updatedAt: new Date().toISOString(),
   systemConfig: createDefaultConfig(name),
-  buildings: createDefaultBuildings()
+  buildings: createDefaultBuildings(),
+  _sync: {
+    baseSha: null,
+    lastSyncedAt: null,
+    dirty: true,
+    source: 'local'
+  }
 });
 
-const createProjectFromPublishedData = (data) => ({
-  id: data?.project?.id || 'published',
-  name: data?.project?.name || data?.systemConfig?.projectName || 'AR導覽',
-  description: data?.project?.description || '',
-  updatedAt: data?.project?.updatedAt || new Date().toISOString(),
-  systemConfig: { ...createDefaultConfig(data?.project?.name || 'AR導覽'), ...(data?.systemConfig || {}) },
-  buildings: Array.isArray(data?.buildings) ? data.buildings : []
-});
+const createProjectFromPublishedData = (data, sourceBlobSha = null) => {
+  const updatedAt = data?.project?.updatedAt || new Date().toISOString();
+  return {
+    id: data?.project?.id || 'published',
+    name: data?.project?.name || data?.systemConfig?.projectName || 'AR導覽',
+    description: data?.project?.description || '',
+    updatedAt,
+    systemConfig: { ...createDefaultConfig(data?.project?.name || 'AR導覽'), ...(data?.systemConfig || {}) },
+    buildings: Array.isArray(data?.buildings) ? data.buildings : [],
+    _sync: {
+      baseSha: sourceBlobSha || null,
+      lastSyncedAt: sourceBlobSha ? updatedAt : null,
+      dirty: false,
+      source: sourceBlobSha ? 'github' : 'packaged'
+    }
+  };
+};
 
 const getDestinationDisplayName = (node) => {
   const placeholderTitles = new Set(['新增辨識點', '未命名', '未命名點位', '未命名目的地']);
@@ -331,49 +650,112 @@ const mergePublishedProjectLists = (...sources) => {
   return Array.from(projectMap.values());
 };
 
+const loadCloudProjectSummary = async () => {
+  const response = await fetch(`/api/ar-content?list=1&ts=${Date.now()}`, {
+    cache: 'no-store',
+    credentials: 'include',
+    headers: { Accept: 'application/json' }
+  });
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.includes('application/json')) {
+    throw new Error(`雲端服務回傳格式錯誤 (${response.status})`);
+  }
+  const data = await response.json();
+  if (!response.ok) throw new Error(data?.error || `Cloud project list failed: ${response.status}`);
+  const revision = response.headers.get('x-ar-source-blob-sha') || data?.revision || null;
+  return { data, revision };
+};
+
 const hasPublishedFloorPlan = (project) =>
   (project?.buildings || []).some(building =>
     (building?.floors || []).some(floor => Boolean(floor?.imageUrl || floor?.navigationImageUrl))
   );
 
-export default function ARManagerApp({ embedded = false, initialTab = 'map', publicOnly = false }) {
+const projectContentFingerprint = (project, config = project?.systemConfig, projectBuildings = project?.buildings) => JSON.stringify({
+  name: config?.projectName || project?.name || '',
+  description: project?.description || '',
+  systemConfig: config,
+  buildings: projectBuildings
+});
+
+export default function ARManagerApp({ embedded = false, initialTab = 'map', publicOnly = false, v4Integration = false }) {
+  const cacheDatabaseName = v4Integration ? 'ar-v4-map-editor-cache-v1' : AR_PROJECT_CACHE_DB;
+  const activeProjectCacheKey = v4Integration ? 'arV4MapEditor_activeProjectId' : AR_ACTIVE_PROJECT_KEY;
+  const [v4Storage, setV4Storage] = useState('unknown');
+  const [v4Ready, setV4Ready] = useState(false);
+  const [v4Busy, setV4Busy] = useState(false);
+  const [v4Notice, setV4Notice] = useState('正在讀取後台路網，請稍候。');
+  const [v4ProjectOptions, setV4ProjectOptions] = useState([]);
+  const [v4ToolGroup, setV4ToolGroup] = useState(null);
+  const [v4ToolsVisible, setV4ToolsVisible] = useState(false);
+  const [v4FloorPickerOpen, setV4FloorPickerOpen] = useState(false);
+  const v4FloorDialog = useRef(null);
+  useEffect(()=>{if(v4FloorPickerOpen)v4FloorDialog.current?.showModal();},[v4FloorPickerOpen]);
+  useEffect(()=>{
+    if(!v4Integration||!v4ToolsVisible)return;
+    const escape=(event)=>{if(event.key==='Escape'){setV4ToolsVisible(false);v4ToolsToggleRef.current?.focus();}};
+    window.addEventListener('keydown',escape);return()=>window.removeEventListener('keydown',escape);
+  },[v4Integration,v4ToolsVisible]);
+  const [v4LoadFailed, setV4LoadFailed] = useState(false);
+  const v4EndModeRef = useRef(null);
+  const v4ToolsToggleRef = useRef(null);
+  const v4InspectorCloseRef = useRef(null);
+  const v4StateRef = useRef({});
+  const v4ContextRef = useRef(Object.fromEntries(new URLSearchParams(window.location.search)));
+  const v4PendingContextRef = useRef(null);
   const [activeTab, setActiveTab] = useState(initialTab);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const [promptModal, setPromptModal] = useState({ isOpen: false, title: '', placeholder: '', onSubmit: null, defaultValue: '' });
   const [confirmModal, setConfirmModal] = useState({ isOpen: false, title: '', message: '', onConfirm: null });
   const [alertModal, setAlertModal] = useState({ isOpen: false, message: '' });
-  const [cloudProjectModal, setCloudProjectModal] = useState({ isOpen: false, isLoading: false, projects: [], error: '' });
-  const [permissionsModal, setPermissionsModal] = useState(false);
-  const [boundsModal, setBoundsModal] = useState({ isOpen: false, blX: 0, blY: 0, trX: 100, trY: 100 });
-  const isLoadingProjectRef = useRef(false);
-  const [hadStoredProjectsOnLoad] = useState(() => {
-    if (publicOnly) return false;
-    try {
-      const storedProjects = JSON.parse(localStorage.getItem('arManager_projects') || '[]');
-      return Array.isArray(storedProjects) && storedProjects.length > 0;
-    } catch {
-      return false;
-    }
+  const [cloudProjectModal, setCloudProjectModal] = useState({ isOpen: false, isLoading: false, projects: [], error: '', revision: null });
+  const [cloudSnapshot, setCloudSnapshot] = useState({
+    status: 'idle',
+    revision: null,
+    projects: [],
+    checkedAt: null,
+    error: ''
   });
+  const [cloudWriteState, setCloudWriteState] = useState('idle');
+  const [permissionsModal, setPermissionsModal] = useState(false);
+  const [boundsModal, setBoundsModal] = useState({
+    isOpen: false,
+    blX: 0,
+    blY: 0,
+    trX: 100,
+    trY: 100,
+    mapUpHeading: null,
+    mapUpHeadingAccuracy: null,
+    mapUpHeadingCapturedAt: null
+  });
+  const [isCapturingFloorHeading, setIsCapturingFloorHeading] = useState(false);
+  const isLoadingProjectRef = useRef(false);
+  const localCacheWarningShownRef = useRef(false);
+  const [initialLocalProjects] = useState(() => publicOnly || v4Integration ? [] : readLocalStoredProjects());
+  const [hadLegacyDataOnLoad] = useState(() => {
+    if (publicOnly || v4Integration) return false;
+    return Boolean(
+      localStorage.getItem(AR_LEGACY_BUILDINGS_KEY) ||
+      localStorage.getItem(AR_LEGACY_CONFIG_KEY)
+    );
+  });
+  const [hadStoredProjectsOnLoad, setHadStoredProjectsOnLoad] = useState(
+    initialLocalProjects.length > 0 || hadLegacyDataOnLoad
+  );
+  const [localCacheReady, setLocalCacheReady] = useState(publicOnly);
 
   const [projects, setProjects] = useState(() => {
     if (publicOnly) return [createProjectFromPublishedData({})];
-
-    try {
-      const savedProjects = localStorage.getItem('arManager_projects');
-      if (savedProjects) {
-        const parsed = JSON.parse(savedProjects);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch (e) { console.error("Project load error:", e); }
+    if (v4Integration) return [createProject('待載入後台專案')];
+    if (initialLocalProjects.length > 0) return initialLocalProjects;
 
     let migratedConfig = createDefaultConfig('預設導引專案');
     let migratedBuildings = createDefaultBuildings();
     try {
-      const savedConfig = localStorage.getItem('arManager_config');
+      const savedConfig = localStorage.getItem(AR_LEGACY_CONFIG_KEY);
       if (savedConfig) migratedConfig = { ...migratedConfig, ...JSON.parse(savedConfig) };
-      const savedBuildings = localStorage.getItem('arManager_buildings');
+      const savedBuildings = localStorage.getItem(AR_LEGACY_BUILDINGS_KEY);
       if (savedBuildings) migratedBuildings = JSON.parse(savedBuildings);
     } catch (e) { console.error("Legacy AR data migration error:", e); }
 
@@ -383,10 +765,22 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       description: '由既有 AR 導引資料自動建立',
       updatedAt: new Date().toISOString(),
       systemConfig: migratedConfig,
-      buildings: migratedBuildings
+      buildings: migratedBuildings,
+      _sync: {
+        baseSha: null,
+        lastSyncedAt: null,
+        dirty: true,
+        source: 'local'
+      }
     }];
   });
-  const [activeProjectId, setActiveProjectId] = useState(projects[0]?.id);
+  const [activeProjectId, setActiveProjectId] = useState(() => {
+    if (publicOnly) return projects[0]?.id;
+    const savedActiveProjectId = localStorage.getItem(activeProjectCacheKey);
+    return projects.some(project => project.id === savedActiveProjectId)
+      ? savedActiveProjectId
+      : projects[0]?.id;
+  });
   const activeProject = projects.find(project => project.id === activeProjectId) || projects[0];
 
   const [systemConfig, setSystemConfig] = useState(() => cloneData(activeProject?.systemConfig || createDefaultConfig()));
@@ -432,13 +826,181 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const [mapTransform, setMapTransform] = useState({ x: 0, y: 0, scale: 1 });
   const [deleteUndo, setDeleteUndo] = useState(null);
 
-  const applyPublishedProjectData = (data, projectId = null, replaceProjectList = false) => {
+  const v4ActiveDirty = v4Integration && v4Ready && (!activeProject?._v4Base
+    || projectContentFingerprint(activeProject, systemConfig, buildings) !== activeProject._v4Base);
+  const v4Dirty = v4Integration && v4Ready && projects.some(project => {
+    const content = project.id === activeProjectId
+      ? projectContentFingerprint(project, systemConfig, buildings)
+      : projectContentFingerprint(project);
+    return !project._v4Base || content !== project._v4Base;
+  });
+  v4StateRef.current = { dirty: v4Dirty, busy: v4Busy, ready: v4Ready, projects, activeProjectId,
+    activeBuildingId, activeFloorId, systemConfig, buildings, storage: v4Storage,
+    revision: activeProject?._sync?.baseSha };
+  const sendV4Message = (type, details = {}) => {
+    if (v4Integration && window.parent !== window) {
+      window.parent.postMessage({ type, ...details }, window.location.origin);
+    }
+  };
+  const loadV4Backend = async (context = {}, { cachedProjects = null } = {}) => {
+    if (v4StateRef.current.busy) return;
+    v4StateRef.current.busy = true;
+    setV4Busy(true);
+    setV4LoadFailed(false);
+    try {
+      const [response, status] = await Promise.all([
+        fetch(`/api/ar-content?list=1&ts=${Date.now()}`, { cache: 'no-store', credentials: 'include', headers: { Accept: 'application/json' } }),
+        fetch('/api/field-status', { cache: 'no-store', credentials: 'include' })
+          .then(result => result.ok ? result.json() : null).catch(() => null)
+      ]);
+      if (!response.ok) throw new Error(`後台讀取失敗 (${response.status})`);
+      const summary = await response.json();
+      const storage = response.headers.get('x-ar-storage') === 'local' || status?.storage === 'local' ? 'local' : 'github';
+      const revision = response.headers.get('x-ar-source-blob-sha');
+      if (!revision || !(storage === 'local' ? /^[a-f\d]{64}$/i : /^[a-f\d]{40}$/i).test(revision)) {
+        throw new Error('後台未提供有效的版本基準，暫不允許覆寫。');
+      }
+      const available = normalizePublishedProjects(summary).filter(item => item?.project?.id);
+      const requestedId = available.find(item => item.project.id === context.projectId)?.project.id
+        || available.find(item => item.project.id === summary.activeProjectId)?.project.id || available[0]?.project.id;
+      let data = { projects: [], activeProjectId: requestedId };
+      if (requestedId) {
+        const projectResponse = await fetch(`/api/ar-content?projectId=${encodeURIComponent(requestedId)}&ts=${Date.now()}`,
+          { cache: 'no-store', credentials: 'include', headers: { Accept: 'application/json' } });
+        if (!projectResponse.ok) throw new Error(`指定專案讀取失敗 (${projectResponse.status})`);
+        if (projectResponse.headers.get('x-ar-source-blob-sha') !== revision) throw new Error('讀取期間後台版本已改變，請重新讀取。');
+        data = await projectResponse.json();
+      }
+      const remoteProjects = normalizePublishedProjects(data).filter(item => item?.project?.id && Array.isArray(item.buildings));
+      if (requestedId && !remoteProjects.length) throw new Error('指定專案沒有有效的樓層資料。');
+      const nextProjects = remoteProjects.map(item => {
+        const project = createProjectFromPublishedData(item, revision);
+        project._v4Published = cloneData(item);
+        project._v4Base = projectContentFingerprint(project);
+        project._sync.source = storage;
+        return project;
+      });
+      let restored = 0;
+      const preservedDrafts = cachedProjects || v4StateRef.current.projects.filter(project => project.id !== v4StateRef.current.activeProjectId);
+      for (const cached of preservedDrafts) {
+        if (!cached._v4Base || projectContentFingerprint(cached) !== cached._v4Base) {
+          const index = nextProjects.findIndex(project => project.id === cached.id);
+          if (index < 0) nextProjects.push(cached); else nextProjects[index] = cached;
+          restored += 1;
+        }
+      }
+      if (!nextProjects.length) {
+        const firstProject = createProject('新導引專案');
+        firstProject._sync = { baseSha: revision, dirty: false, source: storage, lastSyncedAt: null };
+        firstProject._v4Base = projectContentFingerprint(firstProject);
+        nextProjects.push(firstProject);
+      }
+      const restoredDraft = nextProjects.find(project => !project._v4Base || projectContentFingerprint(project) !== project._v4Base);
+      const selected = restoredDraft || nextProjects.find(project => project.id === context.projectId) || nextProjects[0];
+      const building = selected.buildings.find(item => item.id === context.buildingId) || selected.buildings[0];
+      const floor = building?.floors.find(item => item.id === context.floorId) || building?.floors[0];
+      v4ContextRef.current = { projectId: selected.id, buildingId: building?.id, floorId: floor?.id };
+      isLoadingProjectRef.current = true;
+      setProjects(nextProjects);
+      setActiveProjectId(selected.id);
+      setSystemConfig(cloneData(selected.systemConfig));
+      setBuildings(cloneData(selected.buildings));
+      setActiveBuildingId(building?.id);
+      setActiveFloorId(floor?.id);
+      setSelectedMarkerId(null); setSelectedWaypointId(null); setPathStartNodeId(null);
+      setDeleteUndo(null); setReferenceFloorId(''); setMapTransform({ x: 0, y: 0, scale: 1 });
+      setV4Storage(storage);
+      setV4ProjectOptions(available.map(item => ({ id: item.project.id, name: item.project.name || item.project.id })));
+      setCloudWriteState('idle');
+      setV4Ready(true); setLocalCacheReady(true);
+      setV4Notice(restored
+        ? `已保留 ${restored} 個尚未保存的 V4 路網草稿；請先匯出或保存，再讀取較新的後台資料。`
+        : `已讀取${storage === 'local' ? '本機後台' : 'GitHub'}。編輯先暫存於此瀏覽器，完成後請按「${storage === 'local' ? '保存到本機後台' : '發布 GitHub'}」。`);
+    } catch (error) {
+      if (cachedProjects?.length) {
+        const selected = cachedProjects.find(item => item.id === context.projectId) || cachedProjects[0];
+        isLoadingProjectRef.current = true;
+        setProjects(cachedProjects); setActiveProjectId(selected.id);
+        setSystemConfig(cloneData(selected.systemConfig)); setBuildings(cloneData(selected.buildings));
+        setLocalCacheReady(true); setV4Ready(true);
+      }
+      setV4Notice(`${error.message} 現有草稿不會被覆蓋；可先匯出草稿，再重試讀取。`);
+      setV4LoadFailed(true);
+      setV4ToolsVisible(true);
+      setV4ToolGroup('save');
+    } finally {
+      v4StateRef.current.busy = false;
+      setV4Busy(false);
+    }
+  };
+  const requestV4Reload = () => {
+    if (v4Busy) return;
+    const context = { projectId: activeProjectId, buildingId: activeBuildingId, floorId: activeFloorId };
+    if (v4Dirty) {
+      setConfirmModal({ isOpen: true, title: '重新讀取後台？',
+        message: '重新讀取會捨棄此編輯器尚未保存的路網草稿。請先按「匯出草稿」保留備份，再確認重新讀取。照片頁的拍照草稿不受影響。',
+        onConfirm: () => loadV4Backend(context) });
+    } else loadV4Backend(context);
+  };
+
+  useEffect(() => {
+    if (!v4Integration) return;
+    let cancelled = false;
+    sendV4Message('ar-v4-editor-ready');
+    readIndexedProjectCache(cacheDatabaseName).catch(() => []).then(cachedProjects => {
+      if (!cancelled) loadV4Backend(v4ContextRef.current, { cachedProjects });
+    });
+    const receiveContext = event => {
+      if (event.origin !== window.location.origin || event.source !== window.parent || event.data?.type !== 'ar-v4-editor-context') return;
+      const state = v4StateRef.current;
+      const context = event.data;
+      if (!state.ready) { v4PendingContextRef.current = context; return; }
+      const sameContext = context.projectId === state.activeProjectId && context.buildingId === state.activeBuildingId && context.floorId === state.activeFloorId;
+      if (sameContext && (!context.sourceBlobSha || context.sourceBlobSha === state.revision)) return;
+      if (state.dirty || state.busy) {
+        if (!state.dirty) v4PendingContextRef.current = context;
+        setV4Notice('外層位置或後台版本已改變，但路網草稿尚未保存／正在處理；未自動重讀。請先保存或匯出，再按讀取後台。');
+        return;
+      }
+      loadV4Backend(context);
+    };
+    const protectDraft = event => {
+      if (v4StateRef.current.dirty || v4StateRef.current.busy) { event.preventDefault(); event.returnValue = ''; }
+    };
+    window.addEventListener('message', receiveContext);
+    window.addEventListener('beforeunload', protectDraft);
+    return () => { cancelled = true; window.removeEventListener('message', receiveContext); window.removeEventListener('beforeunload', protectDraft); };
+  }, [v4Integration]);
+
+  useEffect(() => {
+    if (!v4Integration || !v4Ready || v4Busy || !v4PendingContextRef.current) return;
+    const context = v4PendingContextRef.current;
+    v4PendingContextRef.current = null;
+    if (v4Dirty) {
+      setV4Notice('已保留原有未保存的路網草稿，未依外層位置自動重讀。請先保存或匯出，再選擇要編輯的場域。');
+      return;
+    }
+    const state = v4StateRef.current;
+    if (context.projectId === state.activeProjectId && context.buildingId === state.activeBuildingId && context.floorId === state.activeFloorId
+      && (!context.sourceBlobSha || context.sourceBlobSha === state.revision)) return;
+    loadV4Backend(context);
+  }, [v4Integration, v4Ready, v4Busy, v4Dirty]);
+
+  useEffect(() => {
+    if (!v4Integration) return;
+    sendV4Message('ar-v4-editor-status', { dirty: v4Dirty, busy: v4Busy,
+      projectId: activeProjectId, buildingId: activeBuildingId, floorId: activeFloorId });
+  }, [v4Integration, v4Dirty, v4Busy, v4Ready, activeProjectId, activeBuildingId, activeFloorId]);
+
+  const applyPublishedProjectData = (data, projectId = null, replaceProjectList = false, sourceBlobSha = null) => {
     const selectedData = selectPublishedProjectData(data, projectId);
     if (!Array.isArray(selectedData?.buildings) || selectedData.buildings.length === 0) {
       throw new Error('雲端目前沒有可載入的 AR 平面圖資料。');
     }
 
-    const project = createProjectFromPublishedData(selectedData);
+    const project = createProjectFromPublishedData(selectedData, sourceBlobSha);
+    const isReplacingActiveProject = project.id === activeProjectId;
+    isLoadingProjectRef.current = true;
     setProjects(previousProjects => {
       if (replaceProjectList) return [project];
       const exists = previousProjects.some(item => item.id === project.id);
@@ -447,19 +1009,106 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         : [...previousProjects, project];
     });
     setActiveProjectId(project.id);
-    setSystemConfig(cloneData(project.systemConfig));
-    setBuildings(cloneData(project.buildings));
-    setActiveBuildingId(project.buildings[0]?.id);
-    setActiveFloorId(project.buildings[0]?.floors[0]?.id);
+    if (isReplacingActiveProject) {
+      setSystemConfig(cloneData(project.systemConfig));
+      setBuildings(cloneData(project.buildings));
+      setActiveBuildingId(project.buildings[0]?.id);
+      setActiveFloorId(project.buildings[0]?.floors[0]?.id);
+    }
     setReferenceFloorId('');
     setSelectedMarkerId(null);
     setSelectedWaypointId(null);
     setPathStartNodeId(null);
     setMapTransform({ x: 0, y: 0, scale: 1 });
     setDeleteUndo(null);
-    localStorage.setItem('arManager_lastCloudSyncAt', project.updatedAt || new Date().toISOString());
+    setSmallLocalCacheValue('arManager_lastCloudSyncAt', project.updatedAt || new Date().toISOString());
     return project;
   };
+
+  const rememberCloudSnapshot = ({ data, revision }) => {
+    const remoteProjects = Array.isArray(data?.projects) ? data.projects : [];
+    setCloudSnapshot({
+      status: 'ready',
+      revision,
+      projects: remoteProjects,
+      checkedAt: new Date().toISOString(),
+      error: ''
+    });
+
+    if (!revision) return;
+    const remoteProjectIds = new Set(
+      remoteProjects.map(item => item?.project?.id).filter(Boolean)
+    );
+    setProjects(previousProjects => previousProjects.map(project => {
+      const sync = normalizeProjectSync(project);
+      if (sync.baseSha || remoteProjectIds.has(project.id)) return project;
+      return {
+        ...project,
+        _sync: {
+          ...sync,
+          baseSha: revision
+        }
+      };
+    }));
+  };
+
+  const refreshCloudStatus = async ({ announceErrors = false } = {}) => {
+    if (v4Integration) { requestV4Reload(); return; }
+    setCloudSnapshot(previous => ({ ...previous, status: 'checking', error: '' }));
+    try {
+      const snapshot = await loadCloudProjectSummary();
+      if (!snapshot.revision) throw new Error('雲端服務未提供可用的版本識別碼。');
+      rememberCloudSnapshot(snapshot);
+      return snapshot;
+    } catch (error) {
+      setCloudSnapshot(previous => ({
+        ...previous,
+        status: 'error',
+        checkedAt: new Date().toISOString(),
+        error: error.message
+      }));
+      if (announceErrors) {
+        setAlertModal({ isOpen: true, message: `無法檢查 GitHub 最新狀態：${error.message}` });
+      }
+      throw error;
+    }
+  };
+
+  useEffect(() => {
+    if (publicOnly || v4Integration) return;
+    let cancelled = false;
+
+    const hydrateProjectCache = async () => {
+      try {
+        if (initialLocalProjects.length > 0 || hadLegacyDataOnLoad) {
+          await replaceIndexedProjectCache(projects);
+          if (cancelled) return;
+          removeLargeLegacyLocalCache();
+          setSmallLocalCacheValue('arManager_cacheVersion', 'indexeddb-v1');
+          setHadStoredProjectsOnLoad(projects.length > 0);
+          return;
+        }
+
+        const cachedProjects = await readIndexedProjectCache();
+        if (cancelled || cachedProjects.length === 0) return;
+        const savedActiveProjectId = localStorage.getItem(AR_ACTIVE_PROJECT_KEY);
+        const preferredProjectId = cachedProjects.some(project => project.id === savedActiveProjectId)
+          ? savedActiveProjectId
+          : cachedProjects[0].id;
+        isLoadingProjectRef.current = true;
+        setProjects(cachedProjects);
+        setActiveProjectId(preferredProjectId);
+        setHadStoredProjectsOnLoad(true);
+      } catch (error) {
+        console.warn('IndexedDB project cache unavailable:', error);
+      } finally {
+        if (!cancelled) setLocalCacheReady(true);
+      }
+    };
+
+    hydrateProjectCache();
+    return () => { cancelled = true; };
+  }, [publicOnly]);
 
   useEffect(() => {
     const handleExternalTabChange = (event) => {
@@ -474,10 +1123,38 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   }, []);
 
   useEffect(() => {
-    if (publicOnly) return;
-    try { localStorage.setItem('arManager_projects', JSON.stringify(projects)); }
-    catch (e) { if (e.name === 'QuotaExceededError') setAlertModal({ isOpen: true, message: "專案資料太大，請先匯出 JSON 或移除不需要的圖片資料。" }); }
-  }, [projects, publicOnly]);
+    if (publicOnly || !localCacheReady) return;
+    const saveTimer = window.setTimeout(async () => {
+      try {
+        await replaceIndexedProjectCache(projects, cacheDatabaseName);
+        if (!v4Integration) removeLargeLegacyLocalCache();
+        setSmallLocalCacheValue(v4Integration ? 'arV4MapEditor_cacheVersion' : 'arManager_cacheVersion', 'indexeddb-v1');
+        localCacheWarningShownRef.current = false;
+      } catch (error) {
+        console.error('IndexedDB project save error:', error);
+        if (!localCacheWarningShownRef.current) {
+          localCacheWarningShownRef.current = true;
+          setAlertModal({
+            isOpen: true,
+            message: '專案已保留在目前頁面，但瀏覽器無法更新 IndexedDB 草稿。重新開啟頁面前請勿清除網站資料，並先下載 JSON 備份。'
+          });
+        }
+      }
+    }, 350);
+    return () => window.clearTimeout(saveTimer);
+  }, [localCacheReady, projects, publicOnly]);
+
+  useEffect(() => {
+    if (publicOnly || !localCacheReady || !activeProjectId) return;
+    setSmallLocalCacheValue(activeProjectCacheKey, activeProjectId);
+  }, [activeProjectId, localCacheReady, publicOnly]);
+
+  useEffect(() => {
+    if (publicOnly || v4Integration || !localCacheReady) return;
+    refreshCloudStatus().catch(() => {
+      // The local IndexedDB draft remains usable when the cloud is unavailable.
+    });
+  }, [localCacheReady, publicOnly]);
 
   useEffect(() => {
     if (!publicOnly) return;
@@ -534,7 +1211,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   }, [publicOnly]);
 
   useEffect(() => {
-    if (publicOnly) return;
+    if (publicOnly || v4Integration || !localCacheReady) return;
 
     let cancelled = false;
     fetch(`/ar-data.json?ts=${Date.now()}`, { cache: 'no-store' })
@@ -572,25 +1249,29 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       .catch(error => console.warn("Packaged AR admin projects unavailable", error));
 
     return () => { cancelled = true; };
-  }, [hadStoredProjectsOnLoad, publicOnly]);
+  }, [hadStoredProjectsOnLoad, localCacheReady, publicOnly]);
 
   useEffect(() => {
     if (publicOnly) return;
+    if (!localCacheReady) return;
     if (!activeProject) return;
     isLoadingProjectRef.current = true;
     const nextBuildings = cloneData(activeProject.buildings || createDefaultBuildings());
     setSystemConfig(cloneData(activeProject.systemConfig || createDefaultConfig(activeProject.name)));
     setBuildings(nextBuildings);
-    setActiveBuildingId(nextBuildings[0]?.id);
-    setActiveFloorId(nextBuildings[0]?.floors[0]?.id);
+    const nextBuilding = (v4Integration && nextBuildings.find(item => item.id === v4ContextRef.current.buildingId)) || nextBuildings[0];
+    const nextFloor = (v4Integration && nextBuilding?.floors.find(item => item.id === v4ContextRef.current.floorId)) || nextBuilding?.floors[0];
+    setActiveBuildingId(nextBuilding?.id);
+    setActiveFloorId(nextFloor?.id);
     setSelectedMarkerId(null);
     setSelectedWaypointId(null);
     setReferenceFloorId('');
     setMapTransform({ x: 0, y: 0, scale: 1 });
-  }, [activeProjectId, publicOnly]);
+  }, [activeProjectId, localCacheReady, publicOnly]);
 
   useEffect(() => {
     if (publicOnly) return;
+    if (!localCacheReady) return;
     if (!activeProjectId) return;
     if (isLoadingProjectRef.current) {
       isLoadingProjectRef.current = false;
@@ -601,21 +1282,14 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       name: systemConfig.projectName || project.name,
       systemConfig: cloneData(systemConfig),
       buildings: cloneData(buildings),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      _sync: {
+        ...normalizeProjectSync(project),
+        dirty: true,
+        source: 'local'
+      }
     } : project));
-  }, [activeProjectId, buildings, systemConfig, publicOnly]);
-
-  useEffect(() => {
-    if (publicOnly) return;
-    try { localStorage.setItem('arManager_buildings', JSON.stringify(buildings)); }
-    catch (e) { if (e.name === 'QuotaExceededError') setAlertModal({ isOpen: true, message: "⚠️ 瀏覽器本地暫存空間已滿！" }); }
-  }, [buildings, publicOnly]);
-
-  useEffect(() => {
-    if (publicOnly) return;
-    try { localStorage.setItem('arManager_config', JSON.stringify(systemConfig)); }
-    catch (e) { console.error("Config save error:", e); }
-  }, [systemConfig, publicOnly]);
+  }, [buildings, systemConfig, publicOnly]);
 
   useEffect(() => {
     const b = buildings.find(b => b.id === activeBuildingId);
@@ -639,6 +1313,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   useEffect(() => { setIsConfirmingDelete(false); }, [selectedMarkerId, selectedWaypointId]);
 
   useEffect(() => {
+    if (v4Integration) return;
     const hasAsked = sessionStorage.getItem('ar_permissions_asked');
     if (!hasAsked) setPermissionsModal(true);
   }, []);
@@ -669,6 +1344,22 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   const currentWaypoints = currentFloor?.waypoints || [];
   const currentEdges = currentFloor?.edges || [];
   const currentBounds = getFloorBounds(currentFloor);
+  const captureFloorMapUpHeading = async () => {
+    setIsCapturingFloorHeading(true);
+    try {
+      const result = await captureCurrentDeviceHeading();
+      setBoundsModal(previous => ({
+        ...previous,
+        mapUpHeading: result.heading,
+        mapUpHeadingAccuracy: result.accuracy,
+        mapUpHeadingCapturedAt: new Date().toISOString()
+      }));
+    } catch (error) {
+      setAlertModal({ isOpen: true, message: error?.message || '無法記錄樓層方向基準。' });
+    } finally {
+      setIsCapturingFloorHeading(false);
+    }
+  };
   const sortedCurrentFloors = currentBuilding?.floors
     .slice()
     .sort((a, b) => getFloorLevel(b.name) - getFloorLevel(a.name)) || [];
@@ -756,7 +1447,17 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       const effectiveShaftId = updates.shaftId !== undefined ? updates.shaftId : targetNode.shaftId;
       const effectiveIsVerticalShaft = updates.isVerticalShaft !== undefined ? updates.isVerticalShaft : targetNode.isVerticalShaft;
       const isGuideUpdate = Object.keys(updates).some(field =>
-        ['guideTitle', 'guideInstruction', 'guideImageUrl', 'guideExternalUrl'].includes(field)
+        [
+          'guideTitle',
+          'guideInstruction',
+          'guideImageUrl',
+          'guideExternalUrl',
+          'guideDirectionMode',
+          'guideReferenceBearing',
+          'guideDeviceHeading',
+          'guideHeadingAccuracy',
+          'guideHeadingCapturedAt'
+        ].includes(field)
       );
       const isShaftSync = effectiveIsVerticalShaft && effectiveShaftId && !isGuideUpdate;
       const sourceBounds = getFloorBounds(sourceFloor);
@@ -895,7 +1596,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         if (!name) return;
         const newBId = `b_${Date.now()}`;
         const newFId = `f_${Date.now()}`;
-        setBuildings(prev => [...prev, { id: newBId, name, floors: [{ id: newFId, name: '1F', imageUrl: null, navigationImageUrl: null, markers: [], waypoints: [], edges: [], bounds: { blX: 0, blY: 0, trX: 100, trY: 100 } }] }]);
+        setBuildings(prev => [...prev, { id: newBId, name, floors: [{ id: newFId, name: '1F', imageUrl: null, navigationImageUrl: null, markers: [], waypoints: [], edges: [], mapUpHeading: null, mapUpHeadingAccuracy: null, mapUpHeadingCapturedAt: null, bounds: { blX: 0, blY: 0, trX: 100, trY: 100 } }] }]);
         setActiveBuildingId(newBId); setActiveFloorId(newFId);
       }
     });
@@ -910,7 +1611,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         const newFId = `f_${Date.now()}`;
         const inheritBounds = currentFloor ? { ...getFloorBounds(currentFloor) } : { blX: 0, blY: 0, trX: 100, trY: 100 };
         setBuildings(prev => prev.map(b => b.id === activeBuildingId ? {
-          ...b, floors: [...b.floors, { id: newFId, name, imageUrl: null, navigationImageUrl: null, markers: [], waypoints: [], edges: [], bounds: inheritBounds }]
+          ...b, floors: [...b.floors, { id: newFId, name, imageUrl: null, navigationImageUrl: null, markers: [], waypoints: [], edges: [], mapUpHeading: null, mapUpHeadingAccuracy: null, mapUpHeadingCapturedAt: null, bounds: inheritBounds }]
         } : b));
         setActiveFloorId(newFId);
       }
@@ -1027,10 +1728,18 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       shaftId: null,
       linkedFloorIds: [],
       sourceFloorId: activeFloorId,
+      canStop: true,
+      publicSelectable: false,
       guideTitle: '',
       guideInstruction: '',
       guideImageUrl: null,
-      guideExternalUrl: ''
+      guideRecognitionStatus: 'untested',
+      guideExternalUrl: '',
+      guideDirectionMode: 'sensor',
+      guideReferenceBearing: null,
+      guideDeviceHeading: null,
+      guideHeadingAccuracy: null,
+      guideHeadingCapturedAt: null
     };
     setBuildings(prev => prev.map(b => b.id === activeBuildingId ? {
       ...b, floors: b.floors.map(f => {
@@ -1222,6 +1931,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
   const handleMapPointerDown = (e) => {
     if (e.button !== undefined && e.button !== 0) return;
+    if (e.target.closest('button, input, select, textarea, label, a, [data-map-control]')) return;
     if (e.target.closest('.marker-pin') || e.target.closest('.waypoint-pin')) return;
     setIsPanning(true);
     setPanStart({ x: e.clientX - mapTransform.x, y: e.clientY - mapTransform.y });
@@ -1258,6 +1968,12 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   };
 
   const handleMapPointerUp = (e) => {
+    if (e.target.closest('button, input, select, textarea, label, a, [data-map-control]')) {
+      setIsPanning(false);
+      setDraggingId(null);
+      if (e.target.hasPointerCapture?.(e.pointerId)) e.target.releasePointerCapture(e.pointerId);
+      return;
+    }
     if (draggingId) setDraggingId(null);
     if (isPanning) {
       setIsPanning(false); e.target.releasePointerCapture(e.pointerId);
@@ -1281,7 +1997,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           const totalMarkersCount = buildings.reduce((acc, b) => acc + b.floors.reduce((acc2, f) => acc2 + f.markers.length, 0), 0);
           const newMarker = {
             id: `marker_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`, code: `N${totalMarkersCount + 1}`, title: '新增辨識點', description: '', arrowDirection: 'none',
-            isVerticalShaft: false, shaftId: null, linkedFloorIds: [], x, y, imageUrl: null, enabled: true, navigable: true, recognitionStatus: 'untested'
+            isVerticalShaft: false, shaftId: null, linkedFloorIds: [], x, y, imageUrl: null, enabled: true, canStop: true, navigable: true, recognitionStatus: 'untested',
+            guideDirectionMode: 'sensor', guideReferenceBearing: null, guideDeviceHeading: null, guideHeadingAccuracy: null, guideHeadingCapturedAt: null
           };
           setBuildings(prev => prev.map(b => b.id === activeBuildingId ? { ...b, floors: b.floors.map(f => f.id === activeFloorId ? { ...f, markers: [...f.markers, newMarker] } : f) } : b));
           setSelectedMarkerId(newMarker.id); setSelectedWaypointId(null);
@@ -1353,11 +2070,18 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       reader.onload = (event) => {
         compressImage(event.target.result, 1200, (compressedDataUrl) => {
           handleWaypointUpdate(currentWaypointId, 'guideImageUrl', compressedDataUrl);
+          handleWaypointUpdate(currentWaypointId, 'guideRecognitionStatus', 'untested');
         });
       };
       reader.readAsDataURL(file);
     }
     target.value = '';
+  };
+
+  const handleWaypointGuideImageRemove = () => {
+    if (!selectedWaypointId) return;
+    handleWaypointUpdate(selectedWaypointId, 'guideImageUrl', null);
+    handleWaypointUpdate(selectedWaypointId, 'guideRecognitionStatus', 'untested');
   };
 
   const handleEditFromList = (bId, fId, mId) => {
@@ -1383,11 +2107,129 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     return stats.floorPlans > 0 || stats.markers > 0 || stats.waypoints > 0 || stats.edges > 0;
   };
 
+  const performV4Save = async () => {
+    if (v4StateRef.current.busy || !v4Ready || v4Storage === 'unknown') return;
+    const expectedSourceBlobSha = activeProject?._sync?.baseSha;
+    if (!expectedSourceBlobSha) {
+      setV4Notice('尚無後台版本基準。請先匯出草稿，再讀取後台資料。');
+      return;
+    }
+    const updatedAt = new Date().toISOString();
+    const payload = {
+      ...(activeProject._v4Published || {}),
+      version: activeProject._v4Published?.version || '7.0',
+      project: { ...(activeProject._v4Published?.project || {}), id: activeProjectId,
+        name: systemConfig.projectName || activeProject.name,
+        description: activeProject.description || '', updatedAt },
+      systemConfig: cloneData(systemConfig), buildings: cloneData(buildings)
+    };
+    const draftProject = { ...activeProject, name: payload.project.name, systemConfig: payload.systemConfig,
+      buildings: payload.buildings, updatedAt };
+    const draftProjects = projects.map(project => project.id === activeProjectId ? draftProject : project);
+    v4StateRef.current.busy = true;
+    setV4Busy(true); setCloudWriteState('saving');
+    try {
+      // A failed write must leave a recoverable V4-only draft, never a V3 cache overwrite.
+      await replaceIndexedProjectCache(draftProjects, cacheDatabaseName);
+      const response = await fetch('/api/save-ar-content', { method: 'POST', credentials: 'include',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-AR-Save-Contract': 'ar-project-collection-v4' },
+        body: JSON.stringify({ payload, expectedSourceBlobSha }) });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || result.ok !== true) {
+        const error = new Error(result.error || `保存失敗 (${response.status})`);
+        error.code = response.status === 409 ? 'SYNC_CONFLICT' : result.code;
+        throw error;
+      }
+      const revision = result.sourceBlobSha;
+      if (!(v4Storage === 'local' ? /^[a-f\d]{64}$/i : /^[a-f\d]{40}$/i).test(revision || '')) throw new Error('後台回應成功但缺少有效新版本，請先保留草稿並重新讀取確認。');
+      const savedProject = { ...draftProject, _v4Published: payload,
+        _v4Base: projectContentFingerprint(draftProject),
+        _sync: { baseSha: revision, dirty: false, source: v4Storage, lastSyncedAt: updatedAt } };
+      const savedProjects = draftProjects.map(project => project.id === activeProjectId ? savedProject : {
+        ...project, _sync: { ...normalizeProjectSync(project), baseSha: project._sync?.baseSha === expectedSourceBlobSha ? revision : project._sync?.baseSha }
+      });
+      setProjects(savedProjects);
+      let cacheWarning = '';
+      try { await replaceIndexedProjectCache(savedProjects, cacheDatabaseName); }
+      catch { cacheWarning = ' 瀏覽器草稿版本更新失敗；後台已保存，請先匯出備份後重新讀取。'; }
+      setCloudWriteState('success');
+      setV4Notice((v4Storage === 'local'
+        ? '路網、節點與 AR 點位已保存到本機後台；V4 位置與校正會重新讀取。尚未同步 GitHub。'
+        : '路網、節點與 AR 點位已發布 GitHub；V4 將重新讀取後台資料。網站部署是否完成仍需另外確認。') + cacheWarning);
+      const remainingDirty = savedProjects.some(project => !project._v4Base || projectContentFingerprint(project) !== project._v4Base);
+      v4StateRef.current = { ...v4StateRef.current, dirty: remainingDirty, busy: false, revision };
+      sendV4Message('ar-v4-editor-status', { dirty: remainingDirty, busy: false, projectId: activeProjectId, buildingId: activeBuildingId, floorId: activeFloorId });
+      sendV4Message('ar-v4-editor-saved', { projectId: activeProjectId, buildingId: activeBuildingId, floorId: activeFloorId, sourceBlobSha: revision });
+    } catch (error) {
+      setCloudWriteState(error.code === 'SYNC_CONFLICT' ? 'conflict' : 'error');
+      setV4Notice(error.code === 'SYNC_CONFLICT'
+        ? '後台版本已更新，已停止保存。路網草稿完整保留；請先「匯出草稿」，再讀取後台並核對／重做變更，不會強制覆寫。'
+        : `${error.message} 路網草稿仍保留；請匯出草稿備份後重試。`);
+    } finally {
+      v4StateRef.current.busy = false;
+      setV4Busy(false);
+    }
+  };
+  const saveV4Project = () => {
+    if (v4Busy || !v4Ready || v4Storage === 'unknown') return;
+    const stats = getProjectContentStats(buildings);
+    if (v4Storage === 'local') {
+      setConfirmModal({ isOpen: true, title: '確認保存到本機後台',
+        message: `將保存「${systemConfig.projectName}」整個專案；目前位置為「${currentBuilding?.name || ''} / ${currentFloor?.name || ''}」。內容含 ${stats.floorPlans} 張平面圖、${stats.markers} 個 AR 點位、${stats.waypoints} 個節點與 ${stats.edges} 條連線。保存後會更新 V4，尚未同步 GitHub；若後台版本變動將停止並保留草稿。`,
+        onConfirm: performV4Save });
+      return;
+    }
+    setConfirmModal({ isOpen: true, title: '確認發布到 GitHub',
+      message: `即將發布「${systemConfig.projectName}」的 ${stats.floorPlans} 張平面圖、${stats.markers} 個 AR 點位、${stats.waypoints} 個節點與 ${stats.edges} 條連線。既有現場照片亦包含於專案資料；若儲存庫公開，內容可被公開存取並保留於 Git 歷史。確認取得授權後才發布；版本衝突將停止且保留草稿。`,
+      onConfirm: performV4Save });
+  };
+
+  const saveLocalDraft = async () => {
+    if (v4Integration) { saveV4Project(); return; }
+    if (!activeProjectId || !activeProject) return;
+    const updatedAt = new Date().toISOString();
+    const localProject = {
+      ...activeProject,
+      name: systemConfig.projectName || activeProject.name,
+      systemConfig: cloneData(systemConfig),
+      buildings: cloneData(buildings),
+      updatedAt,
+      _sync: {
+        ...normalizeProjectSync(activeProject),
+        dirty: true,
+        source: 'local'
+      }
+    };
+    const nextProjects = projects.map(project => project.id === activeProjectId ? localProject : project);
+
+    try {
+      await replaceIndexedProjectCache(nextProjects);
+      setProjects(nextProjects);
+      removeLargeLegacyLocalCache();
+      setSmallLocalCacheValue('arManager_cacheVersion', 'indexeddb-v1');
+      setAlertModal({
+        isOpen: true,
+        message: `「${localProject.name}」已儲存在這台裝置的 IndexedDB 草稿；GitHub 尚未變更。`
+      });
+    } catch (error) {
+      setAlertModal({ isOpen: true, message: `本機草稿儲存失敗：${error.message}` });
+    }
+  };
+
   const performCloudSync = async () => {
     if (!canSyncProjectToCloud(buildings)) {
       setAlertModal({
         isOpen: true,
-        message: '目前專案還是空的，尚未有平面圖、AR 點位或路網資料。為避免覆蓋雲端既有專案，請先載入雲端資料或新增內容後再同步。'
+        message: '目前專案還是空的，尚未有平面圖、AR 點位或路網資料。為避免覆蓋 GitHub 既有專案，請先以 GitHub 更新本機或新增內容後再發布。'
+      });
+      return;
+    }
+
+    const expectedSourceBlobSha = normalizeProjectSync(activeProject).baseSha;
+    if (!expectedSourceBlobSha) {
+      setAlertModal({
+        isOpen: true,
+        message: '目前草稿尚未建立 GitHub 版本基準。若 GitHub 已有同名專案，請先「以 GitHub 更新本機」；若是新專案，請先按「檢查 GitHub 最新狀態」。'
       });
       return;
     }
@@ -1404,50 +2246,92 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       buildings: cloneData(buildings)
     };
 
-    setProjects(prev => prev.map(project => project.id === activeProjectId ? {
-      ...project,
-      name: payload.project.name,
-      systemConfig: payload.systemConfig,
-      buildings: payload.buildings,
-      updatedAt: payload.project.updatedAt
-    } : project));
-
+    setCloudWriteState('saving');
     try {
-      const cloudListResponse = await fetch(`/api/ar-content?list=1&ts=${Date.now()}`, {
-        cache: 'no-store'
-      });
-      const cloudList = await cloudListResponse.json().catch(() => ({}));
-      if (!cloudListResponse.ok) {
-        throw new Error(cloudList.error || `Cloud project list failed: ${cloudListResponse.status}`);
+      const latestSnapshot = await refreshCloudStatus();
+      if (latestSnapshot.revision !== expectedSourceBlobSha) {
+        const conflictError = new Error('GitHub 資料已在其他地方更新，已停止發布以保護較新的內容。');
+        conflictError.code = 'SYNC_CONFLICT';
+        throw conflictError;
       }
-      // Only cloud-confirmed IDs belong in the preservation contract. Local storage
-      // can contain drafts or deleted project IDs that have never existed remotely.
+
       const response = await fetch('/api/save-ar-content', {
         method: 'POST',
+        credentials: 'include',
         headers: {
+          'Accept': 'application/json',
           'Content-Type': 'application/json',
           'X-AR-Save-Contract': 'ar-project-collection-v4'
         },
-        body: JSON.stringify({ payload })
+        body: JSON.stringify({ payload, expectedSourceBlobSha })
       });
       const result = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        throw new Error(result.error || `Save failed: ${response.status}`);
+        const saveError = new Error(result.error || `Save failed: ${response.status}`);
+        saveError.code = result.code || (response.status === 409 ? 'SYNC_CONFLICT' : 'SAVE_FAILED');
+        throw saveError;
       }
 
-      localStorage.setItem('arManager_lastCloudSyncAt', payload.project.updatedAt);
+      const nextBaseSha = result.sourceBlobSha;
+      if (!nextBaseSha) throw new Error('GitHub 已回應成功，但未提供新的資料版本，請重新檢查狀態。');
+
+      const syncedProject = {
+        ...activeProject,
+        name: payload.project.name,
+        systemConfig: payload.systemConfig,
+        buildings: payload.buildings,
+        updatedAt: payload.project.updatedAt,
+        _sync: {
+          baseSha: nextBaseSha,
+          lastSyncedAt: payload.project.updatedAt,
+          dirty: false,
+          source: 'github'
+        }
+      };
+      setProjects(previousProjects => previousProjects.map(project =>
+        project.id === activeProjectId ? syncedProject : project
+      ));
+
+      setSmallLocalCacheValue('arManager_lastCloudSyncAt', payload.project.updatedAt);
+      const syncedSummary = {
+        project: payload.project,
+        systemConfig: payload.systemConfig,
+        stats: getProjectContentStats(payload.buildings)
+      };
+      const previousRemoteProjects = Array.isArray(latestSnapshot.data?.projects)
+        ? latestSnapshot.data.projects
+        : [];
+      setCloudSnapshot({
+        status: 'ready',
+        revision: nextBaseSha,
+        projects: [
+          ...previousRemoteProjects.filter(item => item?.project?.id !== activeProjectId),
+          syncedSummary
+        ],
+        checkedAt: new Date().toISOString(),
+        error: ''
+      });
+      setCloudWriteState('success');
 
       const preservedCount = Array.isArray(result.projectIds)
         ? result.projectIds.length
-        : (Array.isArray(cloudList.projects) ? cloudList.projects.length : 1);
-      setAlertModal({ isOpen: true, message: `「${payload.project.name}」已儲存到 Web 端，雲端共保留 ${preservedCount} 個專案。民眾端會透過 /api/ar-content 讀取最新資料。` });
+        : Math.max(previousRemoteProjects.length, 1);
+      setAlertModal({ isOpen: true, message: `「${payload.project.name}」已發布到 GitHub，並取得新的同步版本。雲端共保留 ${preservedCount} 個專案。` });
     } catch (error) {
-      setAlertModal({ isOpen: true, message: `已儲存在後台暫存，但發布到網站失敗：${error.message}` });
+      const isConflict = error.code === 'SYNC_CONFLICT';
+      setCloudWriteState(isConflict ? 'conflict' : 'error');
+      setAlertModal({
+        isOpen: true,
+        message: isConflict
+          ? `${error.message} 本機 IndexedDB 草稿仍完整保留；請先下載 JSON 備份或以 GitHub 最新內容更新本機。`
+          : `本機 IndexedDB 草稿仍已保留，但發布到 GitHub 失敗：${error.message}`
+      });
     }
   };
 
   const saveActiveProject = async () => {
+    if (v4Integration) { saveV4Project(); return; }
     if (!canSyncProjectToCloud(buildings)) {
       setAlertModal({
         isOpen: true,
@@ -1459,8 +2343,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     const stats = getProjectContentStats(buildings);
     setConfirmModal({
       isOpen: true,
-      title: '確認同步到雲端',
-      message: `即將更新雲端的「${systemConfig.projectName || activeProject?.name || 'AR 專案'}」，其他專案會保留。內容包含 ${stats.floorPlans} 張平面圖、${stats.markers} 個 AR 點位、${stats.waypoints} 個路網節點、${stats.edges} 條路線連線。確定要同步嗎？`,
+      title: '確認發布到 GitHub',
+      message: `即將以目前 IndexedDB 草稿更新 GitHub 的「${systemConfig.projectName || activeProject?.name || 'AR 專案'}」，其他專案會保留。內容包含 ${stats.floorPlans} 張平面圖、${stats.markers} 個 AR 點位、${stats.waypoints} 個路網節點、${stats.edges} 條路線連線。若 GitHub 已更新，系統會停止並提示衝突。確定要發布嗎？`,
       onConfirm: performCloudSync
     });
   };
@@ -1470,21 +2354,25 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       const response = await fetch(`/api/ar-content?ts=${Date.now()}`, { cache: 'no-store' });
       if (!response.ok) throw new Error(`Load failed: ${response.status}`);
       const data = await response.json();
-      const project = applyPublishedProjectData(data);
+      const sourceBlobSha = response.headers.get('x-ar-source-blob-sha');
+      if (!sourceBlobSha) throw new Error('雲端服務未提供可用的版本識別碼。');
+      const project = applyPublishedProjectData(data, null, false, sourceBlobSha);
+      await refreshCloudStatus();
       setAlertModal({
         isOpen: true,
-        message: `已從雲端載入「${project.name}」。桌機與手機現在會使用同一份已上架的平面圖、AR 點位與路網資料。`
+        message: `已用 GitHub 最新版本更新本機的「${project.name}」，並儲存至 IndexedDB。`
       });
     } catch (error) {
       setAlertModal({
         isOpen: true,
-        message: `無法從雲端載入 AR 資料：${error.message}`
+        message: `無法從 GitHub 載入 AR 資料：${error.message}`
       });
     }
   };
 
   const openCloudProjectList = async () => {
-    setCloudProjectModal({ isOpen: true, isLoading: true, projects: [], error: '' });
+    if (v4Integration) { requestV4Reload(); return; }
+    setCloudProjectModal({ isOpen: true, isLoading: true, projects: [], error: '', revision: null });
     try {
       const loadJson = async (url) => {
         const response = await fetch(url, { cache: 'no-store' });
@@ -1494,42 +2382,63 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         return response.json();
       };
       const [cloudResult, packagedResult] = await Promise.allSettled([
-        loadJson(`/api/ar-content?list=1&ts=${Date.now()}`),
+        loadCloudProjectSummary(),
         loadJson(`/ar-data.json?ts=${Date.now()}`)
       ]);
-      const cloudData = cloudResult.status === 'fulfilled' ? cloudResult.value : null;
+      const cloudSnapshotResult = cloudResult.status === 'fulfilled' ? cloudResult.value : null;
+      const cloudData = cloudSnapshotResult?.data || null;
       const packagedData = packagedResult.status === 'fulfilled' ? packagedResult.value : null;
-      const cloudProjects = mergePublishedProjectLists(cloudData, packagedData);
-      if (cloudProjects.length === 0) throw new Error('雲端目前沒有可載入的 AR 專案。');
-      setCloudProjectModal({ isOpen: true, isLoading: false, projects: cloudProjects, error: '' });
+      const remoteProjectIds = new Set(
+        normalizePublishedProjects(cloudData).map(item => item?.project?.id).filter(Boolean)
+      );
+      const cloudProjects = cloudSnapshotResult?.revision
+        ? mergePublishedProjectLists(packagedData, cloudData).filter(item => remoteProjectIds.has(item?.project?.id))
+        : normalizePublishedProjects(packagedData);
+      if (cloudProjects.length === 0) throw new Error('GitHub 與內建備援目前都沒有可載入的 AR 專案。');
+      if (cloudSnapshotResult?.revision) rememberCloudSnapshot(cloudSnapshotResult);
+      setCloudProjectModal({
+        isOpen: true,
+        isLoading: false,
+        projects: cloudProjects,
+        error: '',
+        revision: cloudSnapshotResult?.revision || null
+      });
     } catch (error) {
       setCloudProjectModal({
         isOpen: true,
         isLoading: false,
         projects: [],
-        error: `無法取得雲端專案列表：${error.message}`
+        error: `無法取得 GitHub 專案列表：${error.message}`,
+        revision: null
       });
     }
   };
 
-  const loadSelectedProjectFromCloud = async (projectId) => {
+  const performLoadSelectedProjectFromCloud = async (projectId) => {
     setCloudProjectModal(prev => ({ ...prev, isLoading: true, error: '' }));
     try {
       const packagedProject = cloudProjectModal.projects.find(item => item?.project?.id === projectId);
       let data = null;
-      try {
+      let sourceBlobSha = cloudProjectModal.revision || null;
+      if (sourceBlobSha) {
         const response = await fetch(`/api/ar-content?projectId=${encodeURIComponent(projectId)}&ts=${Date.now()}`, { cache: 'no-store' });
         if (!response.ok) throw new Error(`Load failed: ${response.status}`);
         data = await response.json();
-      } catch (apiError) {
-        if (!Array.isArray(packagedProject?.buildings) || packagedProject.buildings.length === 0) throw apiError;
+        sourceBlobSha = response.headers.get('x-ar-source-blob-sha') || sourceBlobSha;
+      } else {
+        if (!Array.isArray(packagedProject?.buildings) || packagedProject.buildings.length === 0) {
+          throw new Error('找不到可用的 GitHub 或內建備援資料。');
+        }
         data = packagedProject;
       }
-      const project = applyPublishedProjectData(data, projectId);
-      setCloudProjectModal({ isOpen: false, isLoading: false, projects: [], error: '' });
+      const project = applyPublishedProjectData(data, projectId, false, sourceBlobSha);
+      setCloudWriteState('idle');
+      setCloudProjectModal({ isOpen: false, isLoading: false, projects: [], error: '', revision: null });
       setAlertModal({
         isOpen: true,
-        message: `已從雲端載入「${project.name}」。桌機與手機現在會使用這個專案的平面圖、AR 點位與路網資料。`
+        message: sourceBlobSha
+          ? `已用 GitHub 最新版本更新本機的「${project.name}」，並儲存至 IndexedDB。`
+          : `GitHub 目前不可用；已將內建備援版本「${project.name}」載入 IndexedDB，發布前仍須重新檢查 GitHub。`
       });
     } catch (error) {
       setCloudProjectModal(prev => ({
@@ -1538,6 +2447,20 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         error: `無法載入指定專案：${error.message}`
       }));
     }
+  };
+
+  const loadSelectedProjectFromCloud = (projectId) => {
+    const localProject = projects.find(project => project.id === projectId);
+    if (localProject && normalizeProjectSync(localProject).dirty) {
+      setConfirmModal({
+        isOpen: true,
+        title: '以 GitHub 更新本機草稿',
+        message: `這台裝置的「${localProject.name}」有尚未發布的變更。繼續會以 GitHub 版本覆蓋該專案的 IndexedDB 草稿；建議先下載 JSON 備份。確定繼續嗎？`,
+        onConfirm: () => performLoadSelectedProjectFromCloud(projectId)
+      });
+      return;
+    }
+    performLoadSelectedProjectFromCloud(projectId);
   };
 
   const addProject = () => {
@@ -1549,6 +2472,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       onSubmit: (name) => {
         if (!name) return;
         const project = createProject(name);
+        if (v4Integration) project._sync.baseSha = activeProject?._sync?.baseSha;
         setProjects(prev => [...prev, project]);
         setActiveProjectId(project.id);
         setActiveTab('map');
@@ -1583,8 +2507,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
     setConfirmModal({
       isOpen: true,
-      title: '\u522a\u9664 AR \u5c0e\u5f15\u5c08\u6848',
-      message: `\u78ba\u5b9a\u8981\u522a\u9664\u300c${activeProject?.name || systemConfig.projectName}\u300d\u55ce\uff1f\u6b64\u5c08\u6848\u5167\u7684\u5e73\u9762\u5716\u3001\u8def\u5f91\u8207 AR \u9ede\u4f4d\u90fd\u6703\u4e00\u4f75\u79fb\u9664\u3002`,
+      title: '刪除本機 AR 導引專案',
+      message: `確定要刪除「${activeProject?.name || systemConfig.projectName}」嗎？此操作只會移除這台裝置 IndexedDB 內的平面圖、路徑與 AR 點位；GitHub 不會變更。`,
       onConfirm: () => {
         setProjects(prev => {
           const remaining = prev.filter(project => project.id !== activeProjectId);
@@ -1671,7 +2595,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     resetFloorEditingState();
     setAlertModal({
       isOpen: true,
-      message: `「${currentBuilding?.name || '目前場域'} / ${currentFloor.name || '目前樓層'}」的繪製內容已從後台草稿清除；平面圖、比例尺與其他樓層資料均已保留。如需套用到民眾端，請再按「同步雲端」。`
+      message: `「${currentBuilding?.name || '目前場域'} / ${currentFloor.name || '目前樓層'}」的繪製內容已從後台草稿清除；平面圖、比例尺與其他樓層資料均已保留。${v4Integration ? `尚未更新後台；請核對後再按「${v4Storage === 'local' ? '保存到本機後台' : '發布 GitHub'}」。` : '如需套用到民眾端，請再按「發布 GitHub」。'}`
     });
   };
 
@@ -1699,8 +2623,10 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     const timestamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..+$/, '').replace('T', '-');
     const fileName = `${exportName}_ar_config_v7_${timestamp}.json`;
     const payload = {
+      ...(v4Integration ? activeProject?._v4Published || {} : {}),
       version: '7.0',
       project: {
+        ...(v4Integration ? activeProject?._v4Published?.project || {} : {}),
         id: activeProjectId,
         name: systemConfig.projectName || activeProject?.name,
         description: activeProject?.description || '',
@@ -1769,6 +2695,60 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
 
   const totalProjectMarkers = buildings.reduce((sum, b) => sum + b.floors.reduce((floorSum, f) => floorSum + (f.markers || []).length, 0), 0);
   const totalProjectFloors = buildings.reduce((sum, b) => sum + b.floors.length, 0);
+  const activeProjectSync = normalizeProjectSync(activeProject || {});
+  const activeRemoteProject = cloudSnapshot.projects.find(item => item?.project?.id === activeProjectId);
+  const syncStatus = (() => {
+    if (v4Integration) {
+      if (v4Busy) return { tone: 'blue', label: '正在處理後台資料', detail: '請勿關閉頁面。' };
+      if (cloudWriteState === 'conflict') return { tone: 'red', label: '版本衝突・草稿保留', detail: v4Notice };
+      if (v4Storage === 'unknown') return { tone: 'amber', label: '尚未連接後台', detail: v4Notice };
+      return { tone: v4Dirty ? 'amber' : 'green', label: v4Dirty ? '路網有未保存變更' : `${v4Storage === 'local' ? '本機後台' : 'GitHub'}版本已載入`, detail: v4Notice };
+    }
+    if (cloudWriteState === 'saving') {
+      return { tone: 'blue', label: '正在發布 GitHub', detail: '正在驗證版本並提交，請勿關閉頁面。' };
+    }
+    if (cloudWriteState === 'conflict') {
+      return { tone: 'red', label: '雙方皆有變更', detail: 'GitHub 版本已更新；本機草稿受保護且未被覆蓋。' };
+    }
+    if (cloudSnapshot.status === 'checking') {
+      return { tone: 'blue', label: '正在檢查 GitHub', detail: '正在取得最新資料版本。' };
+    }
+    if (cloudSnapshot.status === 'error') {
+      return { tone: 'amber', label: '無法確認 GitHub', detail: cloudSnapshot.error || '本機草稿仍可繼續編輯。' };
+    }
+    if (!cloudSnapshot.revision) {
+      return { tone: 'slate', label: '尚未檢查 GitHub', detail: '本機內容會自動儲存在 IndexedDB。' };
+    }
+    if (!activeRemoteProject) {
+      return {
+        tone: 'cyan',
+        label: '本機新專案',
+        detail: activeProjectSync.baseSha === cloudSnapshot.revision
+          ? '已建立安全版本基準，可發布到 GitHub。'
+          : '請重新檢查 GitHub 後再發布。'
+      };
+    }
+    if (!activeProjectSync.baseSha) {
+      return { tone: 'amber', label: 'GitHub 有既有版本', detail: '本機尚無版本基準，發布前請先以 GitHub 更新本機。' };
+    }
+    if (activeProjectSync.baseSha !== cloudSnapshot.revision) {
+      return activeProjectSync.dirty
+        ? { tone: 'red', label: '雙方皆有變更', detail: '請先下載 JSON 備份，再決定以 GitHub 更新本機。' }
+        : { tone: 'amber', label: 'GitHub 有更新', detail: '可用 GitHub 最新版本更新本機 IndexedDB。' };
+    }
+    if (activeProjectSync.dirty) {
+      return { tone: 'cyan', label: '本機有未發布變更', detail: 'IndexedDB 已保存；GitHub 尚未更新。' };
+    }
+    return { tone: 'green', label: '已與 GitHub 同步', detail: '本機與遠端使用相同資料版本。' };
+  })();
+  const syncToneClasses = {
+    blue: 'border-blue-500/30 bg-blue-500/10 text-blue-200',
+    red: 'border-red-500/30 bg-red-500/10 text-red-200',
+    amber: 'border-amber-500/30 bg-amber-500/10 text-amber-200',
+    cyan: 'border-cyan-500/30 bg-cyan-500/10 text-cyan-200',
+    green: 'border-green-500/30 bg-green-500/10 text-green-200',
+    slate: 'border-slate-700 bg-slate-950 text-slate-300'
+  };
 
   const renderProjectManager = () => (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 md:p-5 shadow-lg mb-5">
@@ -1797,22 +2777,42 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           <button onClick={editProject} className="inline-flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-3 py-2 rounded-lg text-xs transition-colors">
             <Edit className="w-4 h-4" />編輯
           </button>
-          <button onClick={saveActiveProject} className="inline-flex items-center justify-center gap-2 bg-green-500/10 hover:bg-green-500/20 text-green-400 border border-green-500/30 px-3 py-2 rounded-lg text-xs transition-colors">
-            <CheckCircle2 className="w-4 h-4" />儲存
+          <button onClick={saveLocalDraft} className="inline-flex items-center justify-center gap-2 bg-green-500/10 hover:bg-green-500/20 text-green-400 border border-green-500/30 px-3 py-2 rounded-lg text-xs transition-colors" title="只儲存到這台裝置的 IndexedDB，不會變更 GitHub">
+            <HardDrive className="w-4 h-4" />儲存本機
           </button>
-          <button onClick={saveActiveProject} className="inline-flex items-center justify-center gap-2 bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/30 px-3 py-2 rounded-lg text-xs transition-colors" title="把目前這台裝置的 AR 資料同步到雲端，讓其他裝置可以載入">
-            <Upload className="w-4 h-4" />同步雲端
+          <button onClick={saveActiveProject} disabled={cloudWriteState === 'saving'} className="inline-flex items-center justify-center gap-2 bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/30 px-3 py-2 rounded-lg text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed" title="版本檢查通過後，將 IndexedDB 草稿發布到 GitHub">
+            <Upload className="w-4 h-4" />發布 GitHub
           </button>
-          <button onClick={openCloudProjectList} className="inline-flex items-center justify-center gap-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 px-3 py-2 rounded-lg text-xs transition-colors" title="從雲端載入已上架的 AR 資料，會覆蓋目前後台顯示的本機暫存">
-            <Download className="w-4 h-4" />從雲端載入
+          <button onClick={openCloudProjectList} className="inline-flex items-center justify-center gap-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 px-3 py-2 rounded-lg text-xs transition-colors" title="選擇 GitHub 最新版本更新本機 IndexedDB；有未發布變更時會再次確認">
+            <Download className="w-4 h-4" />GitHub 更新本機
           </button>
           <button onClick={deleteProject} className="inline-flex items-center justify-center gap-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 px-3 py-2 rounded-lg text-xs transition-colors">
             <Trash2 className="w-4 h-4" />刪除
           </button>
         </div>
       </div>
+      <div className={`mt-4 rounded-xl border px-4 py-3 ${syncToneClasses[syncStatus.tone]}`}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <div className="text-xs font-black tracking-wide">{syncStatus.label}</div>
+            <div className="mt-1 text-[11px] opacity-80">{syncStatus.detail}</div>
+            {cloudSnapshot.checkedAt && (
+              <div className="mt-1 text-[10px] opacity-60">最後檢查：{new Date(cloudSnapshot.checkedAt).toLocaleString()}</div>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={() => refreshCloudStatus({ announceErrors: true }).catch(() => {})}
+            disabled={cloudSnapshot.status === 'checking' || cloudWriteState === 'saving'}
+            className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-current/20 bg-black/10 px-3 py-2 text-xs font-bold transition-colors hover:bg-black/20 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${cloudSnapshot.status === 'checking' ? 'animate-spin' : ''}`} />
+            檢查 GitHub
+          </button>
+        </div>
+      </div>
       <div className="mt-3 text-xs text-slate-500">
-        每個專案都會獨立保存平面圖、路徑節點、AR 導引點與系統設定。切換專案後，下方維護區會載入該場域自己的資料。
+        編輯內容會自動保存到這台裝置的 IndexedDB；只有「發布 GitHub」會變更遠端資料。切換專案後，下方維護區會載入該場域自己的資料。
       </div>
     </div>
   );
@@ -2102,6 +3102,65 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
     </div>
   );
 
+  // Expanding a tool group is presentation only. Modes change only via an
+  // explicit action so opening floor/save tools never silently stops a task.
+  const setV4EditingMode = (mode) => {
+    setIsPathMode(mode === 'path');
+    setIsAddMode(mode === 'marker');
+    setIsToggleShaftMode(mode === 'shaft');
+    setIsMeasuring(mode === 'measure');
+    setIsNavTestMode(mode === 'test');
+    setPathStartNodeId(null);
+    setSelectedMarkerId(null);
+    setSelectedWaypointId(null);
+    setIsConfirmingDelete(false);
+    setDraggingId(null);
+    setIsPanning(false);
+    nodePointerStartRef.current = null;
+    setHoverPos(null);
+    setMeasurePoints([]);
+    setNavTestPoints([]);
+    setNavTestPath([]);
+    setV4ToolGroup(null);
+    const collapseForMap = mode && window.matchMedia('(max-width: 767px)').matches;
+    if (collapseForMap) {
+      setV4ToolsVisible(false);
+    }
+    requestAnimationFrame(() => {
+      if (collapseForMap) wrapperRef.current?.scrollIntoView({ block: 'start', behavior: 'auto' });
+      (mode ? v4EndModeRef : v4ToolsToggleRef).current?.focus({ preventScroll: true });
+    });
+  };
+  const v4Mode = isPathMode ? 'path' : isAddMode ? 'marker' : isToggleShaftMode ? 'shaft' : isMeasuring ? 'measure' : isNavTestMode ? 'test' : null;
+  const v4ModeName = ({ path: '路徑節點編輯', marker: 'AR 點位編輯', shaft: '跨樓層連通設定', measure: '尺規量測', test: '路網測試' })[v4Mode] || '瀏覽地圖';
+  const v4ModeHint = isPathMode
+    ? pathStartNodeId ? '已選連線起點；點下一個節點或空白處延伸。拖曳節點可移位。' : '點空白處新增節點；依序點兩個節點連線。拖曳節點可移位。'
+    : isAddMode ? '點空白處新增 AR 點位；點選既有點位編輯，拖曳可移位。'
+    : isToggleShaftMode ? '點既有節點，再於設定面板勾選可連通樓層。取消連通請關閉面板內的開關。'
+    : isMeasuring ? '在地圖點兩處，顯示實際距離。比例尺請先在「樓層與底圖」校正。'
+    : isNavTestMode ? navTestPoints.length === 0 ? '第 1 步：點地圖設定起點。' : navTestPoints.length === 1 ? `第 2 步：點地圖設定終點。起點在 ${navTestPoints[0].fName || '原樓層'}；可先切換樓層。` : navTestPath.length ? '已顯示藍色路徑；可切換樓層檢查跨層路線，或重新選點。' : '尚未找到可連通路徑；請檢查節點、連線與跨樓層設定。'
+    : '先展開功能分類選擇工具。拖曳空白處可移動地圖。';
+  const openV4Bounds = () => setBoundsModal({ isOpen: true, blX: currentBounds.blX, blY: currentBounds.blY, trX: currentBounds.trX, trY: currentBounds.trY, mapUpHeading: currentFloor?.mapUpHeading ?? null, mapUpHeadingAccuracy: currentFloor?.mapUpHeadingAccuracy ?? null, mapUpHeadingCapturedAt: currentFloor?.mapUpHeadingCapturedAt ?? null });
+  const selectV4ExistingNode = (id, kind) => {
+    if (!id) return;
+    setV4EditingMode(kind === 'marker' ? 'marker' : 'path');
+    if (kind === 'marker') setSelectedMarkerId(id);
+    else setSelectedWaypointId(id);
+    requestAnimationFrame(() => v4InspectorCloseRef.current?.focus({ preventScroll: true }));
+  };
+  const renderV4ToolGroup = (id, title, summary, Icon, children) => (
+    <section className={`v4-tool-group ${v4ToolGroup === id ? 'is-open' : ''}`} data-tool-group={id}>
+      <h3>
+        <button type="button" id={`v4-tool-${id}`} className="v4-tool-toggle" aria-label={`${title}工具分類`} aria-expanded={v4ToolGroup === id} aria-controls={`v4-panel-${id}`} onClick={() => setV4ToolGroup(previous => previous === id ? null : id)}>
+          <Icon aria-hidden="true" />
+          <span><strong>{title}</strong><small>{summary}</small></span>
+          <ChevronDown aria-hidden="true" className="v4-tool-chevron" />
+        </button>
+      </h3>
+      <div id={`v4-panel-${id}`} className="v4-tool-panel" role="region" aria-labelledby={`v4-tool-${id}`} hidden={v4ToolGroup !== id}>{children}</div>
+    </section>
+  );
+
   if (publicOnly) {
     return (
       <div className="flex h-[100dvh] w-full bg-slate-950 text-slate-200 font-sans overflow-hidden selection:bg-cyan-500/30 relative">
@@ -2111,7 +3170,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
   }
 
   return (
-    <div className={`${embedded ? 'flex min-h-[760px] w-full' : 'flex h-[100dvh] w-full'} bg-slate-950 text-slate-200 font-sans overflow-hidden selection:bg-cyan-500/30 relative`}>
+    <>
+    <div aria-busy={v4Integration && v4Busy} onPointerDownCapture={(event) => { if (v4Integration && v4Busy) { event.preventDefault(); event.stopPropagation(); } }} onKeyDownCapture={(event) => { if (v4Integration && v4Busy) { event.preventDefault(); event.stopPropagation(); } }} className={`${v4Integration ? 'v4-map-editor ' : ''}${embedded ? 'flex min-h-[760px] w-full' : 'flex h-[100dvh] w-full'} bg-slate-950 text-slate-200 font-sans overflow-hidden selection:bg-cyan-500/30 relative`}>
       {!embedded && isMobileMenuOpen && ( <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-40 md:hidden" onClick={() => setIsMobileMenuOpen(false)} /> )}
 
       {!embedded && <div className={`fixed inset-y-0 left-0 z-50 w-[82vw] max-w-xs md:w-64 bg-slate-900 border-r border-slate-800 flex flex-col justify-between shrink-0 transition-transform duration-300 shadow-2xl md:relative md:translate-x-0 ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
@@ -2146,22 +3206,108 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       {activeTab === 'export' && renderExportView()}
 
       {activeTab === 'map' && (
-        <div className="flex-1 flex flex-col relative overflow-hidden bg-slate-950 w-full">
+        <div className={`${v4Integration ? 'v4-editor-workspace ' : ''}flex-1 flex flex-col relative overflow-hidden bg-slate-950 w-full`}>
 
-          <div className="absolute top-3 left-2 right-2 md:top-4 md:left-4 md:right-56 lg:right-72 z-40 flex flex-wrap items-center gap-2 bg-slate-900/90 backdrop-blur-md border border-slate-700 p-2 rounded-xl shadow-lg overflow-visible">
+          {v4Integration && <>
+            <header className="v4-editor-context" data-map-control="context" aria-label="目前路網編輯位置">
+              <div className="v4-editor-location">
+                <Layers aria-hidden="true" />
+                <div><small>{systemConfig.projectName || activeProject?.name || '尚未選擇專案'} · {currentBuilding?.name || '尚未選擇建物'}</small><strong>{currentFloor?.name || '尚未選擇樓層'}</strong></div>
+                <button type="button" className="v4-tool-button" onClick={() => setV4FloorPickerOpen(true)}><Layers aria-hidden="true" />切換樓層</button>
+              </div>
+              <div className="v4-editor-mode" role="status">
+                {v4Mode&&<span className="v4-mode-badge is-active">{v4ModeName}</span>}
+                <span className={`v4-save-state ${v4Dirty || v4LoadFailed ? 'is-dirty' : ''}`}>{v4Busy ? '後台處理中' : v4LoadFailed ? '讀取失敗：請至資料保存重試' : !v4Ready ? '正在連線' : v4Dirty ? '有未保存變更' : '無未保存變更'}</span>
+                {v4Mode && <button ref={v4EndModeRef} type="button" className="v4-tool-button v4-end-mode" onClick={() => setV4EditingMode(null)}><X aria-hidden="true" />結束操作</button>}
+              </div>
+              {v4Mode&&<p className="v4-mode-guidance">{v4ModeHint}</p>}
+              <div className="v4-quick-actions">{[['floor','底圖／比例尺'],['path','路徑點'],['marker','AR 點'],['test','測試'],['save','核對保存']].map(([id,label])=><button key={id} ref={id==='floor'?v4ToolsToggleRef:undefined} type="button" className="v4-tool-button" aria-expanded={v4ToolsVisible&&v4ToolGroup===id} aria-controls={`v4-panel-${id}`} onClick={()=>{setV4ToolsVisible(true);setV4ToolGroup(id);}}>{label}</button>)}</div>
+            </header>
+            {v4FloorPickerOpen&&<dialog ref={v4FloorDialog} className="v4-floor-dialog" aria-label="選擇編輯樓層" onCancel={()=>setV4FloorPickerOpen(false)} onClose={()=>setV4FloorPickerOpen(false)}><div className="v4-floor-heading"><h2>選擇樓層</h2><button autoFocus className="v4-tool-button" aria-label="關閉樓層選單" onClick={()=>setV4FloorPickerOpen(false)}><X/></button></div>{buildings.map(building=><section key={building.id}><h3>{building.name}</h3><div className="v4-floor-options">{building.floors.map(floor=><button key={floor.id} className="v4-tool-button" aria-pressed={building.id===activeBuildingId&&floor.id===activeFloorId} onClick={()=>{if(building.id!==activeBuildingId){setActiveBuildingId(building.id);setReferenceFloorId('');}switchEditingFloor(floor.id);setV4FloorPickerOpen(false);}}>{floor.name}</button>)}</div></section>)}</dialog>}
+            <aside id="v4-editor-tools" className="v4-editor-tools" data-map-control="tools" aria-label="路網功能分類" hidden={!v4ToolsVisible}>
+              <div className="v4-tools-heading"><strong>工具選單</strong><button className="v4-tool-button" aria-label="關閉工具選單" onClick={()=>{setV4ToolsVisible(false);v4ToolsToggleRef.current?.focus();}}><X/></button></div>
+              {renderV4ToolGroup('floor', '樓層與底圖', `${currentFloor?.name || '選樓層'} · 切換、上傳、比例尺`, Layers, <>
+                <label className="v4-tool-field">專案<select aria-label="編輯專案" disabled={v4ActiveDirty || v4Busy} value={activeProjectId} onChange={(e) => !projects.some(project => project.id === e.target.value) ? loadV4Backend({ projectId: e.target.value }) : setActiveProjectId(e.target.value)}>
+                  {[...v4ProjectOptions, ...projects.filter(project => !v4ProjectOptions.some(option => option.id === project.id))].map(project => <option key={project.id} value={project.id}>{project.name}</option>)}
+                </select></label>
+                {v4ActiveDirty && <p>請先保存或匯出目前專案，再切換專案。樓層可以直接切換，草稿會保留。</p>}
+                <label className="v4-tool-field">建物<select aria-label="編輯建物" value={activeBuildingId} onChange={(e) => { setSelectedMarkerId(null); setSelectedWaypointId(null); setDraggingId(null); setPathStartNodeId(null); setHoverPos(null); setReferenceFloorId(''); setActiveBuildingId(e.target.value); }}>{buildings.map(building => <option key={building.id} value={building.id}>{building.name}</option>)}</select></label>
+                <label className="v4-tool-field">目前編輯樓層<select aria-label="切換目前編輯樓層" title="切換目前編輯樓層" value={activeFloorId} onChange={(e) => switchEditingFloor(e.target.value)}>{sortedCurrentFloors.map(floor => <option key={floor.id} value={floor.id}>{floor.name}</option>)}</select></label>
+                <div className="v4-tool-actions"><button type="button" className="v4-tool-button" aria-label="切換到上一層" disabled={!higherFloor} onClick={() => higherFloor && switchEditingFloor(higherFloor.id)}><ArrowUp />上一層</button><button type="button" className="v4-tool-button" aria-label="切換到下一層" disabled={!lowerFloor} onClick={() => lowerFloor && switchEditingFloor(lowerFloor.id)}><ArrowDown />下一層</button></div>
+                <div className="v4-tool-actions"><button type="button" className="v4-tool-button" onClick={addBuilding}><Plus />新增建物</button><button type="button" className="v4-tool-button" title="新增樓層" disabled={!currentBuilding} onClick={addFloor}><Plus />新增樓層</button></div>
+                <details className="v4-tool-secondary"><summary>新增專案</summary><button type="button" className="v4-tool-button" title="新增專案" onClick={addProject} disabled={v4Dirty || v4Busy || !v4Ready}><Plus />建立新專案</button></details>
+                {currentFloor && <>
+                  <div className="v4-tool-divider" />
+                  <span className="v4-tool-label">平面圖預覽</span>
+                  <div className="v4-tool-actions" role="group" aria-label="切換平面圖預覽"><button type="button" className="v4-tool-button" aria-pressed={floorImagePreviewMode === 'overview'} onClick={() => setFloorImagePreviewMode('overview')}>無字圖{!currentFloor.imageUrl && '（未上傳）'}</button><button type="button" className="v4-tool-button" aria-pressed={floorImagePreviewMode === 'navigation'} onClick={() => setFloorImagePreviewMode('navigation')}>有字圖{!currentFloor.navigationImageUrl && '（未上傳）'}</button></div>
+                  <input type="file" ref={fileInputRef} onChange={handleFloorPlanUpload} className="hidden" accept="image/*" />
+                  <input type="file" ref={navigationImageInputRef} onChange={handleNavigationFloorPlanUpload} className="hidden" accept="image/*" />
+                  <div className="v4-tool-actions"><button type="button" className="v4-tool-button" onClick={() => fileInputRef.current?.click()}><Upload />上傳無字圖</button><button type="button" className="v4-tool-button" onClick={() => navigationImageInputRef.current?.click()}><ImageIcon />上傳有字圖</button></div>
+                  <p>無字圖是路網編輯底圖；有字圖供導覽顯示。兩張圖需對齊，切換預覽不會更動節點。</p>
+                  <button type="button" className="v4-tool-button" title="座標、比例尺與方向基準設定" onClick={openV4Bounds}><Target />座標、比例尺與方向基準設定</button>
+                  <button type="button" className="v4-tool-button" title="尺規量測" disabled={!hasCurrentFloorPlan} aria-pressed={isMeasuring} onClick={() => setV4EditingMode(isMeasuring ? null : 'measure')}><Ruler />尺規量測</button>
+                  <label className="v4-tool-field">參考其他樓層<select aria-label="透視其他樓層" value={referenceFloorId} onChange={(e) => setReferenceFloorId(e.target.value)}><option value="">關閉透視</option>{buildings.flatMap(building => building.floors.filter(floor => floor.id !== activeFloorId).map(floor => <option key={floor.id} value={floor.id}>{building.name}－{floor.name}</option>))}</select></label>
+                  <details className="v4-tool-danger"><summary>樓層刪除（需確認）</summary><p>會刪除本層資料；每棟至少保留一層。</p><button type="button" className="v4-tool-button" title="刪除目前樓層" disabled={!currentFloor || currentBuilding.floors.length <= 1} onClick={requestDeleteCurrentFloor}><Trash2 />刪除目前樓層</button></details>
+                </>}
+              </>)}
+              {renderV4ToolGroup('path', '路徑節點', `${currentWaypoints.length} 個節點 · ${currentEdges.length} 條連線`, Route, <>
+                <p>開始後點空白處新增節點，依序點兩個節點建立連線；拖曳既有節點調整位置。點選節點或從下方清單開啟設定。</p>
+                <button type="button" className="v4-tool-button v4-tool-primary" title="路徑建置與節點編輯" disabled={!hasCurrentFloorPlan} aria-pressed={isPathMode} onClick={() => setV4EditingMode(isPathMode ? null : 'path')}><Route />路徑節點</button>
+                <label className="v4-tool-field">編輯既有路徑節點<select aria-label="選擇路徑節點編輯" value="" disabled={!currentWaypoints.length} onChange={(e) => selectV4ExistingNode(e.target.value, 'path')}><option value="">選擇節點，開啟設定…</option>{currentWaypoints.map((waypoint, index) => <option key={waypoint.id} value={waypoint.id}>{waypoint.guideTitle || `未命名節點 ${index + 1}`}</option>)}</select></label>
+                <button type="button" className="v4-tool-button" title="指定跨樓層轉折點 (點擊節點切換)" disabled={!hasCurrentFloorPlan} aria-pressed={isToggleShaftMode} onClick={() => setV4EditingMode(isToggleShaftMode ? null : 'shaft')}><ArrowUpDown />設定跨樓層連通點</button>
+                <p>樓梯／電梯先設為跨樓層點，再勾選連通樓層；各樓層都需接上路網。</p>
+                {isPathMode && pathStartNodeId && <button type="button" className="v4-tool-button" onClick={() => { setPathStartNodeId(null); setHoverPos(null); }}><X />取消目前連線起點</button>}
+                {!hasCurrentFloorPlan && <p className="v4-tool-warning">請先到「樓層與底圖」上傳無字圖。</p>}
+              </>)}
+              {renderV4ToolGroup('marker', 'AR 點位', `${currentMarkers.length} 個點位 · 目的地與提示`, MapPin, <>
+                <p>開始後點地圖空白處新增 AR 點位；點選既有點位編輯代號、標題和方向，拖曳可移位。</p>
+                <button type="button" className="v4-tool-button v4-tool-primary" title="AR 點位建置與編輯" disabled={!hasCurrentFloorPlan} aria-pressed={isAddMode} onClick={() => setV4EditingMode(isAddMode ? null : 'marker')}><MapPin />AR 點位</button>
+                <label className="v4-tool-field">編輯既有 AR 點位<select aria-label="選擇 AR 點位編輯" value="" disabled={!currentMarkers.length} onChange={(e) => selectV4ExistingNode(e.target.value, 'marker')}><option value="">選擇點位，開啟設定…</option>{currentMarkers.map(marker => <option key={marker.id} value={marker.id}>{marker.code || '未編號'} · {marker.title || '未命名點位'}</option>)}</select></label>
+                <p>「完成設定」只關閉編輯面板；請再到「資料保存」保存。照片辨識測試請回 V4「相機」頁籤。</p>
+                {!hasCurrentFloorPlan && <p className="v4-tool-warning">請先到「樓層與底圖」上傳無字圖。</p>}
+              </>)}
+              {renderV4ToolGroup('test', '路網測試', isNavTestMode ? `已選 ${navTestPoints.length}／2 個測試點` : '起點 → 終點 · 檢查連通', Activity, <>
+                <p>開始後先在地圖點起點，再點終點；系統會吸附至路網並顯示藍色路徑。跨樓層測試可選完起點後，從「切換樓層」選另一層再點終點。</p>
+                <button type="button" className="v4-tool-button v4-tool-primary" title="路網分析測試" disabled={!hasCurrentFloorPlan} aria-pressed={isNavTestMode} onClick={() => setV4EditingMode(isNavTestMode ? null : 'test')}><Activity />{isNavTestMode ? '退出路網測試' : '路網測試'}</button>
+                {isNavTestMode && <><p role="status">{v4ModeHint}</p><button type="button" className="v4-tool-button" onClick={() => { setNavTestPoints([]); setNavTestPath([]); }}><RefreshCw />重新選擇起終點</button></>}
+                <p>這是路線連通模擬，不會啟動相機，也不會代表現場定位已通過。</p>
+                {!hasCurrentFloorPlan && <p className="v4-tool-warning">請先到「樓層與底圖」上傳無字圖。</p>}
+              </>)}
+              {renderV4ToolGroup('save', '資料保存', v4Dirty ? '有未保存變更 · 請完成保存' : v4Storage === 'local' ? '本機後台 · 尚未同步 GitHub' : '後台讀取、保存與匯出', Save, <>
+                <div className="v4-editor-notice" role="status" data-testid="v4-editor-notice"><strong>{v4Storage === 'local' ? '本機後台' : v4Storage === 'github' ? 'GitHub 後台' : '環境確認中'}</strong><p>{v4Notice}</p></div>
+                <p>編輯會自動暫存於這個瀏覽器，但尚未更新後台。「完成設定」不是保存；版本衝突時會保留草稿。</p>
+                <button type="button" className="v4-tool-button v4-tool-primary" onClick={saveActiveProject} disabled={cloudWriteState === 'saving' || !v4Ready || v4Busy || v4Storage === 'unknown'}><Upload />{v4Storage === 'local' ? '保存到本機後台' : v4Storage === 'github' ? '發布 GitHub' : '保存（待連線）'}</button>
+                <button type="button" className="v4-tool-button" onClick={openCloudProjectList} disabled={v4Busy}><Download />{v4Storage === 'local' ? '讀取本機後台' : v4Storage === 'github' ? '讀取 GitHub 後台' : '重試讀取後台'}</button>
+                <button type="button" className="v4-tool-button" onClick={exportJSON}><Download />匯出草稿</button>
+                <details className="v4-tool-danger"><summary>清除圖面內容（需確認）</summary><p>會移除本層節點、AR 點位及連線，包含被刪節點的現場照片。平面圖保留，保存後才更新後台。</p><button type="button" className="v4-tool-button" title="清除目前樓層的 AR 點位、路網節點與連線，保留平面圖" disabled={!currentFloor || currentMarkers.length + currentWaypoints.length + currentEdges.length === 0} onClick={requestClearCurrentFloorDrawing}><Trash2 />清除本層</button>{deleteUndo?.projectId === activeProjectId && <button type="button" className="v4-tool-button" onClick={restoreLastDelete}><Undo2 />復原最近刪除</button>}</details>
+              </>)}
+            </aside>
+          </>}
+
+          {!v4Integration && <div className="absolute top-3 left-2 right-2 md:top-4 md:left-4 md:right-56 lg:right-72 z-40 flex flex-wrap items-center gap-2 bg-slate-900/90 backdrop-blur-md border border-slate-700 p-2 rounded-xl shadow-lg overflow-visible">
             {!embedded && <button className="md:hidden text-slate-400 hover:text-white mr-1" onClick={() => setIsMobileMenuOpen(true)}><Menu className="w-5 h-5" /></button>}
             <div className="flex items-center">
               <Target className="w-4 h-4 text-cyan-400 ml-1 mr-2"/>
-              <select className="bg-transparent text-cyan-300 text-sm font-bold focus:outline-none max-w-[120px] md:max-w-[150px] truncate" value={activeProjectId} onChange={(e) => setActiveProjectId(e.target.value)}>
-                {projects.map(project => <option key={project.id} value={project.id} className="bg-slate-900">{project.name}</option>)}
+              <select aria-label="編輯專案" disabled={v4Integration && (v4ActiveDirty || v4Busy)} className="bg-transparent text-cyan-300 text-sm font-bold focus:outline-none max-w-[120px] md:max-w-[150px] truncate" value={activeProjectId} onChange={(e) => v4Integration && !projects.some(project => project.id === e.target.value) ? loadV4Backend({ projectId: e.target.value }) : setActiveProjectId(e.target.value)}>
+                {(v4Integration ? [...v4ProjectOptions, ...projects.filter(project => !v4ProjectOptions.some(option => option.id === project.id))] : projects).map(project => <option key={project.id} value={project.id} className="bg-slate-900">{project.name}</option>)}
               </select>
-              <button onClick={addProject} className="ml-1 px-1 text-cyan-400 hover:text-cyan-300 transition-colors" title="新增專案"><Plus className="w-4 h-4"/></button>
-              <button onClick={saveActiveProject} className="px-1 text-green-400 hover:text-green-300 transition-colors" title="儲存專案"><CheckCircle2 className="w-4 h-4"/></button>
+              <button onClick={addProject} disabled={v4Integration && (v4Dirty || v4Busy || !v4Ready)} className="ml-1 px-1 text-cyan-400 hover:text-cyan-300 transition-colors disabled:opacity-40" title="新增專案"><Plus className="w-4 h-4"/></button>
+              {!v4Integration && <button onClick={saveLocalDraft} className="px-1 text-green-400 hover:text-green-300 transition-colors" title="儲存本機 IndexedDB 草稿"><HardDrive className="w-4 h-4"/></button>}
             </div>
+            <button
+              type="button"
+              onClick={() => refreshCloudStatus({ announceErrors: true }).catch(() => {})}
+              disabled={cloudSnapshot.status === 'checking' || cloudWriteState === 'saving'}
+              title={syncStatus.detail}
+              className={`inline-flex max-w-[190px] items-center gap-1.5 rounded-lg border px-2 py-1 text-[11px] font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${syncToneClasses[syncStatus.tone]}`}
+            >
+              <RefreshCw className={`h-3.5 w-3.5 shrink-0 ${cloudSnapshot.status === 'checking' ? 'animate-spin' : ''}`} />
+              <span className="truncate">{syncStatus.label}</span>
+            </button>
             <div className="w-px h-5 bg-slate-700 mx-1"></div>
             <div className="flex items-center">
               <Building className="w-4 h-4 text-slate-500 ml-1 mr-2"/>
-              <select className="bg-transparent text-slate-200 text-sm font-medium focus:outline-none max-w-[110px] md:max-w-[120px] truncate" value={activeBuildingId} onChange={(e) => setActiveBuildingId(e.target.value)}>
+              <select aria-label="編輯建物" className="bg-transparent text-slate-200 text-sm font-medium focus:outline-none max-w-[110px] md:max-w-[120px] truncate" value={activeBuildingId} onChange={(e) => setActiveBuildingId(e.target.value)}>
                 {buildings.map(b => <option key={b.id} value={b.id} className="bg-slate-900">{b.name}</option>)}
               </select>
               <button onClick={addBuilding} className="ml-1 px-1 text-cyan-400 hover:text-cyan-300 transition-colors"><Plus className="w-4 h-4"/></button>
@@ -2189,26 +3335,25 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 )))}
               </select>
             </div>
-          </div>
+          </div>}
 
-          <div className="absolute left-2 right-2 bottom-3 md:left-auto md:right-4 md:bottom-auto md:top-4 z-40 flex flex-row md:flex-col gap-2 overflow-x-auto md:overflow-visible bg-slate-950/60 md:bg-transparent backdrop-blur md:backdrop-blur-0 p-2 md:p-0 rounded-xl md:rounded-none border border-slate-800/70 md:border-0">
+          {!v4Integration && <div className="absolute left-2 right-2 bottom-3 md:left-auto md:right-4 md:bottom-auto md:top-4 z-40 flex flex-row md:flex-col gap-2 overflow-x-auto md:overflow-visible bg-slate-950/60 md:bg-transparent backdrop-blur md:backdrop-blur-0 p-2 md:p-0 rounded-xl md:rounded-none border border-slate-800/70 md:border-0">
             <button
               onClick={openCloudProjectList}
               className="flex shrink-0 items-center justify-center gap-2 h-10 px-3 rounded-xl transition-all shadow-lg font-bold text-xs bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30"
-              title="從雲端載入已上架的 AR 資料"
+              title={v4Integration ? '讀取後台最新路網；未保存的草稿會先要求確認' : '以 GitHub 最新資料更新本機 IndexedDB'}
             >
               <Download className="w-5 h-5" />
-              <span className="md:hidden">載入</span>
-              <span className="hidden md:inline">載入雲端</span>
+              {v4Integration ? <span>{v4Storage === 'local' ? '讀取本機後台' : v4Storage === 'github' ? '讀取 GitHub 後台' : '重試讀取後台'}</span> : <><span className="md:hidden">拉取</span><span className="hidden md:inline">GitHub 更新本機</span></>}
             </button>
             <button
               onClick={saveActiveProject}
-              className="flex shrink-0 items-center justify-center gap-2 h-10 px-3 rounded-xl transition-all shadow-lg font-bold text-xs bg-green-500/10 hover:bg-green-500/20 text-green-300 border border-green-500/30"
-              title="把目前這台裝置的 AR 資料同步到雲端"
+              disabled={cloudWriteState === 'saving' || (v4Integration && (!v4Ready || v4Busy || v4Storage === 'unknown'))}
+              className="flex shrink-0 items-center justify-center gap-2 h-10 px-3 rounded-xl transition-all shadow-lg font-bold text-xs bg-green-500/10 hover:bg-green-500/20 text-green-300 border border-green-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+              title={v4Integration ? (v4Storage === 'local' ? '寫入本機後台，不會發布 GitHub' : '確認授權後發布 GitHub') : '版本檢查通過後，將本機 IndexedDB 草稿發布到 GitHub'}
             >
-              <HardDrive className="w-5 h-5" />
-              <span className="md:hidden">同步</span>
-              <span className="hidden md:inline">同步雲端</span>
+              <Upload className="w-5 h-5" />
+              {v4Integration ? <span>{v4Storage === 'local' ? '保存到本機後台' : v4Storage === 'github' ? '發布 GitHub' : '保存（待連線）'}</span> : <><span className="md:hidden">發布</span><span className="hidden md:inline">發布 GitHub</span></>}
             </button>
             <button
               onClick={exportJSON}
@@ -2216,8 +3361,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               title="下載目前專案的 AR JSON 配置檔"
             >
               <Download className="w-5 h-5" />
-              <span className="md:hidden">JSON</span>
-              <span className="hidden md:inline">下載JSON</span>
+              {v4Integration ? <span>匯出草稿</span> : <><span className="md:hidden">JSON</span><span className="hidden md:inline">下載JSON</span></>}
             </button>
             <button
               onClick={requestClearCurrentFloorDrawing}
@@ -2246,14 +3390,16 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 </button>
                 <button onClick={() => { setIsPathMode(!isPathMode); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsMeasuring(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setDraggingId(null); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isPathMode ? 'bg-orange-500 text-white shadow-[0_0_15px_rgba(249,115,22,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-orange-400 hover:bg-slate-800'}`} title="路徑建置與節點編輯">
                   {isPathMode ? <X className="w-5 h-5" /> : <Route className="w-5 h-5" />}
+                  {v4Integration && <span>路徑節點</span>}
                 </button>
                 <button onClick={() => { setIsMeasuring(!isMeasuring); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsAddMode(false); setIsPathMode(false); setMeasurePoints([]); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isMeasuring ? 'bg-purple-500 text-white shadow-[0_0_15px_rgba(168,85,247,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-purple-400 hover:bg-slate-800'}`} title="尺規量測">
                   {isMeasuring ? <X className="w-5 h-5" /> : <Ruler className="w-5 h-5" />}
                 </button>
                 <button onClick={() => { setIsAddMode(!isAddMode); setIsToggleShaftMode(false); setIsNavTestMode(false); setIsMeasuring(false); setIsPathMode(false); setPathStartNodeId(null); setSelectedMarkerId(null); setSelectedWaypointId(null); setDraggingId(null); setHoverPos(null); }} className={`flex shrink-0 items-center justify-center w-10 h-10 rounded-xl transition-all shadow-lg ${isAddMode ? 'bg-cyan-500 text-slate-950 shadow-[0_0_15px_rgba(6,182,212,0.6)]' : 'bg-slate-900/90 backdrop-blur border border-slate-700 text-cyan-400 hover:bg-slate-800'}`} title="AR 點位建置與編輯">
                   {isAddMode ? <X className="w-5 h-5" /> : <MapPin className="w-5 h-5" />}
+                  {v4Integration && <span>AR 點位</span>}
                 </button>
-                <button onClick={() => setBoundsModal({ isOpen: true, blX: currentBounds.blX, blY: currentBounds.blY, trX: currentBounds.trX, trY: currentBounds.trY })} className="flex shrink-0 items-center justify-center w-10 h-10 bg-slate-900/90 backdrop-blur border border-slate-700 text-blue-400 hover:bg-slate-800 rounded-xl transition-all shadow-lg" title="座標與比例尺設定">
+                <button onClick={() => setBoundsModal({ isOpen: true, blX: currentBounds.blX, blY: currentBounds.blY, trX: currentBounds.trX, trY: currentBounds.trY, mapUpHeading: currentFloor?.mapUpHeading ?? null, mapUpHeadingAccuracy: currentFloor?.mapUpHeadingAccuracy ?? null, mapUpHeadingCapturedAt: currentFloor?.mapUpHeadingCapturedAt ?? null })} className="flex shrink-0 items-center justify-center w-10 h-10 bg-slate-900/90 backdrop-blur border border-slate-700 text-blue-400 hover:bg-slate-800 rounded-xl transition-all shadow-lg" title="座標、比例尺與方向基準設定">
                   <Target className="w-5 h-5" />
                 </button>
                 <button onClick={requestClearCurrentFloor} disabled={currentMarkers.length + currentWaypoints.length + currentEdges.length === 0} className="flex shrink-0 items-center justify-center w-10 h-10 bg-red-500/10 backdrop-blur border border-red-500/30 text-red-300 hover:bg-red-500/20 rounded-xl transition-all shadow-lg disabled:opacity-40 disabled:cursor-not-allowed" title="清除目前圖面的所有路網與點位">
@@ -2261,10 +3407,10 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 </button>
               </>
             )}
-          </div>
+          </div>}
 
-          <div ref={wrapperRef} className={`flex-1 relative overflow-hidden bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-900 to-slate-950 touch-none select-none ${isPathMode ? 'cursor-crosshair' : (isToggleShaftMode ? 'cursor-pointer' : (isAddMode ? 'cursor-crosshair' : (isMeasuring ? 'cursor-crosshair' : (isNavTestMode ? 'cursor-crosshair' : (isPanning ? 'cursor-grabbing' : 'cursor-grab')))))}`} onPointerDown={handleMapPointerDown} onPointerMove={handleMapPointerMove} onPointerUp={handleMapPointerUp} onPointerCancel={handleMapPointerUp}>
-            {currentFloor && (
+          <div ref={wrapperRef} data-testid="editor-map" aria-label="平面圖路網編輯區" className={`flex-1 relative overflow-hidden bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-slate-900 to-slate-950 touch-none select-none ${isPathMode ? 'cursor-crosshair' : (isToggleShaftMode ? 'cursor-pointer' : (isAddMode ? 'cursor-crosshair' : (isMeasuring ? 'cursor-crosshair' : (isNavTestMode ? 'cursor-crosshair' : (isPanning ? 'cursor-grabbing' : 'cursor-grab')))))}`} onPointerDown={handleMapPointerDown} onPointerMove={handleMapPointerMove} onPointerUp={handleMapPointerUp} onPointerCancel={handleMapPointerUp}>
+            {!v4Integration && currentFloor && (
               <div className="absolute left-4 top-24 md:top-20 z-30 rounded-full border border-cyan-400/30 bg-slate-950/85 px-4 py-2 text-xs font-bold text-white shadow-xl backdrop-blur-md pointer-events-none">
                 {currentBuilding?.name || '目前場域'} / {currentFloor.name || '未命名樓層'}
               </div>
@@ -2364,7 +3510,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 else if (isSelected) { borderColor = 'border-cyan-400 border-2'; shadow = 'shadow-[0_0_10px_cyan]'; }
 
                 return (
-                  <div key={wp.id} className={`waypoint-pin group absolute -translate-x-1/2 -translate-y-1/2 z-30 ${isPathMode || isToggleShaftMode ? 'pointer-events-auto cursor-grab active:cursor-grabbing' : 'pointer-events-none'} ${isSelected ? 'z-40' : ''}`} style={{ left: `${wp.x*100}%`, top: `${wp.y*100}%` }}
+                  <div key={wp.id} data-node-id={wp.id} aria-label={`路徑節點 ${wp.guideTitle || wp.id}`} className={`waypoint-pin group absolute -translate-x-1/2 -translate-y-1/2 z-30 ${isPathMode || isToggleShaftMode ? 'pointer-events-auto cursor-grab active:cursor-grabbing' : 'pointer-events-none'} ${isSelected ? 'z-40' : ''}`} style={{ left: `${wp.x*100}%`, top: `${wp.y*100}%` }}
                        onPointerDown={(e) => {
                          e.stopPropagation();
                          if (e.button !== 0) return;
@@ -2382,9 +3528,15 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                        onPointerCancel={(e) => finishNodePointerInteraction(e)}
                        onContextMenu={(e) => {
                          e.preventDefault();
+                         if (v4Integration) {
+                           setSelectedMarkerId(null); setSelectedWaypointId(wp.id);
+                           setIsConfirmingDelete(false);
+                           return;
+                         }
                          if (isPathMode) { deleteNode(wp.id); }
                          else if (isToggleShaftMode) { if(wp.isVerticalShaft) handleToggleVerticalShaft(wp, false, false); }
                        }}>
+                    {v4Integration && <span aria-hidden="true" className="v4-node-hit-area" style={{ width: `${44 / mapTransform.scale}px`, height: `${44 / mapTransform.scale}px` }} />}
                     <div className={`rounded-full transition-all flex items-center justify-center ${bgColor} ${borderColor} ${shadow}`} style={{ width: `${(isPathStart ? 14 : 10) / Math.max(0.5, mapTransform.scale)}px`, height: `${(isPathStart ? 14 : 10) / Math.max(0.5, mapTransform.scale)}px`, borderWidth: isSelected ? '2px' : '1px' }}>
                         {wp.isVerticalShaft && <ArrowUpDown className={isPathStart ? "text-slate-800" : "text-white"} style={{ width: `${6 / Math.max(0.5, mapTransform.scale)}px`, height: `${6 / Math.max(0.5, mapTransform.scale)}px` }} />}
                     </div>
@@ -2424,7 +3576,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 const linkedFloorNames = marker.isVerticalShaft ? currentBuilding?.floors.filter(f => marker.linkedFloorIds?.includes(f.id)).sort((a,b) => getFloorLevel(b.name) - getFloorLevel(a.name)).map(f => f.name).join(', ') : '';
 
                 return (
-                <div key={marker.id} className={`marker-pin absolute -translate-x-1/2 -translate-y-1/2 group z-50 ${isAddMode ? 'pointer-events-auto cursor-grab active:cursor-grabbing' : (isPathMode || isToggleShaftMode ? 'pointer-events-auto cursor-pointer' : 'pointer-events-none')} ${selectedMarkerId === marker.id ? 'z-[60]' : ''} ${pathStartNodeId === marker.id ? 'scale-125' : ''}`} style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%` }}
+                <div key={marker.id} data-node-id={marker.id} aria-label={`AR 點位 ${marker.code || marker.title || marker.id}`} className={`marker-pin absolute -translate-x-1/2 -translate-y-1/2 group z-50 ${isAddMode ? 'pointer-events-auto cursor-grab active:cursor-grabbing' : (isPathMode || isToggleShaftMode ? 'pointer-events-auto cursor-pointer' : 'pointer-events-none')} ${selectedMarkerId === marker.id ? 'z-[60]' : ''} ${pathStartNodeId === marker.id ? 'scale-125' : ''}`} style={{ left: `${marker.x * 100}%`, top: `${marker.y * 100}%` }}
                      onPointerDown={(e) => {
                        e.stopPropagation();
                        if (e.button !== 0) return;
@@ -2446,10 +3598,16 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                      onPointerCancel={(e) => finishNodePointerInteraction(e)}
                      onContextMenu={(e) => {
                        e.preventDefault();
+                       if (v4Integration) {
+                         setSelectedWaypointId(null); setSelectedMarkerId(marker.id);
+                         setIsConfirmingDelete(false);
+                         return;
+                       }
                        if (isPathMode) { deleteNode(marker.id); }
                        else if (isToggleShaftMode) { if(marker.isVerticalShaft) handleToggleVerticalShaft(marker, false, true); }
                        else if (isAddMode) { setSelectedWaypointId(null); setSelectedMarkerId(marker.id); }
                      }}>
+                  {v4Integration && <span aria-hidden="true" className="v4-node-hit-area" style={{ width: `${44 / mapTransform.scale}px`, height: `${44 / mapTransform.scale}px` }} />}
                   <div className="relative pointer-events-none">
                     <div className={`w-7 h-7 md:w-8 md:h-8 rounded-full flex items-center justify-center border-2 transition-all shadow-lg ${selectedMarkerId === marker.id ? 'bg-cyan-500 border-white text-slate-950 scale-110 shadow-[0_0_15px_rgba(6,182,212,0.8)]' : marker.enabled ? (marker.isVerticalShaft ? 'bg-purple-600 border-purple-400 text-white' : 'bg-slate-800 border-cyan-500/50 text-slate-300 group-hover:border-cyan-400 group-hover:text-cyan-400') : 'bg-slate-900 border-slate-700 text-slate-600 opacity-70'} ${pathStartNodeId === marker.id ? 'border-orange-500 shadow-[0_0_15px_orange]' : ''}`}>
                       {marker.isVerticalShaft ? <ArrowUpDown className="w-3.5 h-3.5" style={{ transform: `scale(${1 / Math.max(0.5, mapTransform.scale)})` }}/> : <span className="text-[10px] md:text-xs font-bold" style={{ transform: `scale(${1 / Math.max(0.5, mapTransform.scale)})` }}>{marker.code}</span>}
@@ -2463,8 +3621,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               )})}
             </div>
 
-            {isToggleShaftMode && (
-              <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-green-500/95 text-white px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(34,197,94,0.5)] flex items-center pointer-events-auto z-50">
+            {!v4Integration && isToggleShaftMode && (
+              <div data-map-control="mode-hint" className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-green-500/95 text-white px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(34,197,94,0.5)] flex items-center pointer-events-auto z-50">
                 <ArrowUpDown className="w-5 h-5 mr-3 shrink-0" />
                 <div className="flex flex-col">
                   <span>點擊既有節點指定為「跨樓層轉折點」，右鍵取消。</span>
@@ -2473,8 +3631,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               </div>
             )}
 
-            {isPathMode && (
-              <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-orange-500/95 text-white px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(249,115,22,0.5)] flex items-center pointer-events-auto z-50">
+            {!v4Integration && isPathMode && (
+              <div data-map-control="mode-hint" className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-orange-500/95 text-white px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(249,115,22,0.5)] flex items-center pointer-events-auto z-50">
                 <MousePointer2 className="w-5 h-5 mr-3 shrink-0" />
                 <div className="flex flex-col">
                   <span>路徑建置模式：點擊空處建立節點，拖曳既有節點可調整位置。</span>
@@ -2483,8 +3641,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               </div>
             )}
 
-            {isAddMode && (
-              <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-cyan-500/95 text-slate-950 px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(6,182,212,0.45)] flex items-center pointer-events-auto z-50">
+            {!v4Integration && isAddMode && (
+              <div data-map-control="mode-hint" className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-cyan-500/95 text-slate-950 px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(6,182,212,0.45)] flex items-center pointer-events-auto z-50">
                 <MapPin className="w-5 h-5 mr-3 shrink-0" />
                 <div className="flex flex-col">
                   <span>AR 點位編輯模式：點擊空處新增點位。</span>
@@ -2493,8 +3651,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               </div>
             )}
 
-            {isNavTestMode && (
-              <div className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-blue-500/95 text-white px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(59,130,246,0.5)] flex items-center pointer-events-auto z-50">
+            {!v4Integration && isNavTestMode && (
+              <div data-map-control="mode-hint" className="absolute bottom-16 left-1/2 -translate-x-1/2 bg-blue-500/95 text-white px-5 py-3 rounded-2xl text-xs font-bold shadow-[0_0_20px_rgba(59,130,246,0.5)] flex items-center pointer-events-auto z-50">
                 <Activity className="w-5 h-5 mr-3 shrink-0 animate-pulse" />
                 <div className="flex flex-col">
                   <span>路網分析測試模式：已啟用自動吸附演算</span>
@@ -2507,12 +3665,12 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               <div className="absolute inset-0 flex flex-col items-center justify-center text-center text-slate-500 pointer-events-none px-4 pb-28 md:pb-16">
                 <Map className="w-12 h-12 mx-auto mb-3 opacity-50 text-cyan-500/30" />
                 <p className="text-base md:text-lg mb-1">尚未上傳{floorImagePreviewMode === 'navigation' ? '有文字導覽圖' : '無文字平面圖'}</p>
-                <p className="text-xs">請使用左下角的「上傳{floorImagePreviewMode === 'navigation' ? '有字圖' : '無字圖'}」按鈕</p>
+                <p className="text-xs">{v4Integration ? '請展開「樓層與底圖」，上傳對應平面圖。' : `請使用左下角的「上傳${floorImagePreviewMode === 'navigation' ? '有字圖' : '無字圖'}」按鈕`}</p>
               </div>
             )}
 
-            {currentFloor && (
-              <div className="absolute bottom-20 left-3 z-50 flex max-w-[calc(100%-5.25rem)] flex-wrap items-center gap-2 rounded-xl border border-slate-700 bg-slate-950/90 p-2 shadow-xl backdrop-blur-md md:bottom-4 md:left-4 md:max-w-[calc(100%-12rem)]" aria-label="平面圖顯示與上傳">
+            {!v4Integration && currentFloor && (
+              <div data-map-control="floor-plan" className="absolute bottom-20 left-3 z-50 flex max-w-[calc(100%-5.25rem)] flex-wrap items-center gap-2 rounded-xl border border-slate-700 bg-slate-950/90 p-2 shadow-xl backdrop-blur-md md:bottom-4 md:left-4 md:max-w-[calc(100%-12rem)]" aria-label="平面圖顯示與上傳">
                 <div className="flex h-10 shrink-0 items-center rounded-lg border border-slate-700 bg-slate-900 p-1" role="group" aria-label="切換平面圖預覽">
                   <button
                     type="button"
@@ -2547,14 +3705,14 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             )}
 
             {currentFloorImageUrl && scaleBarWidthPx > 0 && (
-              <div onClick={() => setBoundsModal({ isOpen: true, blX: currentBounds.blX, blY: currentBounds.blY, trX: currentBounds.trX, trY: currentBounds.trY })} className="absolute top-20 right-3 md:top-4 md:right-20 z-40 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2.5 rounded-lg shadow-lg cursor-pointer hover:bg-slate-800 transition-colors" title="點擊校正全域座標">
+              <div data-map-control="scale" onClick={() => { if (!v4Integration) openV4Bounds(); }} className={`absolute ${v4Integration ? 'bottom-4 left-3 v4-map-scale' : 'top-20 right-3 md:top-4 md:right-20 cursor-pointer hover:bg-slate-800'} z-40 bg-slate-900/80 backdrop-blur-sm border border-slate-700 p-2.5 rounded-lg shadow-lg transition-colors`} title={v4Integration ? '比例尺；如需校正，請到樓層與底圖' : '點擊校正全域座標'}>
                 <span className="text-[10px] text-cyan-400 font-bold mb-1.5 flex items-center"><Target className="w-3 h-3 mr-1"/> 比例尺: {scaleBarMeters} m</span>
                 <div className="h-1.5 bg-cyan-500/50 border-x-2 border-cyan-400" style={{ width: `${scaleBarWidthPx}px` }}></div>
               </div>
             )}
 
             {currentFloorImageUrl && (
-              <div className="absolute bottom-20 right-3 z-50 flex flex-col space-y-2 md:bottom-4 md:right-32">
+              <div data-map-control="zoom" className={`${v4Integration ? 'v4-map-zoom ' : ''}absolute bottom-20 right-3 z-50 flex flex-col space-y-2 md:bottom-4 md:right-32`}>
                 <button type="button" onClick={() => setMapTransform(prev => ({...prev, scale: Math.min(10, prev.scale * 1.2)}))} className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-slate-900/95 text-slate-100 shadow-lg backdrop-blur transition-colors hover:bg-slate-800" title="放大平面圖" aria-label="放大平面圖"><ZoomIn className="h-5 w-5"/></button>
                 <button type="button" onClick={() => setMapTransform(prev => ({...prev, scale: Math.max(0.1, prev.scale / 1.2)}))} className="flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-slate-900/95 text-slate-100 shadow-lg backdrop-blur transition-colors hover:bg-slate-800" title="縮小平面圖" aria-label="縮小平面圖"><ZoomOut className="h-5 w-5"/></button>
                 <button type="button" onClick={resetMapView} className="mt-1 flex h-10 w-10 items-center justify-center rounded-xl border border-slate-700 bg-slate-900/95 text-slate-100 shadow-lg backdrop-blur transition-colors hover:bg-slate-800" title="顯示完整平面圖" aria-label="顯示完整平面圖"><Maximize className="h-5 w-5"/></button>
@@ -2565,7 +3723,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       )}
 
       {deleteUndo?.projectId === activeProjectId && (
-        <div className="fixed left-1/2 bottom-20 md:bottom-5 z-[90] -translate-x-1/2 w-[calc(100%-2rem)] max-w-md rounded-xl border border-emerald-500/40 bg-slate-900/95 px-4 py-3 shadow-2xl backdrop-blur-md flex items-center gap-3">
+        <div data-map-control="undo" className="fixed left-1/2 bottom-20 md:bottom-5 z-[90] -translate-x-1/2 w-[calc(100%-2rem)] max-w-md rounded-xl border border-emerald-500/40 bg-slate-900/95 px-4 py-3 shadow-2xl backdrop-blur-md flex items-center gap-3">
           <Undo2 className="w-5 h-5 text-emerald-400 shrink-0" />
           <div className="min-w-0 flex-1">
             <div className="text-sm font-bold text-slate-100 truncate">{deleteUndo.label}已刪除</div>
@@ -2577,10 +3735,11 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       )}
 
       {boundsModal.isOpen && (
-        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+        <div data-map-control="bounds" className={`${v4Integration ? 'v4-editor-modal ' : ''}fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4`}>
           <div className="bg-slate-900 border border-blue-900/50 rounded-xl w-full max-w-md p-6">
             <h3 className="text-lg font-bold text-blue-400 mb-4 flex items-center"><Target className="w-5 h-5 mr-2" /> 樓層實體座標與比例尺設定</h3>
             <p className="text-slate-400 text-xs mb-4 leading-relaxed">設定此樓層對應的真實物理座標 (公尺)。<br/>修改差值即等同設定這張圖片在真實空間的總寬度與總長度。</p>
+            {v4Integration&&<div className="v4-scale-size"><label>平面圖實際寬度（公尺）<input aria-label="平面圖實際寬度（公尺）" type="number" min="0.01" step="0.01" value={boundsModal.trX-boundsModal.blX} onChange={e=>setBoundsModal({...boundsModal,trX:boundsModal.blX+Number(e.target.value)})}/></label><label>平面圖實際高度（公尺）<input aria-label="平面圖實際高度（公尺）" type="number" min="0.01" step="0.01" value={boundsModal.trY-boundsModal.blY} onChange={e=>setBoundsModal({...boundsModal,trY:boundsModal.blY+Number(e.target.value)})}/></label><p>輸入整張底圖的實際涵蓋尺寸；不是螢幕放大倍率。套用後請再核對保存到後台。</p></div>}
             <div className="grid grid-cols-2 gap-4 mb-6">
               <div className="space-y-3 p-3 bg-slate-950 rounded border border-slate-800">
                 <h4 className="text-xs font-bold text-slate-300">↙️ 左下角 (Bottom-Left)</h4>
@@ -2593,9 +3752,40 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 <div><label className="text-[10px] text-slate-500">Y 座標 (m)</label><input type="number" value={boundsModal.trY} onChange={e => setBoundsModal({...boundsModal, trY: parseFloat(e.target.value)||0})} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-sm text-slate-200 mt-1" /></div>
               </div>
             </div>
+            <div className="mb-6 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4 space-y-3">
+              <div>
+                <h4 className="text-xs font-bold text-emerald-300">平面圖方向基準</h4>
+                <p className="mt-1 text-[11px] leading-relaxed text-slate-400">面向平面圖上方在現場代表的方向後按下記錄。系統會用這個基準，把路網角度轉成手機的真實方位。</p>
+              </div>
+              <div className="flex items-end gap-2">
+                <label className="min-w-0 flex-1">
+                  <span className="block text-[10px] text-slate-500 mb-1">平面圖上方的裝置方位角</span>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      max="359"
+                      step="1"
+                      value={boundsModal.mapUpHeading ?? ''}
+                      onChange={event => setBoundsModal({ ...boundsModal, mapUpHeading: event.target.value === '' ? null : normalizeAngle(Number(event.target.value)) })}
+                      className="min-w-0 flex-1 bg-slate-950 border border-slate-700 rounded px-3 py-2 text-sm text-slate-200"
+                    />
+                    <span className="text-xs text-slate-400">度</span>
+                  </div>
+                </label>
+                <button type="button" onClick={captureFloorMapUpHeading} disabled={isCapturingFloorHeading} className="shrink-0 flex items-center gap-2 rounded-lg border border-emerald-500/35 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50">
+                  <Navigation className="w-4 h-4" />
+                  {isCapturingFloorHeading ? '取樣中' : '記錄目前面向'}
+                </button>
+              </div>
+              {boundsModal.mapUpHeading !== null && (
+                <p className="text-[10px] text-emerald-200/70">目前基準：{Number(boundsModal.mapUpHeading).toFixed(0)}°{boundsModal.mapUpHeadingAccuracy !== null && boundsModal.mapUpHeadingAccuracy !== undefined && Number.isFinite(Number(boundsModal.mapUpHeadingAccuracy)) ? `，裝置回報誤差約 ${Number(boundsModal.mapUpHeadingAccuracy).toFixed(0)}°` : ''}</p>
+              )}
+            </div>
             <button onClick={() => {
-              setBuildings(prev => prev.map(b => b.id === activeBuildingId ? { ...b, floors: b.floors.map(f => f.id === activeFloorId ? { ...f, bounds: { blX: boundsModal.blX, blY: boundsModal.blY, trX: boundsModal.trX, trY: boundsModal.trY } } : f) } : b));
-              setBoundsModal({ isOpen: false }); setAlertModal({ isOpen: true, message: '樓層座標已更新！' });
+              if(v4Integration&&(![boundsModal.blX,boundsModal.blY,boundsModal.trX,boundsModal.trY].every(Number.isFinite)||boundsModal.trX<=boundsModal.blX||boundsModal.trY<=boundsModal.blY)){setAlertModal({isOpen:true,message:'寬度與高度必須是大於 0 的有效公尺數。'});return;}
+              setBuildings(prev => prev.map(b => b.id === activeBuildingId ? { ...b, floors: b.floors.map(f => f.id === activeFloorId ? { ...f, bounds: { blX: boundsModal.blX, blY: boundsModal.blY, trX: boundsModal.trX, trY: boundsModal.trY }, mapUpHeading: boundsModal.mapUpHeading, mapUpHeadingAccuracy: boundsModal.mapUpHeadingAccuracy, mapUpHeadingCapturedAt: boundsModal.mapUpHeadingCapturedAt } : f) } : b));
+              setBoundsModal({ isOpen: false }); setAlertModal({ isOpen: true, message: '樓層座標、比例尺與方向基準已更新！' });
             }} className="w-full py-3 bg-blue-500 text-white font-bold rounded-lg shadow-lg">儲存套用</button>
           </div>
         </div>
@@ -2606,14 +3796,14 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
           <div className="bg-slate-900 border border-amber-500/40 rounded-xl w-full max-w-2xl p-6 shadow-2xl">
             <div className="flex items-start justify-between gap-4 mb-5">
               <div>
-                <h3 className="text-lg font-bold text-amber-300">選擇要載入的雲端專案</h3>
-                <p className="text-xs text-slate-400 mt-1">載入後會新增或更新所選專案，其他後台專案會保留；除非再次按「同步雲端」，否則不會變更線上資料。</p>
+                <h3 className="text-lg font-bold text-amber-300">選擇 GitHub 專案更新本機</h3>
+                <p className="text-xs text-slate-400 mt-1">選擇 GitHub 專案後會更新同 ID 的本機 IndexedDB 草稿；若本機有未發布變更，系統會再次確認。此操作不會變更 GitHub。</p>
               </div>
-              <button onClick={() => setCloudProjectModal({ isOpen: false, isLoading: false, projects: [], error: '' })} className="text-slate-400 hover:text-white p-1"><X className="w-5 h-5" /></button>
+              <button onClick={() => setCloudProjectModal({ isOpen: false, isLoading: false, projects: [], error: '', revision: null })} className="text-slate-400 hover:text-white p-1"><X className="w-5 h-5" /></button>
             </div>
 
             {cloudProjectModal.isLoading && (
-              <div className="rounded-xl border border-slate-800 bg-slate-950 p-6 text-center text-sm text-slate-300">正在讀取雲端專案列表...</div>
+              <div className="rounded-xl border border-slate-800 bg-slate-950 p-6 text-center text-sm text-slate-300">正在讀取 GitHub 專案列表...</div>
             )}
 
             {!cloudProjectModal.isLoading && cloudProjectModal.error && (
@@ -2707,12 +3897,12 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
         </div>
       )}
 
-      <div className={`fixed inset-x-0 bottom-0 z-50 max-h-[86dvh] rounded-t-2xl border-t border-slate-800 bg-slate-900 shadow-2xl md:inset-x-auto md:inset-y-0 md:right-0 md:max-h-none md:w-80 md:rounded-none md:border-t-0 md:border-l lg:w-96 flex flex-col shrink-0 transition-transform duration-300 ${activeTab === 'map' && (selectedMarkerId || selectedWaypointId) ? 'translate-y-0 md:translate-x-0' : 'translate-y-full md:translate-y-0 md:translate-x-full absolute invisible'}`}>
-        <div className="h-16 flex items-center justify-between px-4 border-b border-slate-800 bg-slate-950/80 backdrop-blur shrink-0">
+      <div data-map-control="node-inspector" data-testid={v4Integration ? 'v4-node-inspector' : undefined} role={v4Integration ? 'dialog' : undefined} aria-label={v4Integration ? selectedMarkerId ? 'AR 點位設定' : '路徑節點設定' : undefined} className={`${v4Integration ? 'v4-node-inspector ' : ''}fixed inset-x-0 bottom-0 z-50 max-h-[86dvh] rounded-t-2xl border-t border-slate-800 bg-slate-900 shadow-2xl md:inset-x-auto md:inset-y-0 md:right-0 md:max-h-none md:w-80 md:rounded-none md:border-t-0 md:border-l lg:w-96 flex flex-col shrink-0 transition-transform duration-300 ${activeTab === 'map' && (selectedMarkerId || selectedWaypointId) ? 'translate-y-0 md:translate-x-0' : 'translate-y-full md:translate-y-0 md:translate-x-full absolute invisible'}`}>
+        <div className={`${v4Integration ? 'v4-inspector-header ' : ''}h-16 flex items-center justify-between px-4 border-b border-slate-800 bg-slate-950/80 backdrop-blur shrink-0`}>
           <h2 className="font-bold text-slate-200">
             {selectedMarkerId ? 'AR 點位設定' : '轉折點 (Waypoint) 設定'}
           </h2>
-          <button onClick={() => { setSelectedMarkerId(null); setSelectedWaypointId(null); }} className="text-slate-400 hover:text-white p-2"><X/></button>
+          <button ref={v4InspectorCloseRef} aria-label="關閉點位設定" onClick={() => { setSelectedMarkerId(null); setSelectedWaypointId(null); if (v4Integration) requestAnimationFrame(() => v4ToolsToggleRef.current?.focus({ preventScroll: true })); }} className="text-slate-400 hover:text-white p-2"><X/>{v4Integration && <span>關閉</span>}</button>
         </div>
 
         {selectedMarker && (
@@ -2720,8 +3910,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
             <div className="flex-1 overflow-y-auto p-4 space-y-5 pb-8">
               <div className="space-y-3">
                 <div className="flex space-x-3">
-                  <div className="flex-1"><label className="block text-[11px] text-slate-400 mb-1">代號</label><input type="text" value={selectedMarker.code} onChange={(e) => handleMarkerUpdate(selectedMarker.id, 'code', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200" /></div>
-                  <div className="flex-[2]"><label className="block text-[11px] text-slate-400 mb-1">標題</label><input type="text" value={selectedMarker.title} onChange={(e) => handleMarkerUpdate(selectedMarker.id, 'title', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200" /></div>
+                  <div className="flex-1"><label htmlFor="editor-marker-code" className="block text-[11px] text-slate-400 mb-1">代號</label><input id="editor-marker-code" type="text" value={selectedMarker.code} onChange={(e) => handleMarkerUpdate(selectedMarker.id, 'code', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200" /></div>
+                  <div className="flex-[2]"><label htmlFor="editor-marker-title" className="block text-[11px] text-slate-400 mb-1">標題</label><input id="editor-marker-title" type="text" value={selectedMarker.title} onChange={(e) => handleMarkerUpdate(selectedMarker.id, 'title', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200" /></div>
                 </div>
                 <div><label className="block text-[11px] text-slate-400 mb-1">描述說明</label><textarea value={selectedMarker.description || ''} onChange={(e) => handleMarkerUpdate(selectedMarker.id, 'description', e.target.value)} rows={2} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 resize-none" /></div>
                 <div className="flex space-x-3">
@@ -2753,10 +3943,11 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                     </div>
                   ) : (
                     <div className="pt-2 border-t border-slate-800/50">
-                      <label className="block text-[11px] text-slate-400 mb-1">強制導引方向 (一般節點用)</label>
+                      <label className="block text-[11px] text-slate-400 mb-1">V1 固定箭頭方向（不影響 V3）</label>
                       <select value={selectedMarker.arrowDirection || 'none'} onChange={(e) => handleMarkerUpdate(selectedMarker.id, 'arrowDirection', e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-xs text-slate-200 focus:border-cyan-500">
                         <option value="none">無/自動計算方向 (Auto)</option><option value="up">上 (Up)</option><option value="down">下 (Down)</option><option value="left">左 (Left)</option><option value="right">右 (Right)</option>
                       </select>
+                      <p className="mt-1.5 text-[10px] leading-relaxed text-slate-500">此欄位只供舊版 V1 單一箭頭使用；V3 請在下方「V3 AR 起始角度」設定。</p>
                     </div>
                   )}
                 </div>
@@ -2783,6 +3974,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               <hr className="border-slate-800" />
 
               <div className="space-y-3">
+                {v4Integration && <NodePhotoViewer key={`${activeProjectId}/${activeBuildingId}/${activeFloorId}/marker/${selectedMarker.id}`} node={selectedMarker} />}
+                <LegacyNodePhoto v4={v4Integration && !!selectedMarker.fieldObservations?.length}>
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-semibold text-cyan-400">Target Image 辨識圖</h3>
                   <input type="file" ref={markerImageInputRef} onChange={handleMarkerImageUpload} className="hidden" accept="image/*" />
@@ -2791,8 +3984,17 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 <div className="border border-slate-800 bg-slate-950 rounded-xl p-2 flex items-center justify-center min-h-[140px]">
                   {selectedMarker.imageUrl ? ( <img src={selectedMarker.imageUrl} alt="Target" className="max-w-full max-h-40 object-contain rounded" /> ) : ( <div className="text-center text-slate-600"><Camera className="w-8 h-8 mx-auto mb-2 opacity-50" /><span className="text-xs">未上傳辨識圖</span></div> )}
                 </div>
+                </LegacyNodePhoto>
+                <GuideDirectionFields
+                  node={selectedMarker}
+                  floor={currentFloor}
+                  onUpdate={(field, value) => handleMarkerUpdate(selectedMarker.id, field, value)}
+                  showAlert={(message) => setAlertModal({ isOpen: true, message })}
+                />
               </div>
-              <ARTestIntegration marker={selectedMarker} onUpdateStatus={(status) => handleMarkerUpdate(selectedMarker.id, 'recognitionStatus', status)} showAlert={(msg) => setAlertModal({ isOpen: true, message: msg })} />
+              {v4Integration
+                ? <p className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 p-3 text-xs leading-relaxed text-cyan-200">照片辨識請回 V4「相機」頁籤測試；此路網編輯器不會啟動相機或載入舊版辨識器。</p>
+                : <ARTestIntegration marker={selectedMarker} onUpdateStatus={(status) => handleMarkerUpdate(selectedMarker.id, 'recognitionStatus', status)} showAlert={(msg) => setAlertModal({ isOpen: true, message: msg })} />}
             </div>
 
             <div className="p-4 border-t border-slate-800 bg-slate-900 shrink-0 pb-safe">
@@ -2800,6 +4002,11 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 <div className="flex space-x-2 animate-in fade-in slide-in-from-bottom-2">
                   <button onClick={() => setIsConfirmingDelete(false)} className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2.5 rounded-xl border border-slate-700 text-sm">取消</button>
                   <button onClick={() => deleteNode(selectedMarker.id)} className="flex-1 bg-red-500 hover:bg-red-400 text-white font-bold py-2.5 rounded-xl shadow-[0_0_10px_rgba(239,68,68,0.4)] text-sm">確定刪除</button>
+                </div>
+              ) : v4Integration ? (
+                <div className="v4-inspector-actions">
+                  <button onClick={() => setSelectedMarkerId(null)} className="v4-tool-button v4-tool-primary">完成設定</button>
+                  <details className="v4-tool-danger"><summary>刪除此 AR 點位（需確認）</summary><p>包含此點位的連線與現場照片；保存後才會更新後台。</p><button type="button" className="v4-tool-button" onClick={() => setIsConfirmingDelete(true)}><Trash2 />刪除 AR 點位</button></details>
                 </div>
               ) : (
                 <div className="flex space-x-3">
@@ -2820,36 +4027,75 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                   <div className="flex-1"><label className="block text-[11px] text-slate-400 mb-1">相對 Y (%)</label><input type="number" step="0.1" value={+(selectedWaypoint.y * 100).toFixed(1)} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'y', Math.max(0, Math.min(100, parseFloat(e.target.value) || 0)) / 100)} className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200" /></div>
                 </div>
 
-                <div className="p-3 bg-cyan-950/20 border border-cyan-500/25 rounded-xl space-y-3 mt-4">
+                <div className="p-3 bg-slate-950/50 border border-slate-800 rounded-xl space-y-3">
                   <div>
-                    <h3 className="text-xs font-semibold text-cyan-300">路徑節點識別與方向提示</h3>
-                    <p className="mt-1 text-[10px] leading-relaxed text-slate-400">為每個節點上傳現場識別照片並設定面向提示。民眾到達下一轉角時，前台會先顯示這張照片，確認方向後再開始下一段 AR 導引。</p>
+                    <strong className="text-xs text-emerald-300">路網停駐點（Stop）</strong>
+                    <p className="mt-1 text-[10px] leading-relaxed text-slate-500">所有路徑節點都會參與路網分析，並可作為辨識後重新定位的停駐點。</p>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 pt-2 border-t border-slate-800/70">
+                    <div>
+                      <label className="text-xs font-medium text-amber-300 cursor-pointer" htmlFor="toggle-public-stop-wp">顯示於前台起終點選單</label>
+                      <p className="mt-1 text-[10px] text-slate-500">只建議開啟具有明確名稱、適合民眾選擇的節點。</p>
+                    </div>
+                    <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                      <input type="checkbox" id="toggle-public-stop-wp" checked={selectedWaypoint.publicSelectable === true} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'publicSelectable', e.target.checked)} className="sr-only peer" />
+                      <div className="w-9 h-5 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-400 peer-checked:after:bg-white shadow-inner"></div>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-cyan-950/20 border border-cyan-500/25 rounded-xl space-y-3 mt-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="text-xs font-semibold text-cyan-300">停駐點識別與影像對位</h3>
+                      <p className="mt-1 text-[10px] leading-relaxed text-slate-400">照片用來確認目前節點與畫面對位；方向可由系統依下一節點向量自動計算，或改由管理者輸入照片方位。鏡頭離開照片後會隱藏 AR 路線。</p>
+                    </div>
+                    <StatusBadge status={selectedWaypoint.guideRecognitionStatus || 'untested'} />
                   </div>
                   <label className="block">
                     <span className="block text-[11px] text-slate-400 mb-1">轉角名稱</span>
                     <input type="text" value={selectedWaypoint.guideTitle || ''} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'guideTitle', e.target.value)} placeholder="例如：一樓中央樓梯前" className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600" />
                   </label>
                   <label className="block">
-                    <span className="block text-[11px] text-slate-400 mb-1">面向提示</span>
-                    <textarea rows="3" value={selectedWaypoint.guideInstruction || ''} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'guideInstruction', e.target.value)} placeholder="例如：站在樓梯前，面向左側走廊" className="w-full resize-none bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600" />
+                    <span className="block text-[11px] text-slate-400 mb-1">對位提示文字</span>
+                    <textarea rows="3" value={selectedWaypoint.guideInstruction || ''} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'guideInstruction', e.target.value)} placeholder="例如：站在樓梯前，將門框與半透明照片重合" className="w-full resize-none bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600" />
                   </label>
+                  <GuideDirectionFields
+                    node={selectedWaypoint}
+                    floor={currentFloor}
+                    onUpdate={(field, value) => handleWaypointUpdate(selectedWaypoint.id, field, value)}
+                    showAlert={(message) => setAlertModal({ isOpen: true, message })}
+                  />
                   <label className="block">
                     <span className="block text-[11px] text-slate-400 mb-1">Google Street View 或外部參考網址</span>
                     <input type="url" value={selectedWaypoint.guideExternalUrl || ''} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'guideExternalUrl', e.target.value)} placeholder="https://..." className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600" />
                   </label>
                   <div>
+                    {v4Integration && <NodePhotoViewer key={`${activeProjectId}/${activeBuildingId}/${activeFloorId}/waypoint/${selectedWaypoint.id}`} node={selectedWaypoint} />}
+                    <LegacyNodePhoto v4={v4Integration && !!selectedWaypoint.fieldObservations?.length}>
                     <div className="flex items-center justify-between gap-2 mb-2">
-                      <span className="text-[11px] text-slate-400">節點識別／方向照片</span>
+                      <span className="text-[11px] text-slate-400">節點識別／對位照片</span>
                       <div className="flex gap-2">
-                        {selectedWaypoint.guideImageUrl && <button type="button" onClick={() => handleWaypointUpdate(selectedWaypoint.id, 'guideImageUrl', null)} className="text-[10px] text-red-300 bg-red-500/10 px-2.5 py-1.5 rounded border border-red-500/25">移除</button>}
+                        {selectedWaypoint.guideImageUrl && <button type="button" onClick={handleWaypointGuideImageRemove} className="text-[10px] text-red-300 bg-red-500/10 px-2.5 py-1.5 rounded border border-red-500/25">移除</button>}
                         <input type="file" ref={waypointGuideImageInputRef} onChange={handleWaypointGuideImageUpload} className="hidden" accept="image/*" />
                         <button type="button" onClick={() => waypointGuideImageInputRef.current?.click()} className="text-[10px] text-cyan-200 bg-cyan-500/10 px-2.5 py-1.5 rounded border border-cyan-500/25">上傳/更換</button>
                       </div>
                     </div>
                     <div className="border border-slate-800 bg-slate-950 rounded-xl p-2 flex items-center justify-center min-h-[120px]">
-                      {selectedWaypoint.guideImageUrl ? <img src={selectedWaypoint.guideImageUrl} alt="節點識別與方向參考" className="max-w-full max-h-48 object-contain rounded" /> : <div className="text-center text-slate-600"><ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-50" /><span className="text-xs">尚未上傳節點識別照片</span></div>}
+                      {selectedWaypoint.guideImageUrl ? <img src={selectedWaypoint.guideImageUrl} alt="節點識別與影像對位參考" className="max-w-full max-h-48 object-contain rounded" /> : <div className="text-center text-slate-600"><ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-50" /><span className="text-xs">尚未上傳節點識別照片</span></div>}
                     </div>
+                    <p className="mt-2 text-[10px] leading-relaxed text-cyan-200/70">請從民眾預計停駐的位置拍攝清楚、有固定紋理且少反光的場景。自動模式請朝下一路段拍攝；若現場無法照此方向拍攝，請切換手動模式輸入照片方位。</p>
+                    </LegacyNodePhoto>
                   </div>
+                  {v4Integration && <p className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 p-3 text-xs leading-relaxed text-cyan-200">照片辨識請回 V4「相機」頁籤測試；此處只編輯節點、連線與參考資料。</p>}
+                  {!v4Integration && selectedWaypoint.guideImageUrl && (
+                    <WaypointRecognitionTester
+                      key={selectedWaypoint.id}
+                      waypoint={selectedWaypoint}
+                      onUpdateStatus={(status) => handleWaypointUpdate(selectedWaypoint.id, 'guideRecognitionStatus', status)}
+                      showAlert={(message) => setAlertModal({ isOpen: true, message })}
+                    />
+                  )}
                 </div>
 
                 <div className="p-3 bg-slate-950/50 border border-slate-800 rounded-xl space-y-3 mt-4">
@@ -2888,6 +4134,11 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                   <button onClick={() => setIsConfirmingDelete(false)} className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2.5 rounded-xl border border-slate-700 text-sm">取消</button>
                   <button onClick={() => deleteNode(selectedWaypoint.id)} className="flex-1 bg-red-500 hover:bg-red-400 text-white font-bold py-2.5 rounded-xl shadow-[0_0_10px_rgba(239,68,68,0.4)] text-sm">確定刪除</button>
                 </div>
+              ) : v4Integration ? (
+                <div className="v4-inspector-actions">
+                  <button onClick={() => setSelectedWaypointId(null)} className="v4-tool-button v4-tool-primary">完成設定</button>
+                  <details className="v4-tool-danger"><summary>刪除此路徑節點（需確認）</summary><p>包含此節點的連線與現場照片；保存後才會更新後台。</p><button type="button" className="v4-tool-button" onClick={() => setIsConfirmingDelete(true)}><Trash2 />刪除路徑節點</button></details>
+                </div>
               ) : (
                 <div className="flex space-x-3">
                   <button onClick={() => setIsConfirmingDelete(true)} className="flex items-center justify-center p-3 text-red-400 bg-red-400/10 hover:bg-red-400/20 rounded-xl border border-red-500/20"><Trash2 className="w-5 h-5" /></button>
@@ -2900,6 +4151,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
       </div>
 
     </div>
+    </>
   );
 }
 
@@ -2920,6 +4172,271 @@ function StatusBadge({ status }) {
   };
   const c = statusConfig[status] || statusConfig.untested;
   return <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${c.bg} ${c.border} ${c.color}`}>{c.icon} {c.text}</span>;
+}
+
+function WaypointRecognitionTester({ waypoint, onUpdateStatus, showAlert }) {
+  const [engineState, setEngineState] = useState('idle');
+  const [message, setMessage] = useState('上傳後可用相機確認這張照片能否被 V3 辨識。');
+  const [stats, setStats] = useState({ frames: 0, matches: 0, inliers: 0, confidence: 0 });
+  const videoRef = useRef(null);
+  const processingCanvasRef = useRef(null);
+  const overlayCanvasRef = useRef(null);
+  const streamRef = useRef(null);
+  const trackerRef = useRef(null);
+  const animationFrameRef = useRef(null);
+  const runIdRef = useRef(0);
+  const engineStateRef = useRef('idle');
+  const evaluationRef = useRef({ frames: 0, lockedFrames: 0 });
+
+  const updateEngineState = (nextState) => {
+    engineStateRef.current = nextState;
+    setEngineState(nextState);
+  };
+
+  const clearOverlay = () => {
+    const canvas = overlayCanvasRef.current;
+    const context = canvas?.getContext('2d');
+    if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height);
+  };
+
+  const drawOverlay = (width, height, detection = null) => {
+    const canvas = overlayCanvasRef.current;
+    if (!canvas) return;
+    if (canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+    }
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.clearRect(0, 0, width, height);
+
+    if (detection?.corners?.length === 4) {
+      context.save();
+      context.strokeStyle = '#22d3ee';
+      context.lineWidth = Math.max(3, width / 120);
+      context.shadowBlur = 12;
+      context.shadowColor = '#22d3ee';
+      context.beginPath();
+      context.moveTo(detection.corners[0].x, detection.corners[0].y);
+      detection.corners.slice(1).forEach(point => context.lineTo(point.x, point.y));
+      context.closePath();
+      context.stroke();
+      context.restore();
+      return;
+    }
+
+    const boxWidth = width * 0.64;
+    const boxHeight = height * 0.64;
+    context.save();
+    context.strokeStyle = 'rgba(250, 204, 21, 0.85)';
+    context.lineWidth = Math.max(2, width / 180);
+    context.setLineDash([10, 8]);
+    context.strokeRect((width - boxWidth) / 2, (height - boxHeight) / 2, boxWidth, boxHeight);
+    context.restore();
+  };
+
+  const releaseResources = () => {
+    if (animationFrameRef.current !== null) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+    trackerRef.current?.dispose();
+    trackerRef.current = null;
+    streamRef.current?.getTracks().forEach(track => track.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+    clearOverlay();
+  };
+
+  const stopTest = (evaluate = true) => {
+    runIdRef.current += 1;
+    releaseResources();
+    if (evaluate) {
+      const evaluation = evaluationRef.current;
+      if (evaluation.lockedFrames > 0) {
+        onUpdateStatus('success');
+        setMessage('驗證完成：這張照片可被 V3 辨識。');
+      } else if (evaluation.frames >= 8) {
+        onUpdateStatus('unstable');
+        setMessage('尚未辨識成功，請調整距離、光線，或更換紋理較清楚的照片。');
+      } else {
+        onUpdateStatus('untested');
+        setMessage('測試時間太短，尚未完成驗證。');
+      }
+    }
+    updateEngineState('idle');
+  };
+
+  useEffect(() => () => {
+    runIdRef.current += 1;
+    releaseResources();
+  }, []);
+
+  const startTest = async () => {
+    if (!waypoint.guideImageUrl) {
+      showAlert('請先上傳節點識別照片。');
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      showAlert('此瀏覽器無法啟動相機，請改用 HTTPS 網址或支援相機的裝置。');
+      return;
+    }
+
+    runIdRef.current += 1;
+    releaseResources();
+    const runId = ++runIdRef.current;
+    evaluationRef.current = { frames: 0, lockedFrames: 0 };
+    setStats({ frames: 0, matches: 0, inliers: 0, confidence: 0 });
+    updateEngineState('preparing');
+    setMessage('正在使用與 V3 前台相同的辨識引擎準備照片...');
+    onUpdateStatus('testing');
+
+    let targetPrepared = false;
+    try {
+      const tracker = new OrbImageTracker();
+      trackerRef.current = tracker;
+      await tracker.prepare(waypoint.guideImageUrl);
+      if (runIdRef.current !== runId) return;
+      targetPrepared = true;
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 960 } },
+        audio: false
+      });
+      if (runIdRef.current !== runId) {
+        stream.getTracks().forEach(track => track.stop());
+        return;
+      }
+      streamRef.current = stream;
+      const video = videoRef.current;
+      video.srcObject = stream;
+      await video.play();
+      if (runIdRef.current !== runId) return;
+
+      updateEngineState('searching');
+      setMessage('請將鏡頭對準上方原照片中的現場畫面。');
+      let lastProcessedAt = 0;
+      let lastDetectedAt = 0;
+      let consecutiveDetections = 0;
+      let detectionInFlight = false;
+      let verified = false;
+
+      const processFrame = (timestamp) => {
+        if (runIdRef.current !== runId) return;
+        animationFrameRef.current = requestAnimationFrame(processFrame);
+        if (timestamp - lastProcessedAt < 120 || detectionInFlight) return;
+
+        const processingCanvas = processingCanvasRef.current;
+        if (!video || !processingCanvas || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !video.videoWidth || !video.videoHeight) return;
+        const context = processingCanvas.getContext('2d', { willReadFrequently: true });
+        if (!context) return;
+        const width = 360;
+        const height = Math.max(240, Math.round(width * (video.videoHeight / video.videoWidth)));
+        if (processingCanvas.width !== width || processingCanvas.height !== height) {
+          processingCanvas.width = width;
+          processingCanvas.height = height;
+        }
+        context.drawImage(video, 0, 0, width, height);
+        lastProcessedAt = timestamp;
+        detectionInFlight = true;
+
+        tracker.detect(processingCanvas).then(detection => {
+          if (runIdRef.current !== runId) return;
+          const now = performance.now();
+          evaluationRef.current.frames += 1;
+          if (detection) {
+            consecutiveDetections += 1;
+            lastDetectedAt = now;
+            evaluationRef.current.lockedFrames += 1;
+            drawOverlay(width, height, detection);
+            setStats({
+              frames: evaluationRef.current.frames,
+              matches: detection.matchCount,
+              inliers: detection.inliers,
+              confidence: Math.round(detection.confidence * 100)
+            });
+            if (consecutiveDetections >= 2) {
+              updateEngineState('locked');
+              setMessage('辨識成功：V3 前台會在此刻校正方位並顯示目前路段。');
+              if (!verified) {
+                verified = true;
+                onUpdateStatus('success');
+              }
+            }
+            return;
+          }
+
+          consecutiveDetections = 0;
+          setStats(previous => ({ ...previous, frames: evaluationRef.current.frames, matches: 0, inliers: 0, confidence: 0 }));
+          if (engineStateRef.current === 'locked' && now - lastDetectedAt <= 400) return;
+          drawOverlay(width, height, null);
+          updateEngineState('searching');
+          setMessage(verified ? '圖像已離開畫面；V3 前台此時會隱藏路線。' : '搜尋中：請將原照片中的現場畫面對準框內。');
+        }).catch(error => {
+          if (runIdRef.current !== runId) return;
+          runIdRef.current += 1;
+          releaseResources();
+          updateEngineState('error');
+          setMessage(error?.message || '辨識處理失敗。');
+          onUpdateStatus('unstable');
+        }).finally(() => {
+          detectionInFlight = false;
+        });
+      };
+
+      drawOverlay(360, 240, null);
+      animationFrameRef.current = requestAnimationFrame(processFrame);
+    } catch (error) {
+      if (runIdRef.current !== runId) return;
+      releaseResources();
+      updateEngineState('error');
+      setMessage(error?.message || '無法啟動辨識驗證。');
+      onUpdateStatus(targetPrepared ? 'untested' : 'unstable');
+      showAlert(targetPrepared ? '無法存取相機，請確認瀏覽器權限。' : (error?.message || '這張照片無法建立辨識特徵，請更換照片。'));
+    }
+  };
+
+  const isRunning = ['preparing', 'searching', 'locked'].includes(engineState);
+
+  return (
+    <div className="border border-cyan-500/25 rounded-xl overflow-hidden bg-slate-950 shadow-md">
+      <div className="bg-slate-900/80 px-3 py-2 border-b border-slate-800 flex justify-between items-center gap-3">
+        <h3 className="text-[10px] font-bold text-cyan-200 tracking-wider">V3 節點照片辨識驗證</h3>
+        <StatusBadge status={waypoint.guideRecognitionStatus || 'untested'} />
+      </div>
+      <div className="p-3 space-y-3">
+        <div className="relative bg-black border border-slate-800 rounded-lg aspect-video min-h-[170px] overflow-hidden">
+          <video ref={videoRef} playsInline muted className={`absolute inset-0 w-full h-full object-contain ${isRunning ? '' : 'hidden'}`} />
+          <canvas ref={processingCanvasRef} className="hidden" aria-hidden="true" />
+          <canvas ref={overlayCanvasRef} className={`absolute inset-0 w-full h-full object-contain pointer-events-none ${isRunning ? '' : 'hidden'}`} aria-hidden="true" />
+          {!isRunning && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 text-center px-5">
+              <Scan className="w-9 h-9 mb-2 opacity-60" />
+              <strong className="text-xs">使用實際相機驗證</strong>
+            </div>
+          )}
+          {isRunning && (
+            <div className="absolute top-2 left-2 right-2 z-10 flex items-start justify-between gap-2 pointer-events-none">
+              <span className={`px-2 py-1 rounded-md text-[10px] font-bold border backdrop-blur ${engineState === 'locked' ? 'text-cyan-200 border-cyan-400/60 bg-cyan-950/80' : 'text-yellow-200 border-yellow-400/50 bg-slate-950/80'}`}>
+                {engineState === 'locked' ? '辨識成功' : engineState === 'preparing' ? '準備中' : '搜尋圖片'}
+              </span>
+              <span className="px-2 py-1 rounded-md text-[10px] text-slate-200 bg-slate-950/80 border border-slate-700">
+                Inliers {stats.inliers} · {stats.confidence}%
+              </span>
+            </div>
+          )}
+        </div>
+        <p className={`text-[11px] leading-relaxed ${engineState === 'error' ? 'text-red-300' : engineState === 'locked' ? 'text-cyan-200' : 'text-slate-400'}`}>{message}</p>
+        {isRunning ? (
+          <button type="button" onClick={() => stopTest(true)} className="w-full py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/30 rounded-lg text-sm font-bold">停止驗證</button>
+        ) : (
+          <button type="button" onClick={startTest} className="w-full py-2.5 bg-cyan-500/15 hover:bg-cyan-500/25 text-cyan-100 border border-cyan-400/35 rounded-lg text-sm font-bold flex items-center justify-center">
+            <Play className="w-4 h-4 mr-2" /> 開啟相機驗證照片
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 function ARTestIntegration({ marker, onUpdateStatus, showAlert }) {
@@ -4771,4 +6288,3 @@ function FrontendUserView({ buildings, systemConfig, onMenuClick }) {
     </div>
   );
 }
-

@@ -1,0 +1,28 @@
+{
+  "version": "1.0",
+  "id": "demo-library-screen-v1",
+  "name": "虛構圖書館｜螢幕辨識 Demo",
+  "simulation": true,
+  "readonly": true,
+  "node": { "id": "demo-library-origin", "name": "接待區（模擬位置）", "x": 0.2, "y": 0.72 },
+  "panorama": {
+    "url": "/assets/ar-v4/demo-library/panorama-generated.png",
+    "centerMapBearing": 0,
+    "directionSource": "synthetic-map-axis-not-geographic-north",
+    "referenceYawDegrees": [0, 45, 90, 135, 180, 225, 270, 315],
+    "pitch": 0,
+    "fov": 75
+  },
+  "route": [
+    { "id": "demo-library-origin", "name": "接待區", "x": 0.2, "y": 0.72 },
+    { "id": "demo-library-corner", "name": "示意轉角", "x": 0.73, "y": 0.72 },
+    { "id": "demo-library-end", "name": "示意閱覽室", "x": 0.73, "y": 0.24 }
+  ],
+  "limitations": [
+    "只有接待區是一個可辨識的模擬節點；八個方向不是八個不同位置。",
+    "方向為虛構地圖參考軸，不代表螢幕或手機真實朝向。",
+    "示意路線不代表真實建築、距離或可行走動線。",
+    "螢幕翻拍僅驗證影像管線，不代表現場定位精度。",
+    "模擬素材由內建圖像生成工具產生，非測量用環景。"
+  ]
+}

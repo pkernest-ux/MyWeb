@@ -1,20 +1,80 @@
 {
   "routes": [
+    { "route": "/assets/ar-v4-public/catalog.json", "headers": { "Cache-Control": "no-store" } },
+    { "route": "/assets/ar-v4-public/*", "headers": { "Cache-Control": "public, max-age=31536000, immutable" } },
+    { "route": "/ar-v4-demo.html", "headers": { "Cache-Control": "no-store" } },
+    { "route": "/assets/ar-v4-demo/*", "headers": { "Cache-Control": "no-store" } },
+    { "route": "/ar-v4-navigation.html", "headers": { "Cache-Control": "no-store" } },
+    { "route": "/assets/ar-v4-navigation/*", "headers": { "Cache-Control": "no-store" } },
+    {
+      "route": "/ar-v4-field.html",
+      "allowedRoles": ["ar_admin"],
+      "headers": { "Cache-Control": "no-store" }
+    },
+    {
+      "route": "/admin-ar-v4.html",
+      "allowedRoles": ["ar_admin"],
+      "headers": { "Cache-Control": "no-store" }
+    },
+    {
+      "route": "/assets/ar-v4/*",
+      "headers": { "Cache-Control": "no-store" }
+    },
+    {
+      "route": "/.local/*",
+      "statusCode": 404
+    },
+    {
+      "route": "/test-output/*",
+      "statusCode": 404
+    },
+    {
+      "route": "/ar-v3.html",
+      "headers": {
+        "Cache-Control": "no-cache, no-store, must-revalidate"
+      }
+    },
+    {
+      "route": "/assets/ar-v3/ar-v3-app.js",
+      "headers": {
+        "Cache-Control": "no-cache, no-store, must-revalidate"
+      }
+    },
+    {
+      "route": "/assets/ar-v3/ar-v3-app.css",
+      "headers": {
+        "Cache-Control": "no-cache, no-store, must-revalidate"
+      }
+    },
+    {
+      "route": "/assets/ar/ar-app.js",
+      "headers": {
+        "Cache-Control": "no-cache, no-store, must-revalidate"
+      }
+    },
+    {
+      "route": "/assets/ar/ar-app.css",
+      "headers": {
+        "Cache-Control": "no-cache, no-store, must-revalidate"
+      }
+    },
     {
       "route": "/admin-dashboard.html",
-      "allowedRoles": ["authenticated"]
+      "allowedRoles": ["ar_admin"]
     },
     {
       "route": "/admin-ar.html",
-      "allowedRoles": ["authenticated"]
+      "allowedRoles": ["ar_admin"]
     },
     {
       "route": "/api/save-content",
-      "allowedRoles": ["authenticated"]
+      "methods": ["POST"],
+      "allowedRoles": ["ar_admin"]
     },
     {
       "route": "/api/save-ar-content",
-      "allowedRoles": ["authenticated"]
+      "methods": ["POST"],
+      "allowedRoles": ["ar_admin"]
     }
   ],
   "responseOverrides": {

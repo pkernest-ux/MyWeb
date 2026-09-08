@@ -1,0 +1,5 @@
+.v4-route-focus .v2-map-world { transition: transform 280ms ease-out; }
+.v3-review-guide-image.v4-pika-preview img { object-fit: contain; background: #eaf2e8; }
+@media (prefers-reduced-motion: reduce) {
+  .v4-route-focus .v2-map-world { transition: none; }
+}

@@ -1,25 +1,70 @@
-const repo = process.env.GITHUB_REPO || "pkernest-ux/MyWeb";
-const branch = process.env.GITHUB_BRANCH || "main";
 const path = process.env.CONTENT_PATH || "content.json";
+const adminRole = "ar_admin";
+
+const respond = (context, status, body) => {
+  context.res = { status, body };
+};
+
+const parseClientPrincipal = (value) => {
+  if (typeof value !== "string" || !value.trim()) return null;
+
+  try {
+    const principal = JSON.parse(Buffer.from(value, "base64").toString("utf8"));
+    return principal && typeof principal === "object" && !Array.isArray(principal)
+      ? principal
+      : null;
+  } catch {
+    return null;
+  }
+};
+
+const hasRole = (principal, role) => (
+  Array.isArray(principal?.userRoles) && principal.userRoles.includes(role)
+);
+
+const requiredSetting = (name) => {
+  const value = process.env[name];
+  return typeof value === "string" ? value.trim() : "";
+};
 
 module.exports = async function (context, req) {
-  const principalHeader = req.headers["x-ms-client-principal"];
+  const principal = parseClientPrincipal(req.headers["x-ms-client-principal"]);
 
-  if (!principalHeader) {
-    context.res = {
-      status: 401,
-      body: { error: "Login required." }
-    };
+  if (!principal || !hasRole(principal, "authenticated")) {
+    respond(context, 401, { error: "Login required.", code: "AUTH_REQUIRED" });
     return;
   }
 
-  const token = process.env.GITHUB_CONTENT_TOKEN;
+  if (!hasRole(principal, adminRole)) {
+    respond(context, 403, {
+      error: "Administrator role required.",
+      code: "ADMIN_ROLE_REQUIRED"
+    });
+    return;
+  }
 
-  if (!token) {
-    context.res = {
-      status: 500,
-      body: { error: "Missing GITHUB_CONTENT_TOKEN app setting." }
-    };
+  if (process.env.AR_SYNC_WRITE_ENABLED !== "true") {
+    respond(context, 503, {
+      error: "GitHub content writes are disabled.",
+      code: "SYNC_WRITE_DISABLED"
+    });
+    return;
+  }
+
+  const repo = requiredSetting("GITHUB_REPO");
+  const branch = requiredSetting("GITHUB_BRANCH");
+  const token = requiredSetting("GITHUB_CONTENT_TOKEN");
+  const missingSettings = [
+    ["GITHUB_REPO", repo],
+    ["GITHUB_BRANCH", branch],
+    ["GITHUB_CONTENT_TOKEN", token]
+  ].filter(([, value]) => !value).map(([name]) => name);
+  if (missingSettings.length > 0) {
+    respond(context, 503, {
+      error: "GitHub content writes are not configured.",
+      code: "SYNC_CONFIGURATION_ERROR",
+      missingSettings
+    });
     return;
   }
 
