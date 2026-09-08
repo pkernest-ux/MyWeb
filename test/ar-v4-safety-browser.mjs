@@ -31,6 +31,8 @@ try {
     return route.continue();
   });
   const page = await context.newPage();
+  let saveRequests = 0;
+  page.on('request', request => { if (request.method() === 'POST' && request.url().endsWith('/api/save-ar-content')) saveRequests++; });
   page.setDefaultTimeout(20_000);
   page.on('pageerror', (error) => report.errors.push(error.message));
   await page.goto(`${local.origin}/ar-v4-field.html?ui=classic`);
@@ -96,8 +98,32 @@ try {
   await page.locator('.notice.error').waitFor();
   assert.equal((await snapshot()).node.guideReferenceBearing, 217);
   await page.getByRole('button', { name: '重新讀取後台', exact: true }).click();
+  await page.locator('.calibration-review').waitFor();
+  assert.equal(await page.getByLabel('節點角度數值').inputValue(), '90');
+  const blockedSave = page.getByRole('button', { name: '保存節點校正到後台', exact: true });
+  assert.equal(await blockedSave.isDisabled(), true);
+  const requestsBeforeReview = saveRequests;
+  await blockedSave.evaluate(button => button.click());
+  await page.waitForTimeout(100);
+  assert.equal(saveRequests, requestsBeforeReview, 'unreviewed calibration draft cannot post');
+  assert.equal((await snapshot()).node.guideReferenceBearing, 217);
+  assert.equal(await page.evaluate(() => document.querySelector('video').srcObject), null, 'refresh stops camera');
+  await page.getByRole('button', { name: '採用後台校正', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('input[aria-label="節點角度數值"]').value === '217');
-  report.scenarios.push('stale update rejected and refresh replaces stale calibration controls with latest server value');
+  await page.locator('.calibration-review').waitFor({ state: 'detached' });
+  const reviewedSave = page.waitForResponse(res => res.request().method() === 'POST' && res.url().endsWith('/api/save-ar-content'));
+  await blockedSave.click();
+  assert.equal((await reviewedSave).status(), 200);
+  assert.equal((await snapshot()).node.guideReferenceBearing, 217);
+  report.scenarios.push('stale update rejected; refresh preserves draft behind review gate without POST; adopting server calibration permits saving latest value');
+
+  // Refresh intentionally ends camera ownership; re-enable it before repeating
+  // the original sensor-frame invalidation and explicit camera-shutdown checks.
+  await switchTab(page, '相機測試');
+  await page.getByRole('button', { name: '開啟相機與方位感測', exact: true }).click();
+  await page.locator('.camera-video.visible').waitFor();
+  await page.waitForFunction(() => document.querySelector('video').videoWidth > 0);
+  await switchTab(page, '方向校正');
 
   const hasNext = await page.getByLabel('下一個節點').isEnabled();
   await page.evaluate(() => window.dispatchEvent(new DeviceOrientationEvent('deviceorientationabsolute', { alpha: 90, beta: 85, gamma: 0, absolute: true })));

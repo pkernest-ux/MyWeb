@@ -1489,7 +1489,7 @@ function WelcomeScreen({ config, onStart }: { config?: any; onStart: () => void 
   );
 }
 
-export default function ARNavigationV3({ v4RouteFocus = false, PublicGuide, loadPublicProject }: { v4RouteFocus?: boolean; PublicGuide?: React.ComponentType<any>; loadPublicProject?:()=>Promise<any> } = {}) {
+export default function ARNavigationV3({ v4RouteFocus = false, PublicGuide, loadPublicProject, onChooseVenue }: { v4RouteFocus?: boolean; PublicGuide?: React.ComponentType<any>; loadPublicProject?:()=>Promise<any>; onChooseVenue?:()=>void } = {}) {
   const [showWelcome, setShowWelcome] = useState(!PublicGuide);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
@@ -3469,8 +3469,8 @@ export default function ARNavigationV3({ v4RouteFocus = false, PublicGuide, load
       <header className="v2-page-header">
         <button
           type="button"
-          onClick={() => setShowWelcome(true)}
-          aria-label="返回歡迎頁"
+          onClick={() => onChooseVenue ? onChooseVenue() : setShowWelcome(true)}
+          aria-label={onChooseVenue ? '切換場域' : '返回歡迎頁'}
         >
           <ArrowLeft />
         </button>

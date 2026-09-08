@@ -69,7 +69,10 @@ test('V4 route focus fits all current-segment points and reserves overlay space 
   assert.ok(levels.at(-1) > 2 && levels.at(-1) < 3.5, 'Short legs are closer than the old cap without excessive enlargement');
   const legacyEntry = readFileSync(new URL('../src/ar-v3-entry.tsx', import.meta.url), 'utf8');
   assert.ok(!legacyEntry.includes('v4RouteFocus'));
-  assert.ok(readFileSync(new URL('../src/ar-v4-navigation-entry.tsx', import.meta.url), 'utf8').includes('<ARNavigationV3 v4RouteFocus PublicGuide={PublicGuide} loadPublicProject={loadPublicProject} />'));
+  assert.ok(readFileSync(new URL('../src/ar-v4-navigation-entry.tsx', import.meta.url), 'utf8').includes('<VenueApp />'));
+  const venues = readFileSync(new URL('../src/ar-v4-venue-app.tsx', import.meta.url), 'utf8');
+  assert.ok(venues.includes('<ARNavigationV3 v4RouteFocus PublicGuide={PublicGuide}'));
+  assert.ok(venues.includes('loadPublicProject={()=>Promise.resolve(selected)}'));
 });
 
 function findVariable(name) {

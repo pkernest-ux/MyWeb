@@ -1,1 +1,1 @@
-{"extends":"./tsconfig.json","include":["src/ar-v4-public-guide.tsx","src/ar-v4-public-core.ts","src/ar-v4-field-core.ts","src/ar-v3-image-recognition.ts","src/jsfeat.d.ts"]}
+{"extends":"./tsconfig.json","include":["src/ar-v4-venue-app.tsx","src/ar-v4-public-guide.tsx","src/ar-v4-public-core.ts","src/ar-v4-field-core.ts","src/ar-v3-image-recognition.ts","src/jsfeat.d.ts"]}

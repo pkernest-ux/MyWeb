@@ -149,7 +149,10 @@ try {
 
   const empty = await environment('empty-collection', { version: '7.1', activeProjectId: null, projects: [] });
   page = empty.page;
-  assert.equal(await page.getByLabel('場域', { exact: true }).locator('option').count(), 0);
+  const emptyPicker = page.getByLabel('場域', { exact: true });
+  assert.equal(await emptyPicker.locator('option').count(), 1, 'Only the disabled selection placeholder is shown.');
+  assert.equal(await emptyPicker.inputValue(), '');
+  assert.equal(await emptyPicker.locator('option').evaluate(option => option.disabled), true);
   const opened = await openEditor(page);
   const newProjectId = await opened.frame.getByLabel('編輯專案', { exact: true }).inputValue();
   assert.ok(newProjectId, 'Empty backend must provide an explicit editable new project.');
