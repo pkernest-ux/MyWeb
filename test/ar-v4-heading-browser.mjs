@@ -83,7 +83,8 @@ async function start(page, projectId) {
   assert.equal(await page.evaluate(() => window.__headingTest.cameraCalls), 0);
   await page.getByRole('button', {name: '開啟相機與方向感測', exact: true}).click();
   await page.waitForFunction(() => window.__headingTest.queue.length > 0);
-  await page.locator('.v4-heading-status').waitFor();
+  // Acquisition diagnostics remain mounted inside the optional help dialog.
+  await page.locator('.v4-heading-status').waitFor({state: 'attached'});
 }
 async function deliver(page) {
   await page.waitForFunction(() => window.__headingTest.queue.length > 0);
@@ -144,7 +145,7 @@ try {
     if (validMeasurements < 3) assert.match(await page.locator('.v4-public-compass').innerText(), /方向待校正/);
   }
   assert.equal(validMeasurements, 3);
-  assert.match(await page.locator('.v4-heading-status').innerText(), /視覺定向（近似）/);
+  assert.match(await page.locator('.v4-heading-status').textContent(), /視覺定向（近似）/);
   const estimatedHeading = Number(await page.locator('.v4-heading-status').getAttribute('data-heading'));
   const expectedHeading = 90 + Math.atan((380 - 320) / (320 / Math.tan(75 * Math.PI / 360))) * 180 / Math.PI;
   assert.ok(Math.abs(estimatedHeading - expectedHeading) < 4, `off-centre crop optical heading ${estimatedHeading} differs from expected ${expectedHeading}`);
@@ -177,8 +178,10 @@ try {
   page = await guardedPage(images); await start(page, 'missing-metadata');
   for (let i = 0; i < 3; i++) await deliver(page);
   assert.notEqual(await page.locator('.v4-heading-status').getAttribute('data-status'), 'tracking'); assert.match(await page.locator('.v4-public-compass').innerText(), /方向待校正/);
+  await page.getByRole('button', {name: '導引說明與校正', exact: true}).click();
   await page.getByText('辨識／方向需要協助', {exact: true}).click();
   const manual = page.getByRole('button', {name: '我已面向下一地標，校正方向', exact: true}); assert.equal(await manual.isEnabled(), true); await manual.click(); await status(page, 'manual');
+  await page.getByRole('button', {name: '關閉導引說明', exact: true}).click();
   for (const width of [390, 1280]) {await page.setViewportSize({width, height: 844}); await snapshot(page, 'manual-' + width);}
   await assertPrivateBoundary(page); await page.close();
   pass('metadata-free upload references do not auto-orient even with mapBearing; explicit manual orientation remains available');
@@ -186,6 +189,7 @@ try {
   page = await guardedPage(images, false); await start(page, 'calibrated');
   for (let i = 0; i < 3; i++) await deliver(page);
   assert.notEqual(await page.locator('.v4-heading-status').getAttribute('data-status'), 'tracking'); assert.match(await page.locator('.v4-public-compass').innerText(), /方向待校正/);
+  await page.getByRole('button', {name: '導引說明與校正', exact: true}).click();
   await page.getByText('辨識／方向需要協助', {exact: true}).click();
   assert.equal(await page.getByRole('button', {name: '我已面向下一地標，校正方向', exact: true}).isDisabled(), true);
   await assertPrivateBoundary(page);
