@@ -24,8 +24,16 @@ try{
  assert.match(await page.locator('.v4-public-status').innerText(),/目前節點/);
  await page.evaluate(()=>{window.__moving=false;window.__alpha=270;});
  const initialArrow=await page.locator('.v4-public-compass svg').getAttribute('style');await page.evaluate(()=>{window.__alpha=230;});await page.waitForFunction(initial=>document.querySelector('.v4-public-compass svg')?.getAttribute('style')!==initial,initialArrow);await page.evaluate(()=>{window.__alpha=270;});
-// Real worker recognition of nodes omitted by the old endpoint-only scope.
- for(const [scene,label] of [[3,'沿途節點'],[4,'鄰近地標']]){
+// Published interior photos are now explicit guidance anchors. Recognizing
+// that anchor may enable MANUAL arrival, but never confirms it automatically.
+ assert.equal(await page.locator('.v4-public-guide').getAttribute('data-target-node'),'d');
+ await page.evaluate(()=>{window.__scene=3;});
+ await page.locator('.v4-public-status').filter({hasText:'已看見下一地標'}).waitFor();
+ await page.waitForFunction(()=>!document.querySelector('.v4-arrival')?.disabled);
+ assert.equal(await page.locator('.v4-arrival').isEnabled(),true);
+ assert.match(await page.locator('header').innerText(),/最後確認：入口/);
+// Off-route one-hop neighbours still cannot unlock an endpoint arrival.
+ for(const [scene,label] of [[4,'鄰近地標']]){
   await page.evaluate(scene=>{window.__scene=scene;},scene);
   await page.locator('.v4-public-status').filter({hasText:'已辨識附近地標：'+label}).waitFor();
   assert.equal(await page.locator('.v4-arrival').isDisabled(),true,'nearby match never unlocks endpoint arrival');
@@ -64,8 +72,8 @@ try{
  await page.screenshot({path:out+'/05-nearby-diagnostics-mobile.png'});
  await page.getByText('辨識診斷與搜尋範圍',{exact:true}).click();
  await page.getByRole('button',{name:'關閉導引說明',exact:true}).click();
- await page.evaluate(()=>{window.__scene=1;});await page.waitForFunction(()=>!document.querySelector('.v4-arrival')?.disabled);assert.match(await page.locator('header').innerText(),/最後確認：入口/,'Seeing next node must not move map');await page.screenshot({path:out+'/03-candidate-not-arrival.png'});
- await page.evaluate(()=>{window.__scene=-1;});await page.waitForFunction(()=>document.querySelector('.v4-arrival')?.disabled);assert.match(await page.locator('header').innerText(),/最後確認：入口/);await page.evaluate(()=>{window.__scene=1;});await page.waitForFunction(()=>!document.querySelector('.v4-arrival')?.disabled);await page.locator('.v4-arrival').click();await page.locator('header').filter({hasText:'最後確認：轉角'}).waitFor();assert.equal(await page.evaluate(()=>window.__cameraCalls),1,'same camera across legs');await page.getByRole('button',{name:'返回路線预覽'}).click();assert.equal(await page.evaluate(()=>window.__testStream.getTracks().every(t=>t.readyState==='ended')),true);await page.getByRole('button',{name:'開啟 AR 導引'}).click();await page.locator('header').filter({hasText:'最後確認：轉角'}).waitFor();await page.getByRole('button',{name:'開啟相機與方向感測'}).click();await page.locator('.v4-public-status').waitFor();await page.evaluate(()=>{window.__scene=2;});await page.waitForFunction(()=>!document.querySelector('.v4-arrival')?.disabled);await page.locator('.v4-arrival').click();await page.getByRole('heading',{name:'已由您確認抵達'}).waitFor();assert.equal(await page.evaluate(()=>window.__testStream.getTracks().every(t=>t.readyState==='ended')),true);await page.screenshot({path:out+'/04-arrival.png'});
+ await page.evaluate(()=>{window.__scene=3;});await page.waitForFunction(()=>!document.querySelector('.v4-arrival')?.disabled);assert.match(await page.locator('header').innerText(),/最後確認：入口/,'Seeing next node must not move map');await page.screenshot({path:out+'/03-candidate-not-arrival.png'});
+ await page.evaluate(()=>{window.__scene=-1;});await page.waitForFunction(()=>document.querySelector('.v4-arrival')?.disabled);assert.match(await page.locator('header').innerText(),/最後確認：入口/);await page.evaluate(()=>{window.__scene=3;});await page.waitForFunction(()=>!document.querySelector('.v4-arrival')?.disabled);await page.locator('.v4-arrival').click();await page.locator('header').filter({hasText:'最後確認：沿途節點'}).waitFor();assert.equal(await page.locator('.v4-public-guide').getAttribute('data-target-node'),'b');await page.evaluate(()=>{window.__scene=1;});await page.waitForFunction(()=>!document.querySelector('.v4-arrival')?.disabled);assert.match(await page.locator('header').innerText(),/最後確認：沿途節點/);await page.locator('.v4-arrival').click();await page.locator('header').filter({hasText:'最後確認：轉角'}).waitFor();assert.equal(await page.evaluate(()=>window.__cameraCalls),1,'same camera across legs');await page.getByRole('button',{name:'返回路線预覽'}).click();assert.equal(await page.evaluate(()=>window.__testStream.getTracks().every(t=>t.readyState==='ended')),true);await page.getByRole('button',{name:'開啟 AR 導引'}).click();await page.locator('header').filter({hasText:'最後確認：轉角'}).waitFor();await page.getByRole('button',{name:'開啟相機與方向感測'}).click();await page.locator('.v4-public-status').waitFor();await page.evaluate(()=>{window.__scene=2;});await page.waitForFunction(()=>!document.querySelector('.v4-arrival')?.disabled);await page.locator('.v4-arrival').click();await page.getByRole('heading',{name:'已由您確認抵達'}).waitFor();assert.equal(await page.evaluate(()=>window.__testStream.getTracks().every(t=>t.readyState==='ended')),true);await page.screenshot({path:out+'/04-arrival.png'});
  for(const width of [360,768,1280]){await page.setViewportSize({width,height:900});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);}
 
  // Reopen in the same browser profile with all pack network access blocked:

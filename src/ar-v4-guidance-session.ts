@@ -131,11 +131,21 @@ export type StepDetectorState={
   quietSamples:number;highSamples:number;pulseAt:number|null;peak:number;lastStepAt:number|null;lastPeakAt:number|null;
 };
 export type StepDetection={state:StepDetectorState;event:ApproximateStep|null;reason:StepReason};
+export type StepSensitivity='low'|'standard'|'high';
 export const STEP_LIMITS=Object.freeze({
   warmupMs:250,minSampleIntervalMs:8,maxSampleGapMs:300,maxSampleAgeMs:250,
   smoothingMs:70,gravitySmoothingMs:600,peakThreshold:1.15,releaseThreshold:.45,
   minPulseMs:80,maxPulseMs:700,minStepIntervalMs:350,maxLinearMagnitude:12,
   minGravityMagnitude:3,maxGravityMagnitude:24,
+});
+/** Sensitivity changes the minimum sustained peak only. Release, cadence,
+ * warm-up and spike safety remain identical; these are heuristics, not device
+ * calibration or a guarantee that a counted motion was a real step. Reset the
+ * detector when changing sensitivity so a partial old pulse cannot carry over. */
+export const STEP_PROFILES:Readonly<Record<StepSensitivity,Readonly<{peakThreshold:number;releaseThreshold:number}>>>=Object.freeze({
+  low:Object.freeze({peakThreshold:1.65,releaseThreshold:STEP_LIMITS.releaseThreshold}),
+  standard:Object.freeze({peakThreshold:STEP_LIMITS.peakThreshold,releaseThreshold:STEP_LIMITS.releaseThreshold}),
+  high:Object.freeze({peakThreshold:.8,releaseThreshold:STEP_LIMITS.releaseThreshold}),
 });
 export function createStepDetector():StepDetectorState {
   return {source:null,lastCapturedAt:null,lastNow:null,invalidatedAt:null,warmedAt:null,
@@ -156,8 +166,9 @@ function warm(state:StepDetectorState,capturedAt:number):StepDetectorState {
  * is preferred; gravity fallback removes a slow magnitude baseline. Warm-up,
  * pulse duration, release, cadence and spike guards reduce (not eliminate)
  * shake counts. Smooth rhythmic hand motion can still resemble walking. */
-export function advanceStepDetector(previous:StepDetectorState|null|undefined,sample:StepSample,now:number):StepDetection {
+export function advanceStepDetector(previous:StepDetectorState|null|undefined,sample:StepSample,now:number,sensitivity:StepSensitivity='standard'):StepDetection {
   let state=previous||createStepDetector();
+  const profile=sensitivity==='low'?STEP_PROFILES.low:sensitivity==='high'?STEP_PROFILES.high:STEP_PROFILES.standard;
   const result=(reason:StepReason,event:ApproximateStep|null=null):StepDetection=>({state,event,reason});
   if(!time(now)||state.lastNow!==null&&now<state.lastNow){state=resetStepDetector(state,now);return result('clock-change');}
   const captured=sample.capturedAt;
@@ -183,7 +194,7 @@ export function advanceStepDetector(previous:StepDetectorState|null|undefined,sa
     state={...state,gravity:baseline+(value-baseline)*(1-Math.exp(-elapsed/STEP_LIMITS.gravitySmoothingMs))};
   }
   const smoothed=state.smoothed+(signal-state.smoothed)*(1-Math.exp(-elapsed/STEP_LIMITS.smoothingMs));
-  const quiet=smoothed<=STEP_LIMITS.releaseThreshold;
+  const quiet=smoothed<=profile.releaseThreshold;
   state={...state,smoothed,quietSamples:quiet?state.quietSamples+1:0};
   if(state.phase==='warming'){
     if(state.warmedAt!==null&&captured-state.warmedAt>=STEP_LIMITS.warmupMs&&state.quietSamples>=3)state={...state,phase:'ready'};
@@ -191,11 +202,11 @@ export function advanceStepDetector(previous:StepDetectorState|null|undefined,sa
   }
   if(state.phase==='ready'){
     if(state.lastPeakAt!==null&&captured-state.lastPeakAt<STEP_LIMITS.minStepIntervalMs)return result('cooldown');
-    if(smoothed>=STEP_LIMITS.peakThreshold)state={...state,phase:'peak',pulseAt:captured,peak:signal,highSamples:signal>=STEP_LIMITS.peakThreshold?1:0};
+    if(smoothed>=profile.peakThreshold)state={...state,phase:'peak',pulseAt:captured,peak:signal,highSamples:signal>=profile.peakThreshold?1:0};
     return result(state.phase==='peak'?'rising':'quiet');
   }
   const duration=captured-state.pulseAt!;
-  state={...state,peak:Math.max(state.peak,signal),highSamples:state.highSamples+(signal>=STEP_LIMITS.peakThreshold?1:0)};
+  state={...state,peak:Math.max(state.peak,signal),highSamples:state.highSamples+(signal>=profile.peakThreshold?1:0)};
   if(duration>STEP_LIMITS.maxPulseMs){state=warm(state,captured);return result('spike');}
   if(quiet&&state.quietSamples>=2){
     const valid=duration>=STEP_LIMITS.minPulseMs&&state.highSamples>=2;
