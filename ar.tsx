@@ -11,6 +11,14 @@ import {
   Eraser, Undo2, ChevronDown, Save
 } from 'lucide-react';
 import { OrbImageTracker } from './src/ar-v3-image-recognition';
+import { NodePhotoViewer } from './src/ar-v4-node-photo-viewer';
+
+// V4 browsing never promotes an observation to the legacy recognition image.
+// Keep the existing upload/remove controls accessible without implying that
+// they edit whichever panorama direction is currently being previewed.
+const LegacyNodePhoto = ({ v4, children }) => v4
+  ? <details className="v4-legacy-node-photo"><summary>舊版主圖（上傳／更換）</summary>{children}</details>
+  : <>{children}</>;
 
 // ==========================================
 // 圖片壓縮工具
@@ -3966,6 +3974,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
               <hr className="border-slate-800" />
 
               <div className="space-y-3">
+                {v4Integration && <NodePhotoViewer key={`${activeProjectId}/${activeBuildingId}/${activeFloorId}/marker/${selectedMarker.id}`} node={selectedMarker} />}
+                <LegacyNodePhoto v4={v4Integration && !!selectedMarker.fieldObservations?.length}>
                 <div className="flex items-center justify-between">
                   <h3 className="text-xs font-semibold text-cyan-400">Target Image 辨識圖</h3>
                   <input type="file" ref={markerImageInputRef} onChange={handleMarkerImageUpload} className="hidden" accept="image/*" />
@@ -3974,6 +3984,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                 <div className="border border-slate-800 bg-slate-950 rounded-xl p-2 flex items-center justify-center min-h-[140px]">
                   {selectedMarker.imageUrl ? ( <img src={selectedMarker.imageUrl} alt="Target" className="max-w-full max-h-40 object-contain rounded" /> ) : ( <div className="text-center text-slate-600"><Camera className="w-8 h-8 mx-auto mb-2 opacity-50" /><span className="text-xs">未上傳辨識圖</span></div> )}
                 </div>
+                </LegacyNodePhoto>
                 <GuideDirectionFields
                   node={selectedMarker}
                   floor={currentFloor}
@@ -4060,6 +4071,8 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                     <input type="url" value={selectedWaypoint.guideExternalUrl || ''} onChange={(e) => handleWaypointUpdate(selectedWaypoint.id, 'guideExternalUrl', e.target.value)} placeholder="https://..." className="w-full bg-slate-950 border border-slate-800 rounded px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600" />
                   </label>
                   <div>
+                    {v4Integration && <NodePhotoViewer key={`${activeProjectId}/${activeBuildingId}/${activeFloorId}/waypoint/${selectedWaypoint.id}`} node={selectedWaypoint} />}
+                    <LegacyNodePhoto v4={v4Integration && !!selectedWaypoint.fieldObservations?.length}>
                     <div className="flex items-center justify-between gap-2 mb-2">
                       <span className="text-[11px] text-slate-400">節點識別／對位照片</span>
                       <div className="flex gap-2">
@@ -4072,6 +4085,7 @@ export default function ARManagerApp({ embedded = false, initialTab = 'map', pub
                       {selectedWaypoint.guideImageUrl ? <img src={selectedWaypoint.guideImageUrl} alt="節點識別與影像對位參考" className="max-w-full max-h-48 object-contain rounded" /> : <div className="text-center text-slate-600"><ImageIcon className="w-8 h-8 mx-auto mb-2 opacity-50" /><span className="text-xs">尚未上傳節點識別照片</span></div>}
                     </div>
                     <p className="mt-2 text-[10px] leading-relaxed text-cyan-200/70">請從民眾預計停駐的位置拍攝清楚、有固定紋理且少反光的場景。自動模式請朝下一路段拍攝；若現場無法照此方向拍攝，請切換手動模式輸入照片方位。</p>
+                    </LegacyNodePhoto>
                   </div>
                   {v4Integration && <p className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 p-3 text-xs leading-relaxed text-cyan-200">照片辨識請回 V4「相機」頁籤測試；此處只編輯節點、連線與參考資料。</p>}
                   {!v4Integration && selectedWaypoint.guideImageUrl && (

@@ -117,6 +117,12 @@ function renderEditor(v4Integration) {
       if (name === './src/ar-v3-image-recognition') {
         return { OrbImageTracker: class { constructor() { rejectSideEffect(); } } };
       }
+      if (name === './src/ar-v4-node-photo-viewer' || name === './ar-v4-node-photo-core') {
+        const file = name.endsWith('viewer') ? '../src/ar-v4-node-photo-viewer.tsx' : '../src/ar-v4-node-photo-core.ts';
+        const child = { exports: {}, require: sandbox.require };
+        vm.runInNewContext(ts.transpileModule(readFileSync(new URL(file, import.meta.url), 'utf8'), { compilerOptions }).outputText, child);
+        return child.exports;
+      }
       return require(name);
     },
     window: { location: { search: v4Integration ? '?embedded=1&v4=1' : '?embedded=1', origin: 'http://127.0.0.1' } },
