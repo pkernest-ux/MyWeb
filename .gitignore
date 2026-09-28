@@ -10,3 +10,7 @@ Thumbs.db
 node_modules/
 dist/
 build/
+
+# pano2glb downloads its depth model on first run
+tools/pano2glb/*.onnx
+__pycache__/
