@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>3D Models | Ernest Huang</title>
+    <meta name="description" content="由環景照片產生的 glTF 3D 模型，依編號排列，可在瀏覽器中檢視。" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
+    <style>
+      :root {
+        --bg: #0b0f17;
+        --panel: rgba(17, 24, 39, 0.86);
+        --line: rgba(148, 163, 184, 0.22);
+        --text: #e5e7eb;
+        --muted: #94a3b8;
+        --accent: #38bdf8;
+        --ok: #34d399;
+        --warn: #fbbf24;
+        --bad: #f87171;
+      }
+      * { box-sizing: border-box; }
+      [hidden] { display: none !important; }
+      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font-family: Inter, system-ui, sans-serif; }
+      body { display: grid; grid-template-columns: 320px 1fr; height: 100vh; overflow: hidden; }
+      aside { border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; background: #0f1522; }
+      .head { padding: 16px; border-bottom: 1px solid var(--line); }
+      .head a { color: var(--muted); font-size: 13px; text-decoration: none; }
+      h1 { font-size: 18px; margin: 6px 0 12px; }
+      .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+      button, label.btn, a.btn { font: inherit; font-size: 13px; color: var(--text); background: #1e293b; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; cursor: pointer; text-decoration: none; }
+      button:hover, label.btn:hover, a.btn:hover { border-color: var(--accent); }
+      button.on { background: var(--accent); color: #0b0f17; border-color: var(--accent); }
+      label.btn input { display: none; }
+      .report { padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 13px; line-height: 1.55; }
+      .report .ok { color: var(--ok); } .report .warn { color: var(--warn); } .report .bad { color: var(--bad); }
+      .report ul { margin: 6px 0 0; padding-left: 18px; }
+      ol#list { list-style: none; margin: 0; padding: 8px; overflow-y: auto; flex: 1; }
+      ol#list li { display: grid; grid-template-columns: 30px 1fr auto; gap: 10px; align-items: center; padding: 8px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+      ol#list li:hover { background: rgba(56, 189, 248, 0.08); }
+      ol#list li.active { background: rgba(56, 189, 248, 0.18); }
+      .idx { font-family: "JetBrains Mono", monospace; color: var(--muted); font-size: 12px; text-align: right; }
+      .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .size { color: var(--muted); font-size: 12px; font-family: "JetBrains Mono", monospace; }
+      main { position: relative; min-width: 0; }
+      #stage { position: absolute; inset: 0; }
+      #stage canvas { display: block; touch-action: none; }
+      .hud { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; gap: 8px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 8px; backdrop-filter: blur(8px); max-width: calc(100% - 32px); flex-wrap: wrap; justify-content: center; }
+      .hud .title { font-size: 13px; padding: 0 8px; font-family: "JetBrains Mono", monospace; }
+      .empty { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; color: var(--muted); padding: 24px; }
+      .empty.drag { outline: 2px dashed var(--accent); outline-offset: -16px; }
+      .empty p { max-width: 460px; line-height: 1.6; }
+      .status { position: absolute; top: 16px; right: 16px; font-size: 12px; color: var(--muted); background: var(--panel); padding: 6px 10px; border-radius: 8px; }
+      .hint { position: absolute; top: 16px; left: 16px; font-size: 12px; color: var(--muted); background: var(--panel); padding: 6px 10px; border-radius: 8px; }
+      @media (max-width: 800px) {
+        body { grid-template-columns: 1fr; grid-template-rows: 58vh 1fr; }
+        aside { order: 2; border-right: 0; border-top: 1px solid var(--line); }
+        .hint { display: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <aside>
+      <div class="head">
+        <a href="./index.html">← Ernest Huang</a>
+        <h1>環景 3D 模型 (glTF)</h1>
+        <div class="actions">
+          <label class="btn">開啟 .glb / .gltf<input id="fileInput" type="file" multiple accept=".glb,.gltf" /></label>
+        </div>
+      </div>
+      <div class="report" id="report">讀取模型清單中…</div>
+      <ol id="list"></ol>
+    </aside>
+    <main>
+      <div id="stage"></div>
+      <div class="empty" id="empty">
+        <p>尚無模型。<br />用 <code>tools/pano2glb</code> 把環景照片轉成 .glb 後放在 <code>assets/models/</code>，或把 .glb 檔拖曳到這裡直接檢視。</p>
+      </div>
+      <div class="status" id="status" hidden></div>
+      <div class="hint" id="hint" hidden>拖曳旋轉 · 滾輪縮放 · 右鍵平移</div>
+      <div class="hud" id="hud" hidden>
+        <button id="prev" title="上一個 (←)">◀</button>
+        <span class="title" id="title"></span>
+        <button id="next" title="下一個 (→)">▶</button>
+        <button id="inside" title="從拍攝位置往外看">室內視角</button>
+        <button id="outside" title="從外面看整個模型">外部視角</button>
+        <button id="wire" title="顯示網格線">網格</button>
+        <a class="btn" id="download" download title="下載 .glb">下載</a>
+      </div>
+    </main>
+
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.184.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.184.0/examples/jsm/"
+        }
+      }
+    </script>
+    <script type="module">
+      import * as THREE from "three";
+      import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+      import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+      const MODELS_DIR = "./assets/models/";
+      const $ = (id) => document.getElementById(id);
+      let models = []; // { name, url, num, size }
+      let current = -1;
+      let loaded = null;
+      let wireframe = false;
+      let loadToken = 0;
+
+      // ---------- scene ----------
+      const stage = $("stage");
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      stage.appendChild(renderer.domElement);
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0b0f17);
+      scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 2));
+      const grid = new THREE.GridHelper(40, 40, 0x334155, 0x1e293b);
+      scene.add(grid);
+      const camera = new THREE.PerspectiveCamera(70, 1, 0.01, 1000);
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      const loader = new GLTFLoader();
+
+      // ---------- list & report ----------
+      const lastNumber = (name) => {
+        const m = name.replace(/\.[^.]+$/, "").match(/(\d+)(?!.*\d)/);
+        return m ? parseInt(m[1], 10) : null;
+      };
+      const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+      const mb = (b) => (b ? (b / 1048576).toFixed(1) + " MB" : "");
+
+      function renderReport(report) {
+        if (!report) {
+          const nums = models.map((m) => m.num).filter((n) => n !== null);
+          const seen = new Map();
+          nums.forEach((n) => seen.set(n, (seen.get(n) || 0) + 1));
+          const missing = [];
+          if (nums.length) for (let n = Math.min(...nums); n <= Math.max(...nums); n++) if (!seen.has(n)) missing.push(n);
+          report = {
+            count: models.length,
+            range: nums.length ? [Math.min(...nums), Math.max(...nums)] : null,
+            missing,
+            duplicates: [...seen].filter(([, c]) => c > 1).map(([n]) => n),
+            unnumbered: models.filter((m) => m.num === null).map((m) => m.name),
+            notEquirect: [],
+          };
+        }
+        const issues = [];
+        if (report.missing?.length) issues.push(`<span class="bad">缺號：</span>${report.missing.join(", ")}`);
+        if (report.duplicates?.length) issues.push(`<span class="bad">重複編號：</span>${report.duplicates.join(", ")}`);
+        if (report.unnumbered?.length) issues.push(`<span class="warn">無編號：</span>${report.unnumbered.join("、")}`);
+        if (report.notEquirect?.length) issues.push(`<span class="warn">原圖非 2:1 環景：</span>${report.notEquirect.join("、")}`);
+        const range = report.range ? ` · 編號 ${report.range[0]} – ${report.range[1]}` : "";
+        $("report").innerHTML = `共 <b>${report.count}</b> 個模型${range}<br />` +
+          (issues.length ? `<ul>${issues.map((s) => `<li>${s}</li>`).join("")}</ul>` : '<span class="ok">✓ 編號連續、無重複。</span>');
+      }
+
+      function renderList() {
+        $("list").innerHTML = "";
+        models.forEach((m, i) => {
+          const li = document.createElement("li");
+          li.innerHTML = `<span class="idx">${String(i + 1).padStart(2, "0")}</span><span class="name"></span><span class="size">${mb(m.size)}</span>`;
+          li.querySelector(".name").textContent = m.name;
+          li.title = m.name;
+          li.onclick = () => show(i);
+          $("list").appendChild(li);
+        });
+      }
+
+      function setModels(list, report) {
+        models.forEach((m) => m.revoke && URL.revokeObjectURL(m.url));
+        models = list.sort((a, b) => collator.compare(a.name, b.name));
+        renderReport(report);
+        renderList();
+        $("empty").hidden = models.length > 0;
+        $("hud").hidden = $("hint").hidden = models.length === 0;
+        if (models.length) show(0);
+      }
+
+      // ---------- viewing ----------
+      function disposeLoaded() {
+        if (!loaded) return;
+        scene.remove(loaded);
+        loaded.traverse((o) => {
+          if (o.geometry) o.geometry.dispose();
+          if (o.material) [].concat(o.material).forEach((m) => { m.map?.dispose(); m.dispose(); });
+        });
+        loaded = null;
+      }
+
+      function status(text) {
+        $("status").hidden = !text;
+        $("status").textContent = text || "";
+      }
+
+      function show(i) {
+        if (!models.length) return;
+        current = (i + models.length) % models.length;
+        const m = models[current];
+        $("title").textContent = `${current + 1}/${models.length} · ${m.name}`;
+        $("download").href = m.url;
+        $("download").download = m.name;
+        document.querySelectorAll("#list li").forEach((li, k) => li.classList.toggle("active", k === current));
+        document.querySelectorAll("#list li")[current]?.scrollIntoView({ block: "nearest" });
+        const token = ++loadToken;
+        status("載入中…");
+        loader.load(
+          m.url,
+          (gltf) => {
+            if (token !== loadToken) return;
+            disposeLoaded();
+            loaded = gltf.scene;
+            loaded.traverse((o) => { if (o.isMesh) [].concat(o.material).forEach((mat) => (mat.wireframe = wireframe)); });
+            scene.add(loaded);
+            const box = new THREE.Box3().setFromObject(loaded);
+            grid.position.y = box.min.y;
+            status("");
+            viewInside();
+          },
+          (e) => { if (token === loadToken && e.total) status(`載入中… ${Math.round((e.loaded / e.total) * 100)}%`); },
+          (err) => { if (token === loadToken) status("載入失敗：" + (err.message || err)); }
+        );
+      }
+
+      // The panorama was shot from the model's origin, so "inside" orbits a
+      // point just in front of the lens and "outside" frames the whole shell.
+      function viewInside() {
+        camera.fov = 75;
+        camera.updateProjectionMatrix();
+        controls.target.set(0, 0, -0.01);
+        camera.position.set(0, 0, 0);
+        controls.minDistance = 0; controls.maxDistance = 0.02;
+        controls.rotateSpeed = -0.4;
+        controls.enablePan = false;
+        controls.update();
+        $("inside").classList.add("on"); $("outside").classList.remove("on");
+      }
+
+      function viewOutside() {
+        if (!loaded) return;
+        const box = new THREE.Box3().setFromObject(loaded);
+        const size = box.getSize(new THREE.Vector3()).length();
+        camera.fov = 50;
+        camera.updateProjectionMatrix();
+        controls.minDistance = 0.1; controls.maxDistance = size * 5;
+        controls.rotateSpeed = 1;
+        controls.enablePan = true;
+        controls.target.copy(box.getCenter(new THREE.Vector3()));
+        camera.position.copy(controls.target).add(new THREE.Vector3(0.6, 0.9, 1).normalize().multiplyScalar(size * 0.9));
+        controls.update();
+        $("outside").classList.add("on"); $("inside").classList.remove("on");
+      }
+
+      $("prev").onclick = () => show(current - 1);
+      $("next").onclick = () => show(current + 1);
+      $("inside").onclick = viewInside;
+      $("outside").onclick = viewOutside;
+      $("wire").onclick = () => {
+        wireframe = !wireframe;
+        $("wire").classList.toggle("on", wireframe);
+        loaded?.traverse((o) => { if (o.isMesh) [].concat(o.material).forEach((m) => (m.wireframe = wireframe)); });
+      };
+      addEventListener("keydown", (e) => {
+        if (e.key === "ArrowLeft") show(current - 1);
+        if (e.key === "ArrowRight") show(current + 1);
+      });
+
+      function resize() {
+        const w = stage.clientWidth, h = stage.clientHeight;
+        renderer.setSize(w, h);
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+      }
+      new ResizeObserver(resize).observe(stage);
+      resize();
+      renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); });
+
+      // ---------- sources ----------
+      const fromFiles = (files) =>
+        [...files].filter((f) => /\.(glb|gltf)$/i.test(f.name)).map((f) => ({ name: f.name, url: URL.createObjectURL(f), num: lastNumber(f.name), size: f.size, revoke: true }));
+      $("fileInput").onchange = (e) => setModels(fromFiles(e.target.files));
+      const drop = $("empty");
+      ["dragenter", "dragover"].forEach((t) => document.addEventListener(t, (e) => { e.preventDefault(); drop.classList.add("drag"); }));
+      document.addEventListener("dragleave", () => drop.classList.remove("drag"));
+      document.addEventListener("drop", (e) => {
+        e.preventDefault();
+        drop.classList.remove("drag");
+        const list = fromFiles(e.dataTransfer.files);
+        if (list.length) setModels(list);
+      });
+
+      fetch(MODELS_DIR + "manifest.json")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((mf) => {
+          if (!mf?.models?.length) { $("report").textContent = "網站上還沒有模型，可以先開啟本機的 .glb 檔。"; return; }
+          setModels(mf.models.map((m) => ({ name: m.model, url: MODELS_DIR + m.model, num: m.num, size: m.sizeBytes })), mf.report);
+        })
+        .catch(() => { $("report").textContent = "網站上還沒有模型，可以先開啟本機的 .glb 檔。"; });
+    </script>
+  </body>
+</html>
