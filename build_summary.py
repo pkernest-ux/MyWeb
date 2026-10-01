@@ -195,7 +195,7 @@ def qa_checks(src, b, raw, labs, pat, surg, new, pre, stats):
     # QA11 與原表比對：只有單一手術的病人不受停止規則影響
     O = {k: pd.read_excel(src, sheet_name=k) for k in ['平均值', '最小值', '最大值']}
     one = b.groupby('IDNO').OPDATE.nunique()
-    ids = set(one[one == 1].index)
+    ids = set(one[one == 1].index) & set(pat[pat.INDEX_IN_LIST].IDNO)
     tot = 0
     err = 0
     for k in O:
@@ -208,7 +208,7 @@ def qa_checks(src, b, raw, labs, pat, surg, new, pre, stats):
                 continue
             if not all(same(pd.to_numeric(o.loc[key, c], errors='coerce'), n_.loc[key, c]) for c in labs):
                 err += 1
-    out.append(('QA11', '與原表比對（僅單一手術病人；差異皆為平均值恰在0.005的進位）', tot, err))
+    out.append(('QA11', '與原表比對（僅INDEX在清單內的單一手術病人；差異為平均值恰在0.005的進位）', tot, err))
 
     # QA12 INDEX 手術不在手術清單
     out.append(('QA12', 'INDEX手術不在血液數據手術清單的病人（CATEGORY／OP留空）', len(pat), int((~pat.INDEX_IN_LIST).sum())))
